@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::{fs, path::PathBuf};
 
 use fns_protocol::{
     ACTION_FLOW_SPECS, BLOB_CHUNK_BYTES, BLOB_HEADER_LEN, MAX_ACTION_BYTES, MAX_BLOB_BYTES,
@@ -123,4 +124,30 @@ fn action_contract_is_public_and_has_locked_cardinality() {
 
     let kind = std::mem::size_of::<MessageBody>();
     assert!(kind > 0);
+}
+
+#[test]
+fn ci_contract_requires_three_platforms_and_the_locked_quality_gate() {
+    let protocol_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repository_root = protocol_crate
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("protocol crate must be nested below the repository root");
+    let workflow = fs::read_to_string(repository_root.join(".github/workflows/rust.yml"))
+        .expect("Rust CI workflow must exist");
+
+    for required in [
+        "os: [ubuntu-latest, macos-latest, windows-latest]",
+        "toolchain: 1.94.0",
+        "cargo test --locked -p fns-protocol",
+        "cargo check --locked --workspace --all-targets",
+        "cargo fmt --all -- --check",
+        "cargo clippy --locked --workspace --all-targets -- -D warnings",
+        "cargo test --locked --workspace",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "missing CI command: {required}"
+        );
+    }
 }
