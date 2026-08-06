@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "workspace-sync-v2-fixtures/1",
+  "actions": [
+    "WorkspaceHello",
+    "WorkspaceSubscribe",
+    "WorkspaceSnapshotBegin",
+    "WorkspaceSnapshotEntry",
+    "WorkspaceSnapshotEnd",
+    "WorkspaceMutation",
+    "WorkspaceMutationAccepted",
+    "WorkspaceMutationRejected",
+    "WorkspaceEvent",
+    "WorkspaceAck",
+    "WorkspaceBlobNeed",
+    "WorkspaceBlobBegin",
+    "WorkspaceBlobEnd",
+    "WorkspaceConflictCreated",
+    "WorkspaceConflictResolved"
+  ],
+  "files": {
+    "valid/control-frames.jsonl": "bbe6d00abb3e9e426c608f36af6cd83d7f4c7ef97d90c4f969eea72f1403385d",
+    "valid/error-envelopes.jsonl": "d67bc4bfde9e3122c41897215b64f5cc96acfbb301f69d2e6095c22c0dc7b2fd",
+    "invalid/revisions.jsonl": "f31b2410f77e0df8ccdc7a95346704fd440ae3d0e1b7cc5de72164bf988478fb",
+    "invalid/hashes.jsonl": "d166aabf61c48cb6cd578eef07606a59661a261e550340bf4012b1ce170582c9",
+    "invalid/paths.jsonl": "2355070c84bd5fad4a88471428345ab53f4195a0ce09289a187a1ab169c846ae",
+    "binary/header-vectors.json": "cf7459afdcfa1c15094ef7c73ab7bc95ff23bb353013dbf32ea24e1bd34ac0b2"
+  }
+}

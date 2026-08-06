@@ -16,8 +16,8 @@ pub use binary::{
     WorkspaceBlobHeader, compute_blob_digest, decode_binary_frame, encode_binary_frame,
 };
 pub use envelope::{
-    DecodedEnvelope, DecodedFrame, decode_text_frame, encode_failure, encode_request,
-    encode_success, encode_unknown_action_failure,
+    DecodedEnvelope, DecodedFrame, decode_server_text_frame, decode_text_frame, encode_failure,
+    encode_request, encode_success, encode_unknown_action_failure,
 };
 pub use error::{
     ProtocolDecodeError, ProtocolEncodeError, WorkspaceV2Error, WorkspaceV2ErrorCode,

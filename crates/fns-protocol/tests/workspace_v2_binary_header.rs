@@ -1,9 +1,11 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, fs, path::PathBuf};
 
 use fns_protocol::{
     BLOB_CHUNK_BYTES, BLOB_HEADER_LEN, TransferId, WorkspaceBlobDirection, WorkspaceBlobHeader,
-    WorkspaceValidationError, compute_blob_digest, decode_binary_frame, encode_binary_frame,
+    WorkspaceValidationError, compute_blob_digest, decode_binary_frame,
+    deserialize_optional_non_null, encode_binary_frame,
 };
+use serde::Deserialize;
 
 const TRANSFER_ID: &str = "10000000-0000-4000-8000-000000000009";
 
@@ -19,6 +21,87 @@ fn assert_validation_error<T: Debug>(
     let error = result.expect_err("operation should reject the invalid frame");
     assert_eq!(error.field, field);
     assert_eq!(error.reason, reason);
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BinaryHeaderVector {
+    case: String,
+    direction: WorkspaceBlobDirection,
+    #[serde(rename = "final")]
+    final_: bool,
+    transfer_id: TransferId,
+    chunk_index: u64,
+    offset: u64,
+    payload_hex: String,
+    digest_hex: String,
+    header_hex: String,
+    valid: bool,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    reason: Option<String>,
+}
+
+#[test]
+fn fixture_vectors() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/workspace-sync-v2/binary/header-vectors.json");
+    let rows: Vec<BinaryHeaderVector> = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(rows.len(), 9);
+    assert!(
+        rows.iter()
+            .all(|row| !row.valid || !row.payload_hex.is_empty())
+    );
+
+    for row in rows {
+        let payload = hex::decode(&row.payload_hex)
+            .unwrap_or_else(|error| panic!("{} payloadHex is not hex: {error}", row.case));
+        let committed_digest = hex::decode(&row.digest_hex)
+            .unwrap_or_else(|error| panic!("{} digestHex is not hex: {error}", row.case));
+        let header_bytes = hex::decode(&row.header_hex)
+            .unwrap_or_else(|error| panic!("{} headerHex is not hex: {error}", row.case));
+        assert_eq!(committed_digest.len(), 32, "{}", row.case);
+        assert_eq!(header_bytes.len(), BLOB_HEADER_LEN, "{}", row.case);
+
+        let (full_digest, _) = compute_blob_digest(&payload);
+        let full_digest_matches = full_digest.as_slice() == committed_digest;
+        let mut frame = header_bytes.clone();
+        frame.extend_from_slice(&payload);
+
+        if row.valid {
+            assert!(full_digest_matches, "{} full digest", row.case);
+            let (decoded, decoded_payload) =
+                decode_binary_frame(&frame).unwrap_or_else(|error| panic!("{}: {error}", row.case));
+            assert_eq!(decoded.direction, row.direction, "{}", row.case);
+            assert_eq!(decoded.final_chunk, row.final_, "{}", row.case);
+            assert_eq!(decoded.transfer_id, row.transfer_id, "{}", row.case);
+            assert_eq!(decoded.chunk_index, row.chunk_index, "{}", row.case);
+            assert_eq!(decoded.offset, row.offset, "{}", row.case);
+            assert_eq!(decoded_payload, payload, "{}", row.case);
+            assert_eq!(decoded.chunk_digest.as_slice(), &committed_digest[..16]);
+            assert_eq!(
+                encode_binary_frame(
+                    row.direction,
+                    row.final_,
+                    row.transfer_id,
+                    row.chunk_index,
+                    row.offset,
+                    &payload,
+                )
+                .unwrap(),
+                frame,
+                "{}",
+                row.case
+            );
+        } else {
+            let expected_reason = row.reason.as_deref().expect("invalid vector has a reason");
+            let actual_reason = if !full_digest_matches {
+                "full_digest_mismatch".to_owned()
+            } else {
+                decode_binary_frame(&frame).expect_err(&row.case).reason
+            };
+            assert_eq!(actual_reason, expected_reason, "{}", row.case);
+        }
+    }
 }
 
 #[test]
