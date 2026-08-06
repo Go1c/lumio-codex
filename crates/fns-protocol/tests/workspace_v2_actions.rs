@@ -49,6 +49,491 @@ const CONFLICT_CREATED_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-0
 const CONFLICT_RESOLVED_REQUEST_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","conflictId":"10000000-0000-4000-8000-000000000005","conflictRevision":"7","choice":"merged","path":"notes/a.md","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":8,"modifiedAtMs":2,"executable":false}}"#;
 const CONFLICT_RESOLVED_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","conflictId":"10000000-0000-4000-8000-000000000005","conflictRevision":"7","operationId":"10000000-0000-4000-8000-000000000004","revision":"8","choice":"merged","pathState":{"path":"notes/a.md","pathRevision":"8","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":8,"modifiedAtMs":2,"executable":false},"tombstone":false},"resolvedByClientId":"10000000-0000-4000-8000-000000000001"}"#;
 
+const MUTATION_SCHEMA_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","path":"notes/a.md","basePathRevision":"1","kind":"rename","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"newPath":"archive/a.md","targetBasePathRevision":"0"}"#;
+const MUTATION_ACCEPTED_SCHEMA_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","revision":"2","pathState":{"path":"archive/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false},"oldPathState":{"path":"notes/a.md","pathRevision":"2","kind":"tombstone","contentHash":null,"metadata":{"size":0,"modifiedAtMs":0,"executable":false},"tombstone":true},"newPathState":{"path":"archive/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false}}"#;
+const MUTATION_REJECTED_SCHEMA_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","reason":"stale_base_revision","currentPathState":{"path":"notes/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false},"conflictId":null,"requiredHash":null}"#;
+const EVENT_SCHEMA_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","index":1,"revision":"2","operationId":"10000000-0000-4000-8000-000000000004","originClientId":"10000000-0000-4000-8000-000000000001","mutation":{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","path":"notes/a.md","basePathRevision":"1","kind":"rename","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"newPath":"archive/a.md","targetBasePathRevision":"0"},"pathState":{"path":"archive/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false},"oldPathState":{"path":"notes/a.md","pathRevision":"2","kind":"tombstone","contentHash":null,"metadata":{"size":0,"modifiedAtMs":0,"executable":false},"tombstone":true},"newPathState":{"path":"archive/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false}}"#;
+
+const HASH_JSON: &str =
+    r#""blake3:abababababababababababababababababababababababababababababababab""#;
+const OPERATION_ID_JSON: &str = r#""10000000-0000-4000-8000-000000000004""#;
+const CONFLICT_ID_JSON: &str = r#""10000000-0000-4000-8000-000000000005""#;
+const PATH_JSON: &str = r#""notes/a.md""#;
+const SIZE_JSON: &str = "7";
+const PATH_STATE_JSON: &str = r#"{"path":"notes/a.md","pathRevision":"2","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false}"#;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WirePresence {
+    RequiredNonNull,
+    RequiredNullable { representative: &'static str },
+    OptionalNonNull,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FieldRule {
+    path: &'static str,
+    presence: WirePresence,
+}
+
+const fn required_non_null(path: &'static str) -> FieldRule {
+    FieldRule {
+        path,
+        presence: WirePresence::RequiredNonNull,
+    }
+}
+
+const fn required_nullable(path: &'static str, representative: &'static str) -> FieldRule {
+    FieldRule {
+        path,
+        presence: WirePresence::RequiredNullable { representative },
+    }
+}
+
+const fn optional_non_null(path: &'static str) -> FieldRule {
+    FieldRule {
+        path,
+        presence: WirePresence::OptionalNonNull,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BodySchemaCase<'a> {
+    name: &'static str,
+    action: &'static str,
+    flow: WorkspaceFlow,
+    kind: MessageBodyKind,
+    canonical: &'static str,
+    fields: &'a [FieldRule],
+}
+
+fn for_each_body_schema_case(mut visit: impl FnMut(BodySchemaCase<'_>)) {
+    use MessageBodyKind as Kind;
+    use WorkspaceFlow::{ClientRequest, ServerPush, ServerResponse};
+
+    let cases = [
+        BodySchemaCase {
+            name: "hello-request",
+            action: "WorkspaceHello",
+            flow: ClientRequest,
+            kind: Kind::HelloRequest,
+            canonical: HELLO_REQUEST_JSON,
+            fields: &[
+                required_non_null("protocolVersion"),
+                required_non_null("clientId"),
+                required_non_null("clientVersion"),
+                required_non_null("capabilities"),
+            ],
+        },
+        BodySchemaCase {
+            name: "hello-response",
+            action: "WorkspaceHello",
+            flow: ServerResponse,
+            kind: Kind::HelloResponse,
+            canonical: HELLO_RESPONSE_JSON,
+            fields: &[
+                required_non_null("protocolVersion"),
+                required_non_null("serverVersion"),
+                required_non_null("maxControlFrameBytes"),
+                required_non_null("maxBinaryChunkBytes"),
+                required_non_null("maxBlobBytes"),
+                required_non_null("maxTransfersPerConnection"),
+                required_non_null("heartbeatSeconds"),
+            ],
+        },
+        BodySchemaCase {
+            name: "subscribe-request",
+            action: "WorkspaceSubscribe",
+            flow: ClientRequest,
+            kind: Kind::SubscribeRequest,
+            canonical: SUBSCRIBE_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("lastAckRevision"),
+            ],
+        },
+        BodySchemaCase {
+            name: "snapshot-begin",
+            action: "WorkspaceSnapshotBegin",
+            flow: ServerPush,
+            kind: Kind::SnapshotBegin,
+            canonical: SNAPSHOT_BEGIN_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("streamId"),
+                required_non_null("mode"),
+                required_non_null("fromRevision"),
+                required_non_null("finalRevision"),
+                required_non_null("entryCount"),
+                required_non_null("eventCount"),
+            ],
+        },
+        BodySchemaCase {
+            name: "snapshot-entry",
+            action: "WorkspaceSnapshotEntry",
+            flow: ServerPush,
+            kind: Kind::SnapshotEntry,
+            canonical: SNAPSHOT_ENTRY_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("streamId"),
+                required_non_null("index"),
+                required_non_null("entry"),
+                required_non_null("entry.path"),
+                required_non_null("entry.pathRevision"),
+                required_non_null("entry.kind"),
+                required_nullable("entry.contentHash", HASH_JSON),
+                required_non_null("entry.metadata"),
+                required_non_null("entry.metadata.size"),
+                required_non_null("entry.metadata.modifiedAtMs"),
+                required_non_null("entry.metadata.executable"),
+                required_non_null("entry.tombstone"),
+            ],
+        },
+        BodySchemaCase {
+            name: "snapshot-end",
+            action: "WorkspaceSnapshotEnd",
+            flow: ServerPush,
+            kind: Kind::SnapshotEnd,
+            canonical: SNAPSHOT_END_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("streamId"),
+                required_non_null("mode"),
+                required_non_null("deliveredCount"),
+                required_non_null("finalRevision"),
+            ],
+        },
+        BodySchemaCase {
+            name: "mutation",
+            action: "WorkspaceMutation",
+            flow: ClientRequest,
+            kind: Kind::Mutation,
+            canonical: MUTATION_SCHEMA_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("operationId"),
+                required_non_null("path"),
+                required_non_null("basePathRevision"),
+                required_non_null("kind"),
+                required_nullable("contentHash", HASH_JSON),
+                required_non_null("metadata"),
+                required_non_null("metadata.size"),
+                required_non_null("metadata.modifiedAtMs"),
+                required_non_null("metadata.executable"),
+                optional_non_null("newPath"),
+                optional_non_null("targetBasePathRevision"),
+            ],
+        },
+        BodySchemaCase {
+            name: "mutation-accepted",
+            action: "WorkspaceMutationAccepted",
+            flow: ServerResponse,
+            kind: Kind::MutationAccepted,
+            canonical: MUTATION_ACCEPTED_SCHEMA_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("operationId"),
+                required_non_null("revision"),
+                required_non_null("pathState"),
+                required_non_null("pathState.path"),
+                required_non_null("pathState.pathRevision"),
+                required_non_null("pathState.kind"),
+                required_nullable("pathState.contentHash", HASH_JSON),
+                required_non_null("pathState.metadata"),
+                required_non_null("pathState.metadata.size"),
+                required_non_null("pathState.metadata.modifiedAtMs"),
+                required_non_null("pathState.metadata.executable"),
+                required_non_null("pathState.tombstone"),
+                optional_non_null("oldPathState"),
+                required_non_null("oldPathState.path"),
+                required_non_null("oldPathState.pathRevision"),
+                required_non_null("oldPathState.kind"),
+                required_nullable("oldPathState.contentHash", HASH_JSON),
+                required_non_null("oldPathState.metadata"),
+                required_non_null("oldPathState.metadata.size"),
+                required_non_null("oldPathState.metadata.modifiedAtMs"),
+                required_non_null("oldPathState.metadata.executable"),
+                required_non_null("oldPathState.tombstone"),
+                optional_non_null("newPathState"),
+                required_non_null("newPathState.path"),
+                required_non_null("newPathState.pathRevision"),
+                required_non_null("newPathState.kind"),
+                required_nullable("newPathState.contentHash", HASH_JSON),
+                required_non_null("newPathState.metadata"),
+                required_non_null("newPathState.metadata.size"),
+                required_non_null("newPathState.metadata.modifiedAtMs"),
+                required_non_null("newPathState.metadata.executable"),
+                required_non_null("newPathState.tombstone"),
+            ],
+        },
+        BodySchemaCase {
+            name: "mutation-rejected",
+            action: "WorkspaceMutationRejected",
+            flow: ServerResponse,
+            kind: Kind::MutationRejected,
+            canonical: MUTATION_REJECTED_SCHEMA_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("operationId"),
+                required_non_null("reason"),
+                required_nullable("currentPathState", PATH_STATE_JSON),
+                required_non_null("currentPathState.path"),
+                required_non_null("currentPathState.pathRevision"),
+                required_non_null("currentPathState.kind"),
+                required_nullable("currentPathState.contentHash", HASH_JSON),
+                required_non_null("currentPathState.metadata"),
+                required_non_null("currentPathState.metadata.size"),
+                required_non_null("currentPathState.metadata.modifiedAtMs"),
+                required_non_null("currentPathState.metadata.executable"),
+                required_non_null("currentPathState.tombstone"),
+                required_nullable("conflictId", CONFLICT_ID_JSON),
+                required_nullable("requiredHash", HASH_JSON),
+            ],
+        },
+        BodySchemaCase {
+            name: "event",
+            action: "WorkspaceEvent",
+            flow: ServerPush,
+            kind: Kind::Event,
+            canonical: EVENT_SCHEMA_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("streamId"),
+                required_non_null("index"),
+                required_non_null("revision"),
+                required_non_null("operationId"),
+                required_non_null("originClientId"),
+                required_non_null("mutation"),
+                required_non_null("mutation.workspaceId"),
+                required_non_null("mutation.clientId"),
+                required_non_null("mutation.operationId"),
+                required_non_null("mutation.path"),
+                required_non_null("mutation.basePathRevision"),
+                required_non_null("mutation.kind"),
+                required_nullable("mutation.contentHash", HASH_JSON),
+                required_non_null("mutation.metadata"),
+                required_non_null("mutation.metadata.size"),
+                required_non_null("mutation.metadata.modifiedAtMs"),
+                required_non_null("mutation.metadata.executable"),
+                optional_non_null("mutation.newPath"),
+                optional_non_null("mutation.targetBasePathRevision"),
+                required_non_null("pathState"),
+                required_non_null("pathState.path"),
+                required_non_null("pathState.pathRevision"),
+                required_non_null("pathState.kind"),
+                required_nullable("pathState.contentHash", HASH_JSON),
+                required_non_null("pathState.metadata"),
+                required_non_null("pathState.metadata.size"),
+                required_non_null("pathState.metadata.modifiedAtMs"),
+                required_non_null("pathState.metadata.executable"),
+                required_non_null("pathState.tombstone"),
+                optional_non_null("oldPathState"),
+                required_non_null("oldPathState.path"),
+                required_non_null("oldPathState.pathRevision"),
+                required_non_null("oldPathState.kind"),
+                required_nullable("oldPathState.contentHash", HASH_JSON),
+                required_non_null("oldPathState.metadata"),
+                required_non_null("oldPathState.metadata.size"),
+                required_non_null("oldPathState.metadata.modifiedAtMs"),
+                required_non_null("oldPathState.metadata.executable"),
+                required_non_null("oldPathState.tombstone"),
+                optional_non_null("newPathState"),
+                required_non_null("newPathState.path"),
+                required_non_null("newPathState.pathRevision"),
+                required_non_null("newPathState.kind"),
+                required_nullable("newPathState.contentHash", HASH_JSON),
+                required_non_null("newPathState.metadata"),
+                required_non_null("newPathState.metadata.size"),
+                required_non_null("newPathState.metadata.modifiedAtMs"),
+                required_non_null("newPathState.metadata.executable"),
+                required_non_null("newPathState.tombstone"),
+            ],
+        },
+        BodySchemaCase {
+            name: "ack",
+            action: "WorkspaceAck",
+            flow: ClientRequest,
+            kind: Kind::Ack,
+            canonical: ACK_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("revision"),
+            ],
+        },
+        BodySchemaCase {
+            name: "blob-need-download-request",
+            action: "WorkspaceBlobNeed",
+            flow: ClientRequest,
+            kind: Kind::BlobNeedDownloadRequest,
+            canonical: BLOB_NEED_DOWNLOAD_REQUEST_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("direction"),
+                required_nullable("operationId", OPERATION_ID_JSON),
+                required_non_null("contentHash"),
+                required_nullable("size", SIZE_JSON),
+            ],
+        },
+        BodySchemaCase {
+            name: "blob-need-download-response",
+            action: "WorkspaceBlobNeed",
+            flow: ServerResponse,
+            kind: Kind::BlobNeedDownloadResponse,
+            canonical: BLOB_NEED_DOWNLOAD_RESPONSE_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("direction"),
+                required_nullable("operationId", OPERATION_ID_JSON),
+                required_non_null("contentHash"),
+                required_non_null("size"),
+            ],
+        },
+        BodySchemaCase {
+            name: "blob-need-upload-push",
+            action: "WorkspaceBlobNeed",
+            flow: ServerPush,
+            kind: Kind::BlobNeedUploadPush,
+            canonical: BLOB_NEED_UPLOAD_PUSH_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("direction"),
+                required_non_null("operationId"),
+                required_non_null("contentHash"),
+                required_non_null("size"),
+            ],
+        },
+        BodySchemaCase {
+            name: "blob-begin",
+            action: "WorkspaceBlobBegin",
+            flow: ClientRequest,
+            kind: Kind::BlobBegin,
+            canonical: BLOB_BEGIN_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("transferId"),
+                required_non_null("direction"),
+                required_non_null("contentHash"),
+                required_non_null("size"),
+                required_non_null("chunkSize"),
+                required_non_null("chunkCount"),
+            ],
+        },
+        BodySchemaCase {
+            name: "blob-end",
+            action: "WorkspaceBlobEnd",
+            flow: ClientRequest,
+            kind: Kind::BlobEnd,
+            canonical: BLOB_END_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("transferId"),
+                required_non_null("direction"),
+                required_non_null("contentHash"),
+                required_non_null("size"),
+                required_non_null("chunkCount"),
+            ],
+        },
+        BodySchemaCase {
+            name: "conflict-created",
+            action: "WorkspaceConflictCreated",
+            flow: ServerPush,
+            kind: Kind::ConflictCreated,
+            canonical: CONFLICT_CREATED_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("conflictId"),
+                required_non_null("conflictRevision"),
+                required_non_null("path"),
+                required_non_null("kind"),
+                required_non_null("ancestor"),
+                required_nullable("ancestor.path", PATH_JSON),
+                required_non_null("ancestor.pathRevision"),
+                required_nullable("ancestor.contentHash", HASH_JSON),
+                required_non_null("ancestor.metadata"),
+                required_non_null("ancestor.metadata.size"),
+                required_non_null("ancestor.metadata.modifiedAtMs"),
+                required_non_null("ancestor.metadata.executable"),
+                required_non_null("ancestor.tombstone"),
+                required_non_null("current"),
+                required_nullable("current.path", PATH_JSON),
+                required_non_null("current.pathRevision"),
+                required_nullable("current.contentHash", HASH_JSON),
+                required_non_null("current.metadata"),
+                required_non_null("current.metadata.size"),
+                required_non_null("current.metadata.modifiedAtMs"),
+                required_non_null("current.metadata.executable"),
+                required_non_null("current.tombstone"),
+                required_non_null("incoming"),
+                required_nullable("incoming.path", PATH_JSON),
+                required_non_null("incoming.pathRevision"),
+                required_nullable("incoming.contentHash", HASH_JSON),
+                required_non_null("incoming.metadata"),
+                required_non_null("incoming.metadata.size"),
+                required_non_null("incoming.metadata.modifiedAtMs"),
+                required_non_null("incoming.metadata.executable"),
+                required_non_null("incoming.tombstone"),
+                required_non_null("createdByOperationId"),
+            ],
+        },
+        BodySchemaCase {
+            name: "conflict-resolved-request",
+            action: "WorkspaceConflictResolved",
+            flow: ClientRequest,
+            kind: Kind::ConflictResolvedRequest,
+            canonical: CONFLICT_RESOLVED_REQUEST_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("clientId"),
+                required_non_null("operationId"),
+                required_non_null("conflictId"),
+                required_non_null("conflictRevision"),
+                required_non_null("choice"),
+                required_non_null("path"),
+                required_nullable("contentHash", HASH_JSON),
+                required_non_null("metadata"),
+                required_non_null("metadata.size"),
+                required_non_null("metadata.modifiedAtMs"),
+                required_non_null("metadata.executable"),
+            ],
+        },
+        BodySchemaCase {
+            name: "conflict-resolved",
+            action: "WorkspaceConflictResolved",
+            flow: ServerResponse,
+            kind: Kind::ConflictResolved,
+            canonical: CONFLICT_RESOLVED_JSON,
+            fields: &[
+                required_non_null("workspaceId"),
+                required_non_null("conflictId"),
+                required_non_null("conflictRevision"),
+                required_non_null("operationId"),
+                required_non_null("revision"),
+                required_non_null("choice"),
+                required_non_null("pathState"),
+                required_non_null("pathState.path"),
+                required_non_null("pathState.pathRevision"),
+                required_non_null("pathState.kind"),
+                required_nullable("pathState.contentHash", HASH_JSON),
+                required_non_null("pathState.metadata"),
+                required_non_null("pathState.metadata.size"),
+                required_non_null("pathState.metadata.modifiedAtMs"),
+                required_non_null("pathState.metadata.executable"),
+                required_non_null("pathState.tombstone"),
+                required_non_null("resolvedByClientId"),
+            ],
+        },
+    ];
+    assert_eq!(cases.len(), 19);
+    for case in cases {
+        visit(case);
+    }
+}
+
 #[derive(Clone, Copy)]
 struct LegalRow {
     action: &'static str,
@@ -702,6 +1187,240 @@ fn every_body_round_trips_exact_keys_and_rejects_unknown_missing_and_null() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn literal_body_schema_oracle_enforces_every_recursive_field_contract() {
+    let mut case_count = 0;
+    let mut covered_kinds = BTreeSet::new();
+    for_each_body_schema_case(|case| {
+        case_count += 1;
+        assert!(
+            covered_kinds.insert(case.kind),
+            "{} duplicates body kind {:?}",
+            case.name,
+            case.kind,
+        );
+        let canonical = serde_json::from_str::<Value>(case.canonical).unwrap();
+        let expected_paths = case
+            .fields
+            .iter()
+            .map(|field| field.path.to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            expected_paths.len(),
+            case.fields.len(),
+            "{} has duplicate literal field rules",
+            case.name,
+        );
+        assert_eq!(
+            json_field_paths(&canonical),
+            expected_paths,
+            "{} literal schema does not cover its complete canonical object",
+            case.name,
+        );
+
+        let body = decode_schema_case(&case, &canonical).unwrap();
+        assert_eq!(body.kind(), case.kind, "{} body kind", case.name);
+        assert_eq!(
+            serde_json::to_string(&body).unwrap(),
+            case.canonical,
+            "{} canonical round trip",
+            case.name,
+        );
+
+        for rule in case.fields {
+            match rule.presence {
+                WirePresence::RequiredNonNull => {
+                    let mut missing = canonical.clone();
+                    remove_json_path(&mut missing, rule.path);
+                    assert!(
+                        decode_schema_case(&case, &missing).is_err(),
+                        "{} {} accepted omission despite required-non-null",
+                        case.name,
+                        rule.path,
+                    );
+
+                    let mut explicit_null = canonical.clone();
+                    set_json_path(&mut explicit_null, rule.path, Value::Null);
+                    assert!(
+                        decode_schema_case(&case, &explicit_null).is_err(),
+                        "{} {} accepted null despite required-non-null",
+                        case.name,
+                        rule.path,
+                    );
+                }
+                WirePresence::RequiredNullable { representative } => {
+                    let mut missing = canonical.clone();
+                    remove_json_path(&mut missing, rule.path);
+                    assert!(
+                        decode_schema_case(&case, &missing).is_err(),
+                        "{} {} accepted omission despite required-nullable",
+                        case.name,
+                        rule.path,
+                    );
+
+                    let mut explicit_null = canonical.clone();
+                    set_json_path(&mut explicit_null, rule.path, Value::Null);
+                    decode_schema_case(&case, &explicit_null).unwrap_or_else(|error| {
+                        panic!(
+                            "{} {} rejected null despite required-nullable: {error}",
+                            case.name, rule.path,
+                        )
+                    });
+
+                    let representative = serde_json::from_str(representative).unwrap();
+                    let mut with_value = canonical.clone();
+                    set_json_path(&mut with_value, rule.path, representative);
+                    decode_schema_case(&case, &with_value).unwrap_or_else(|error| {
+                        panic!(
+                            "{} {} rejected representative value despite required-nullable: {error}",
+                            case.name, rule.path,
+                        )
+                    });
+                }
+                WirePresence::OptionalNonNull => {
+                    let mut missing = canonical.clone();
+                    remove_json_path(&mut missing, rule.path);
+                    decode_schema_case(&case, &missing).unwrap_or_else(|error| {
+                        panic!(
+                            "{} {} rejected omission despite optional-non-null: {error}",
+                            case.name, rule.path,
+                        )
+                    });
+
+                    let mut explicit_null = canonical.clone();
+                    set_json_path(&mut explicit_null, rule.path, Value::Null);
+                    assert!(
+                        decode_schema_case(&case, &explicit_null).is_err(),
+                        "{} {} accepted null despite optional-non-null",
+                        case.name,
+                        rule.path,
+                    );
+                }
+            }
+        }
+
+        for object_path in json_object_paths(&canonical) {
+            let mut unknown = canonical.clone();
+            insert_unknown_field(&mut unknown, &object_path);
+            assert!(
+                decode_schema_case(&case, &unknown).is_err(),
+                "{} accepted unknown field in object {object_path:?}",
+                case.name,
+            );
+        }
+    });
+    assert_eq!(case_count, 19);
+    assert_eq!(
+        covered_kinds.len(),
+        19,
+        "the literal oracle must cover each distinct body kind exactly once",
+    );
+}
+
+fn decode_schema_case(
+    case: &BodySchemaCase<'_>,
+    value: &Value,
+) -> Result<MessageBody, ProtocolDecodeError> {
+    decode_data(
+        action(case.action),
+        case.flow,
+        &serde_json::to_vec(value).unwrap(),
+    )
+}
+
+fn json_field_paths(value: &Value) -> BTreeSet<String> {
+    fn visit(value: &Value, prefix: &str, paths: &mut BTreeSet<String>) {
+        let Value::Object(object) = value else {
+            return;
+        };
+        for (key, child) in object {
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            paths.insert(path.clone());
+            visit(child, &path, paths);
+        }
+    }
+
+    let mut paths = BTreeSet::new();
+    visit(value, "", &mut paths);
+    paths
+}
+
+fn json_object_paths(value: &Value) -> BTreeSet<String> {
+    fn visit(value: &Value, prefix: &str, paths: &mut BTreeSet<String>) {
+        let Value::Object(object) = value else {
+            return;
+        };
+        paths.insert(prefix.to_owned());
+        for (key, child) in object {
+            let path = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{prefix}.{key}")
+            };
+            visit(child, &path, paths);
+        }
+    }
+
+    let mut paths = BTreeSet::new();
+    visit(value, "", &mut paths);
+    paths
+}
+
+fn json_value_at_path_mut<'a>(value: &'a mut Value, path: &[&str]) -> &'a mut Value {
+    let mut current = value;
+    for segment in path {
+        current = current
+            .as_object_mut()
+            .and_then(|object| object.get_mut(*segment))
+            .unwrap_or_else(|| panic!("literal schema path segment {segment:?} is missing"));
+    }
+    current
+}
+
+fn remove_json_path(value: &mut Value, path: &str) {
+    let mut segments = path.split('.').collect::<Vec<_>>();
+    let field = segments.pop().expect("field path");
+    let parent = json_value_at_path_mut(value, &segments);
+    assert!(
+        parent.as_object_mut().unwrap().remove(field).is_some(),
+        "literal schema path {path:?} is missing",
+    );
+}
+
+fn set_json_path(value: &mut Value, path: &str, replacement: Value) {
+    let mut segments = path.split('.').collect::<Vec<_>>();
+    let field = segments.pop().expect("field path");
+    let parent = json_value_at_path_mut(value, &segments);
+    assert!(
+        parent
+            .as_object_mut()
+            .unwrap()
+            .insert(field.to_owned(), replacement)
+            .is_some(),
+        "literal schema path {path:?} is missing",
+    );
+}
+
+fn insert_unknown_field(value: &mut Value, object_path: &str) {
+    let segments = if object_path.is_empty() {
+        Vec::new()
+    } else {
+        object_path.split('.').collect::<Vec<_>>()
+    };
+    let object = json_value_at_path_mut(value, &segments)
+        .as_object_mut()
+        .expect("literal object path");
+    assert!(
+        object
+            .insert("unexpected".to_owned(), Value::Bool(true))
+            .is_none(),
+    );
 }
 
 fn workspace_id() -> WorkspaceId {
