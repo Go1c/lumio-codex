@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
 use fns_protocol::{
-    BLOB_CHUNK_BYTES, BLOB_HEADER_LEN, MAX_ACTION_BYTES, MAX_BLOB_BYTES, MAX_CONTROL_FRAME_BYTES,
-    WorkspaceBlobDirection, WorkspaceConflictChoice, WorkspaceConflictKind, WorkspaceEntryKind,
+    ACTION_FLOW_SPECS, BLOB_CHUNK_BYTES, BLOB_HEADER_LEN, MAX_ACTION_BYTES, MAX_BLOB_BYTES,
+    MAX_CONTROL_FRAME_BYTES, MessageBody, WorkspaceAction, WorkspaceBlobDirection,
+    WorkspaceConflictChoice, WorkspaceConflictKind, WorkspaceEntryKind, WorkspaceFlow,
     WorkspaceMutationKind, WorkspaceMutationRejectReason, WorkspaceSnapshotMode,
     WorkspaceValidationError,
 };
@@ -112,4 +113,14 @@ fn primitive_enums_use_the_exact_wire_names() {
     ] {
         assert_wire_name(value, name);
     }
+}
+
+#[test]
+fn action_contract_is_public_and_has_locked_cardinality() {
+    assert_eq!(WorkspaceAction::ALL.len(), 15);
+    assert_eq!(WorkspaceFlow::ALL.len(), 3);
+    assert_eq!(ACTION_FLOW_SPECS.len(), 25);
+
+    let kind = std::mem::size_of::<MessageBody>();
+    assert!(kind > 0);
 }

@@ -1,10 +1,34 @@
+pub mod action;
+pub mod envelope;
 pub mod error;
+pub mod message;
 pub mod nullable;
 pub mod revision;
 pub mod strict_json;
 pub mod value;
 
-pub use error::WorkspaceValidationError;
+pub use action::{
+    ACTION_FLOW_SPECS, ActionFlowSpec, MessageBody, MessageBodyKind, WorkspaceAction,
+    WorkspaceFlow, decode_data,
+};
+pub use envelope::{
+    DecodedEnvelope, DecodedFrame, decode_text_frame, encode_failure, encode_request,
+    encode_success, encode_unknown_action_failure,
+};
+pub use error::{
+    ProtocolDecodeError, ProtocolEncodeError, WorkspaceV2Error, WorkspaceV2ErrorCode,
+    WorkspaceV2FieldError, WorkspaceValidationError,
+};
+pub use message::{
+    WorkspaceAckRequest, WorkspaceBlobBeginMessage, WorkspaceBlobEndMessage,
+    WorkspaceBlobNeedDownloadRequest, WorkspaceBlobNeedDownloadResponse,
+    WorkspaceBlobNeedUploadPush, WorkspaceConflictCreatedMessage, WorkspaceConflictResolvedMessage,
+    WorkspaceConflictResolvedRequest, WorkspaceConflictSide, WorkspaceEventMessage,
+    WorkspaceHelloRequest, WorkspaceHelloResponse, WorkspaceMutation,
+    WorkspaceMutationAcceptedMessage, WorkspaceMutationRejectedMessage, WorkspacePathState,
+    WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage, WorkspaceSnapshotEntryMessage,
+    WorkspaceSubscribeRequest,
+};
 pub use nullable::{RequiredNullable, deserialize_optional_non_null};
 pub use revision::WorkspaceRevision;
 pub use value::{
