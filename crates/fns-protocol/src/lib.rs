@@ -1,4 +1,5 @@
 pub mod action;
+pub mod binary;
 pub mod envelope;
 pub mod error;
 pub mod message;
@@ -10,6 +11,9 @@ pub mod value;
 pub use action::{
     ACTION_FLOW_SPECS, ActionFlowSpec, MessageBody, MessageBodyKind, WorkspaceAction,
     WorkspaceFlow, decode_data,
+};
+pub use binary::{
+    WorkspaceBlobHeader, compute_blob_digest, decode_binary_frame, encode_binary_frame,
 };
 pub use envelope::{
     DecodedEnvelope, DecodedFrame, decode_text_frame, encode_failure, encode_request,
