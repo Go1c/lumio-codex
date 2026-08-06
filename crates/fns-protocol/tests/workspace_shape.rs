@@ -151,3 +151,21 @@ fn ci_contract_requires_three_platforms_and_the_locked_quality_gate() {
         );
     }
 }
+
+#[test]
+fn fixture_bytes_are_marked_binary_for_cross_platform_checkout() {
+    let protocol_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repository_root = protocol_crate
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("protocol crate must be nested below the repository root");
+    let attributes = fs::read_to_string(repository_root.join(".gitattributes"))
+        .expect("fixture attributes must exist");
+
+    assert!(
+        attributes
+            .lines()
+            .any(|line| line == "crates/fns-protocol/tests/fixtures/** -text"),
+        "workspace fixture bytes must be marked binary"
+    );
+}
