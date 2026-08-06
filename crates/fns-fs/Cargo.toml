@@ -5,5 +5,21 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[dependencies]
+blake3.workspace = true
+cap-std.workspace = true
+crossbeam-channel.workspace = true
+filetime.workspace = true
+fns-protocol = { path = "../fns-protocol" }
+globset.workspace = true
+notify.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true
