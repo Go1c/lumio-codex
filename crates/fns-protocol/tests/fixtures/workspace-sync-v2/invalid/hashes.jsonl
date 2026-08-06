@@ -1,0 +1,5 @@
+{"case":"number","value":1,"field":"contentHash","reason":"must_be_string"}
+{"case":"wrong-algorithm","value":"sha256:abababababababababababababababababababababababababababababababab","field":"contentHash","reason":"invalid_blake3"}
+{"case":"short","value":"blake3:abab","field":"contentHash","reason":"invalid_blake3"}
+{"case":"uppercase","value":"blake3:ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB","field":"contentHash","reason":"invalid_blake3"}
+{"case":"non-hex","value":"blake3:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz","field":"contentHash","reason":"invalid_blake3"}

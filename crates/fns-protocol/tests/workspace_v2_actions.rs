@@ -15,8 +15,8 @@ use fns_protocol::{
     WorkspacePathState, WorkspaceRevision, WorkspaceSnapshotBeginMessage,
     WorkspaceSnapshotEndMessage, WorkspaceSnapshotEntryMessage, WorkspaceSnapshotMode,
     WorkspaceSubscribeRequest, WorkspaceV2Error, WorkspaceV2ErrorCode, WorkspaceV2FieldError,
-    WorkspaceValidationError, decode_data, decode_text_frame, encode_failure, encode_request,
-    encode_success, encode_unknown_action_failure, strict_json,
+    WorkspaceValidationError, decode_data, decode_server_text_frame, decode_text_frame,
+    encode_failure, encode_request, encode_success, encode_unknown_action_failure, strict_json,
 };
 use serde_json::Value;
 
@@ -934,6 +934,218 @@ fn envelopes_enforce_request_success_failure_and_push_presence() {
         r#"WorkspaceSnapshotBegin|{"status":false,"error":{"code":"invalid_request","message":"invalid request","retryable":false}}"#.to_owned(),
     ] {
         assert!(decode_text_frame(raw.as_bytes(), WorkspaceFlow::ServerPush).is_err());
+    }
+}
+
+#[test]
+fn server_decoder_infers_subscribe_stream_and_same_action_failure_once() {
+    assert!(!ACTION_FLOW_SPECS.iter().any(|spec| {
+        spec.action == WorkspaceAction::WorkspaceSubscribe
+            && spec.flow == WorkspaceFlow::ServerResponse
+    }));
+    let request =
+        format!(r#"WorkspaceSubscribe|{{"requestId":"{REQUEST_ID}","data":{SUBSCRIBE_JSON}}}"#);
+    let decoded = decode_text_frame(request.as_bytes(), WorkspaceFlow::ClientRequest).unwrap();
+    assert_eq!(decoded.action, WorkspaceAction::WorkspaceSubscribe);
+    assert_eq!(decoded.flow, WorkspaceFlow::ClientRequest);
+    assert!(matches!(
+        decoded.envelope,
+        DecodedEnvelope::Request {
+            request_id: actual_request_id,
+            body: MessageBody::SubscribeRequest(_),
+        } if actual_request_id == request_id()
+    ));
+
+    let continuation =
+        format!(r#"WorkspaceSnapshotBegin|{{"status":true,"data":{SNAPSHOT_BEGIN_JSON}}}"#);
+    let decoded = decode_server_text_frame(continuation.as_bytes()).unwrap();
+    assert_eq!(decoded.action, WorkspaceAction::WorkspaceSnapshotBegin);
+    assert_eq!(decoded.flow, WorkspaceFlow::ServerPush);
+    assert!(matches!(
+        decoded.envelope,
+        DecodedEnvelope::Success {
+            request_id: None,
+            body: MessageBody::SnapshotBegin(_),
+        }
+    ));
+
+    let failure = format!(
+        r#"WorkspaceSubscribe|{{"requestId":"{REQUEST_ID}","status":false,"error":{{"code":"invalid_request","message":"invalid request","retryable":false}}}}"#
+    );
+    let decoded = decode_server_text_frame(failure.as_bytes()).unwrap();
+    assert_eq!(decoded.action, WorkspaceAction::WorkspaceSubscribe);
+    assert_eq!(decoded.flow, WorkspaceFlow::ServerResponse);
+    assert!(matches!(
+        decoded.envelope,
+        DecodedEnvelope::Failure {
+            request_id: Some(actual_request_id),
+            error,
+        } if actual_request_id == request_id()
+            && error.code == WorkspaceV2ErrorCode::InvalidRequest
+    ));
+}
+
+#[test]
+fn server_decoder_correlates_mutation_results_across_distinct_actions() {
+    for (action, data, expected_kind) in [
+        (
+            WorkspaceAction::WorkspaceMutationAccepted,
+            MUTATION_ACCEPTED_JSON,
+            MessageBodyKind::MutationAccepted,
+        ),
+        (
+            WorkspaceAction::WorkspaceMutationRejected,
+            MUTATION_REJECTED_JSON,
+            MessageBodyKind::MutationRejected,
+        ),
+    ] {
+        assert_ne!(action, WorkspaceAction::WorkspaceMutation);
+        let frame = format!(
+            r#"{}|{{"requestId":"{REQUEST_ID}","status":true,"data":{data}}}"#,
+            action.as_str()
+        );
+        let decoded = decode_server_text_frame(frame.as_bytes()).unwrap();
+        assert_eq!(decoded.action, action);
+        assert_eq!(decoded.flow, WorkspaceFlow::ServerResponse);
+        assert!(matches!(
+            decoded.envelope,
+            DecodedEnvelope::Success {
+                request_id: Some(actual_request_id),
+                body,
+            } if actual_request_id == request_id() && body.kind() == expected_kind
+        ));
+    }
+}
+
+#[test]
+fn server_decoder_keeps_mutation_protocol_failure_on_request_action() {
+    let frame = format!(
+        r#"WorkspaceMutation|{{"requestId":"{REQUEST_ID}","status":false,"error":{{"code":"invalid_request","message":"invalid request","retryable":false}}}}"#
+    );
+    let decoded = decode_server_text_frame(frame.as_bytes()).unwrap();
+    assert_eq!(decoded.action, WorkspaceAction::WorkspaceMutation);
+    assert_eq!(decoded.flow, WorkspaceFlow::ServerResponse);
+    assert!(matches!(
+        decoded.envelope,
+        DecodedEnvelope::Failure {
+            request_id: Some(actual_request_id),
+            error,
+        } if actual_request_id == request_id()
+            && error.code == WorkspaceV2ErrorCode::InvalidRequest
+    ));
+}
+
+#[test]
+fn server_decoder_infers_all_dual_response_push_actions_once() {
+    let rows = [
+        (
+            WorkspaceAction::WorkspaceBlobNeed,
+            BLOB_NEED_DOWNLOAD_RESPONSE_JSON,
+            BLOB_NEED_UPLOAD_PUSH_JSON,
+            MessageBodyKind::BlobNeedDownloadResponse,
+            MessageBodyKind::BlobNeedUploadPush,
+        ),
+        (
+            WorkspaceAction::WorkspaceBlobBegin,
+            BLOB_BEGIN_JSON,
+            BLOB_BEGIN_JSON,
+            MessageBodyKind::BlobBegin,
+            MessageBodyKind::BlobBegin,
+        ),
+        (
+            WorkspaceAction::WorkspaceBlobEnd,
+            BLOB_END_JSON,
+            BLOB_END_JSON,
+            MessageBodyKind::BlobEnd,
+            MessageBodyKind::BlobEnd,
+        ),
+        (
+            WorkspaceAction::WorkspaceConflictResolved,
+            CONFLICT_RESOLVED_JSON,
+            CONFLICT_RESOLVED_JSON,
+            MessageBodyKind::ConflictResolved,
+            MessageBodyKind::ConflictResolved,
+        ),
+    ];
+
+    for (action, response_data, push_data, response_kind, push_kind) in rows {
+        let response = format!(
+            r#"{}|{{"requestId":"{REQUEST_ID}","status":true,"data":{response_data}}}"#,
+            action.as_str()
+        );
+        let decoded = decode_server_text_frame(response.as_bytes()).unwrap();
+        assert_eq!(decoded.action, action);
+        assert_eq!(decoded.flow, WorkspaceFlow::ServerResponse);
+        assert!(matches!(
+            decoded.envelope,
+            DecodedEnvelope::Success {
+                request_id: Some(actual_request_id),
+                body,
+            } if actual_request_id == request_id() && body.kind() == response_kind
+        ));
+
+        let push = format!(
+            r#"{}|{{"status":true,"data":{push_data}}}"#,
+            action.as_str()
+        );
+        let decoded = decode_server_text_frame(push.as_bytes()).unwrap();
+        assert_eq!(decoded.action, action);
+        assert_eq!(decoded.flow, WorkspaceFlow::ServerPush);
+        assert!(matches!(
+            decoded.envelope,
+            DecodedEnvelope::Success {
+                request_id: None,
+                body,
+            } if body.kind() == push_kind
+        ));
+    }
+}
+
+#[test]
+fn server_decoder_rejects_missing_status_and_illegal_envelopes() {
+    for (request_id_member, expected_request_id) in [
+        (
+            format!(r#""requestId":"{REQUEST_ID}","#),
+            Some(request_id()),
+        ),
+        (String::new(), None),
+    ] {
+        let frame = format!(
+            r#"WorkspaceSubscribe|{{{request_id_member}"status":false,"error":{{"code":"invalid_request","message":"invalid request","retryable":false}}}}"#
+        );
+        let decoded = decode_server_text_frame(frame.as_bytes()).unwrap();
+        assert_eq!(decoded.action, WorkspaceAction::WorkspaceSubscribe);
+        assert_eq!(decoded.flow, WorkspaceFlow::ServerResponse);
+        assert!(matches!(
+            decoded.envelope,
+            DecodedEnvelope::Failure {
+                request_id,
+                error,
+            } if request_id == expected_request_id
+                && error.code == WorkspaceV2ErrorCode::InvalidRequest
+        ));
+    }
+
+    let invalid = [
+        format!(r#"WorkspaceSnapshotBegin|{{"data":{SNAPSHOT_BEGIN_JSON}}}"#),
+        format!(r#"WorkspaceSnapshotBegin|{{"status":null,"data":{SNAPSHOT_BEGIN_JSON}}}"#),
+        format!(
+            r#"WorkspaceHello|{{"requestId":null,"status":true,"data":{HELLO_RESPONSE_JSON}}}"#
+        ),
+        format!(r#"WorkspaceHello|{{"requestId":"{REQUEST_ID}","status":true}}"#),
+        format!(r#"WorkspaceHello|{{"requestId":"{REQUEST_ID}","status":false}}"#),
+        format!(
+            r#"WorkspaceHello|{{"requestId":"{REQUEST_ID}","status":false,"data":{HELLO_RESPONSE_JSON},"error":{{"code":"invalid_request","message":"invalid request","retryable":false}}}}"#
+        ),
+        format!(
+            r#"WorkspaceSnapshotBegin|{{"requestId":"{REQUEST_ID}","status":true,"data":{SNAPSHOT_BEGIN_JSON}}}"#
+        ),
+    ];
+    for frame in invalid {
+        assert!(
+            decode_server_text_frame(frame.as_bytes()).is_err(),
+            "{frame}"
+        );
     }
 }
 

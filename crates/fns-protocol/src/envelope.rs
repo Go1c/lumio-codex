@@ -98,6 +98,22 @@ pub fn decode_text_frame(
     frame: &[u8],
     flow: WorkspaceFlow,
 ) -> Result<DecodedFrame, ProtocolDecodeError> {
+    let (action, envelope) = parse_text_frame(frame)?;
+    decode_parsed_frame(action, flow, envelope)
+}
+
+pub fn decode_server_text_frame(frame: &[u8]) -> Result<DecodedFrame, ProtocolDecodeError> {
+    let (action, envelope) = parse_text_frame(frame)?;
+    let flow = match (&envelope.status, &envelope.request_id) {
+        (Presence::Value(false), _) => WorkspaceFlow::ServerResponse,
+        (Presence::Value(true), Presence::Value(_)) => WorkspaceFlow::ServerResponse,
+        (Presence::Value(true), Presence::Missing) => WorkspaceFlow::ServerPush,
+        (Presence::Missing, _) => return Err(validation_error("status", "required").into()),
+    };
+    decode_parsed_frame(action, flow, envelope)
+}
+
+fn parse_text_frame(frame: &[u8]) -> Result<(WorkspaceAction, WireEnvelope), ProtocolDecodeError> {
     if frame.len() > MAX_CONTROL_FRAME_BYTES {
         return Err(validation_error("frame", "too_large").into());
     }
@@ -114,7 +130,14 @@ pub fn decode_text_frame(
     let action = WorkspaceAction::from_str(action_text).map_err(ProtocolDecodeError::from)?;
     let envelope = strict_json::from_slice::<WireEnvelope>(&frame[separator + 1..])
         .map_err(|_| ProtocolDecodeError::from(validation_error("envelope", "invalid_json")))?;
+    Ok((action, envelope))
+}
 
+fn decode_parsed_frame(
+    action: WorkspaceAction,
+    flow: WorkspaceFlow,
+    envelope: WireEnvelope,
+) -> Result<DecodedFrame, ProtocolDecodeError> {
     let decoded = match flow {
         WorkspaceFlow::ClientRequest => decode_request(action, envelope)?,
         WorkspaceFlow::ServerResponse => decode_response(action, envelope)?,
