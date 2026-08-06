@@ -169,13 +169,6 @@ fn set_json_null(value: &mut Value, path: &[JsonPathPart]) {
         .expect("recorded key exists") = Value::Null;
 }
 
-fn original_json_value<'a>(value: &'a Value, path: &[JsonPathPart]) -> &'a Value {
-    path.iter().fold(value, |current, part| match part {
-        JsonPathPart::Key(key) => &current[key],
-        JsonPathPart::Index(index) => &current[*index],
-    })
-}
-
 fn optional_non_null_key(path: &[JsonPathPart]) -> bool {
     matches!(
         path.last(),
@@ -187,19 +180,78 @@ fn optional_non_null_key(path: &[JsonPathPart]) -> bool {
     )
 }
 
-fn required_nullable_key(path: &[JsonPathPart]) -> bool {
+fn json_path(path: &[JsonPathPart]) -> String {
+    let mut rendered = String::new();
+    for part in path {
+        match part {
+            JsonPathPart::Key(key) => {
+                if !rendered.is_empty() {
+                    rendered.push('.');
+                }
+                rendered.push_str(key);
+            }
+            JsonPathPart::Index(index) => {
+                rendered.push('[');
+                rendered.push_str(&index.to_string());
+                rendered.push(']');
+            }
+        }
+    }
+    rendered
+}
+
+fn required_nullable_path(
+    action: WorkspaceAction,
+    flow: WorkspaceFlow,
+    path: &[JsonPathPart],
+) -> bool {
+    use WorkspaceAction::{
+        WorkspaceBlobNeed, WorkspaceConflictCreated, WorkspaceConflictResolved, WorkspaceEvent,
+        WorkspaceMutation, WorkspaceMutationAccepted, WorkspaceMutationRejected,
+        WorkspaceSnapshotEntry,
+    };
+    use WorkspaceFlow::{ClientRequest, ServerPush, ServerResponse};
+
+    let path = json_path(path);
     matches!(
-        path.last(),
-        Some(JsonPathPart::Key(key))
-            if matches!(
-                key.as_str(),
-                "contentHash"
-                    | "operationId"
-                    | "size"
-                    | "currentPathState"
-                    | "conflictId"
-                    | "requiredHash"
-                    | "path"
+        (action, flow, path.as_str()),
+        (WorkspaceSnapshotEntry, ServerPush, "entry.contentHash")
+            | (WorkspaceMutation, ClientRequest, "contentHash")
+            | (
+                WorkspaceMutationAccepted,
+                ServerResponse,
+                "pathState.contentHash" | "oldPathState.contentHash" | "newPathState.contentHash"
+            )
+            | (
+                WorkspaceMutationRejected,
+                ServerResponse,
+                "currentPathState" | "currentPathState.contentHash" | "conflictId" | "requiredHash"
+            )
+            | (
+                WorkspaceEvent,
+                ServerPush,
+                "mutation.contentHash"
+                    | "pathState.contentHash"
+                    | "oldPathState.contentHash"
+                    | "newPathState.contentHash"
+            )
+            | (WorkspaceBlobNeed, ClientRequest, "operationId" | "size")
+            | (WorkspaceBlobNeed, ServerResponse, "operationId")
+            | (
+                WorkspaceConflictCreated,
+                ServerPush,
+                "ancestor.path"
+                    | "ancestor.contentHash"
+                    | "current.path"
+                    | "current.contentHash"
+                    | "incoming.path"
+                    | "incoming.contentHash"
+            )
+            | (WorkspaceConflictResolved, ClientRequest, "contentHash")
+            | (
+                WorkspaceConflictResolved,
+                ServerResponse | ServerPush,
+                "pathState.contentHash"
             )
     )
 }
@@ -214,6 +266,102 @@ fn assert_validation_error<T>(
     };
     assert_eq!(error.field, expected.field, "{}", expected.case);
     assert_eq!(error.reason, expected.reason, "{}", expected.case);
+}
+
+fn key_path(path: &str) -> Vec<JsonPathPart> {
+    path.split('.')
+        .map(|key| JsonPathPart::Key(key.to_owned()))
+        .collect()
+}
+
+#[test]
+fn manifest_and_rows_qualifies_required_nullable_paths() {
+    use WorkspaceAction::{WorkspaceBlobNeed, WorkspaceConflictCreated, WorkspaceMutation};
+    use WorkspaceFlow::{ClientRequest, ServerPush};
+
+    assert!(!required_nullable_path(
+        WorkspaceMutation,
+        ClientRequest,
+        &key_path("operationId")
+    ));
+    assert!(!required_nullable_path(
+        WorkspaceMutation,
+        ClientRequest,
+        &key_path("path")
+    ));
+    assert!(!required_nullable_path(
+        WorkspaceMutation,
+        ClientRequest,
+        &key_path("metadata.size")
+    ));
+    assert!(required_nullable_path(
+        WorkspaceBlobNeed,
+        ClientRequest,
+        &key_path("operationId")
+    ));
+    assert!(required_nullable_path(
+        WorkspaceBlobNeed,
+        ClientRequest,
+        &key_path("size")
+    ));
+    assert!(required_nullable_path(
+        WorkspaceConflictCreated,
+        ServerPush,
+        &key_path("ancestor.path")
+    ));
+    assert!(required_nullable_path(
+        WorkspaceConflictCreated,
+        ServerPush,
+        &key_path("current.contentHash")
+    ));
+    assert!(!required_nullable_path(
+        WorkspaceConflictCreated,
+        ServerPush,
+        &key_path("path")
+    ));
+
+    let controls: Vec<ControlFixtureRow> =
+        read_jsonl(&fixture_root().join("valid/control-frames.jsonl"));
+    let fixture_data = |case: &str| {
+        let row = controls
+            .iter()
+            .find(|row| row.case == case)
+            .unwrap_or_else(|| panic!("missing fixture case {case}"));
+        let data = raw_data(&row.frame).expect("control fixture has data");
+        (
+            row.action,
+            row.flow,
+            serde_json::from_str::<Value>(data.get()).unwrap(),
+        )
+    };
+
+    let (action, flow, mutation) = fixture_data("mutation-request");
+    for path in ["operationId", "path", "metadata.size"] {
+        let mut nulled = mutation.clone();
+        set_json_null(&mut nulled, &key_path(path));
+        assert!(
+            decode_data(action, flow, &serde_json::to_vec(&nulled).unwrap()).is_err(),
+            "Mutation {path} accepted null"
+        );
+    }
+
+    let (action, flow, blob_need) = fixture_data("blob-need-download-request-required-null");
+    decode_data(action, flow, &serde_json::to_vec(&blob_need).unwrap())
+        .expect("BlobNeed download request accepts exact operationId/size nulls");
+
+    let (action, flow, conflict) = fixture_data("conflict-created-content-push");
+    for path in ["ancestor.path", "current.contentHash"] {
+        let mut nulled = conflict.clone();
+        set_json_null(&mut nulled, &key_path(path));
+        decode_data(action, flow, &serde_json::to_vec(&nulled).unwrap())
+            .unwrap_or_else(|error| panic!("conflict side {path} rejected null: {error}"));
+    }
+    let mut nulled_root = conflict;
+    set_json_null(&mut nulled_root, &key_path("path"));
+    assert!(
+        decode_data(action, flow, &serde_json::to_vec(&nulled_root).unwrap()).is_err(),
+        "ConflictCreated root path accepted null"
+    );
 }
 
 #[test]
@@ -357,20 +505,17 @@ fn manifest_and_rows() {
                 );
             }
 
-            let originally_null = original_json_value(&data, &path).is_null();
             let mut nulled = data.clone();
             set_json_null(&mut nulled, &path);
             let nulled = serde_json::to_vec(&nulled).unwrap();
-            if originally_null {
+            if required_nullable_path(action, flow, &path) {
                 decode_data(action, flow, &nulled)
-                    .unwrap_or_else(|error| panic!("{case} required null: {error}"));
+                    .unwrap_or_else(|error| panic!("{case} nullable path rejected null: {error}"));
             } else {
-                if decode_data(action, flow, &nulled).is_ok() {
-                    assert!(
-                        required_nullable_key(&path),
-                        "{case} non-nullable field accepted null"
-                    );
-                }
+                assert!(
+                    decode_data(action, flow, &nulled).is_err(),
+                    "{case} non-nullable path accepted null"
+                );
             }
         }
     }
