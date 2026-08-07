@@ -1,3 +1,4 @@
+mod coalesce;
 mod error;
 mod hash;
 mod root;
@@ -5,6 +6,10 @@ mod rules;
 mod scan;
 mod watcher;
 
+pub use coalesce::{
+    ApplyId, ApplyReceipt, COALESCER_PATH_CAPACITY, CoalescePush, DEBOUNCE_WINDOW, EntrySignature,
+    EventCoalescer, FsChange, FsChangeKind, PriorEntryLookup, RENAME_WINDOW,
+};
 pub use error::FsError;
 pub use hash::{ContentCache, ContentDescriptor, HashCache, HashCacheError, MemoryHashCache};
 pub use root::{CaseSensitivity, FileFingerprint, NativeFileId, ObservedEntry, RootedWorkspace};

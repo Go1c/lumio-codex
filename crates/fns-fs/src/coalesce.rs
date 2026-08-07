@@ -1,0 +1,440 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::{Duration, Instant};
+
+use fns_protocol::{WorkspaceContentHash, WorkspaceEntryKind, WorkspacePath};
+
+use crate::{FsError, NativeWatchKind, ObservedEntry};
+
+pub const COALESCER_PATH_CAPACITY: usize = 8_192;
+pub const DEBOUNCE_WINDOW: Duration = Duration::from_millis(200);
+pub const RENAME_WINDOW: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FsChange {
+    Create(WorkspacePath),
+    Update(WorkspacePath),
+    Delete(WorkspacePath),
+    Rename {
+        from: WorkspacePath,
+        to: WorkspacePath,
+    },
+    RescanRequired,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FsChangeKind {
+    Create,
+    Update,
+    Delete,
+    Rename,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoalescePush {
+    Accepted,
+    RescanRequired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntrySignature {
+    pub kind: WorkspaceEntryKind,
+    pub content_hash: Option<WorkspaceContentHash>,
+    pub size: u64,
+}
+
+pub trait PriorEntryLookup {
+    fn signature(&self, path: &WorkspacePath) -> Option<EntrySignature>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ApplyId(pub uuid::Uuid);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApplyReceipt {
+    pub apply_id: ApplyId,
+    pub touched: Vec<WorkspacePath>,
+    pub postimages: Vec<Option<ObservedEntry>>,
+    pub postimage_hashes: Vec<Option<WorkspaceContentHash>>,
+    pub cleanup_name: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum PendingKind {
+    Create,
+    Modify,
+    Remove,
+}
+
+struct PendingPath {
+    kind: PendingKind,
+    last_seen: Instant,
+}
+
+struct RenameHalf {
+    path: String,
+    kind: NativeWatchKind,
+    observed_at: Instant,
+}
+
+struct PendingRename {
+    from: String,
+    to: String,
+    observed_at: Instant,
+}
+
+struct Suppression {
+    kind: WorkspaceEntryKind,
+    size: u64,
+    hash: Option<WorkspaceContentHash>,
+    expires_at: Instant,
+}
+
+pub struct EventCoalescer {
+    debounce: Duration,
+    rename: Duration,
+    capacity: usize,
+    pending: BTreeMap<String, PendingPath>,
+    occupied: BTreeSet<String>,
+    cookie_halves: HashMap<u64, RenameHalf>,
+    unmatched_renames: Vec<RenameHalf>,
+    direct_renames: Vec<PendingRename>,
+    suppressions: BTreeMap<String, Suppression>,
+    rescan_required: bool,
+}
+
+impl EventCoalescer {
+    pub fn new(debounce: Duration, rename: Duration, capacity: usize) -> Self {
+        Self {
+            debounce,
+            rename,
+            capacity,
+            pending: BTreeMap::new(),
+            occupied: BTreeSet::new(),
+            cookie_halves: HashMap::new(),
+            unmatched_renames: Vec::new(),
+            direct_renames: Vec::new(),
+            suppressions: BTreeMap::new(),
+            rescan_required: false,
+        }
+    }
+
+    pub fn push(&mut self, event: crate::NormalizedWatchEvent) -> CoalescePush {
+        if self.rescan_required {
+            return CoalescePush::RescanRequired;
+        }
+        match event.kind {
+            crate::NativeWatchKind::RenameBoth => {
+                if event.paths.len() != 2 {
+                    return self.require_rescan();
+                }
+                let Some(from) = self.path_key(&event.paths[0]) else {
+                    return self.require_rescan();
+                };
+                let Some(to) = self.path_key(&event.paths[1]) else {
+                    return self.require_rescan();
+                };
+                if !self.reserve_paths([from.clone(), to.clone()]) {
+                    return self.require_rescan();
+                }
+                self.direct_renames.push(PendingRename {
+                    from,
+                    to,
+                    observed_at: event.observed_at,
+                });
+            }
+            crate::NativeWatchKind::RenameFrom | crate::NativeWatchKind::RenameTo => {
+                if event.paths.len() != 1 {
+                    return self.require_rescan();
+                }
+                let Some(path) = self.path_key(&event.paths[0]) else {
+                    return self.require_rescan();
+                };
+                if !self.reserve_paths([path.clone()]) {
+                    return self.require_rescan();
+                }
+                let half = RenameHalf {
+                    path,
+                    kind: event.kind,
+                    observed_at: event.observed_at,
+                };
+                if let Some(cookie) = event.rename_cookie {
+                    if let Some(previous) = self.cookie_halves.get(&cookie) {
+                        if previous.kind == half.kind {
+                            let previous = self.cookie_halves.remove(&cookie).unwrap();
+                            self.unmatched_renames.push(previous);
+                            self.unmatched_renames.push(half);
+                        } else {
+                            let previous = self.cookie_halves.remove(&cookie).unwrap();
+                            let (from, to) = if previous.kind == crate::NativeWatchKind::RenameFrom
+                            {
+                                (previous.path, half.path)
+                            } else {
+                                (half.path, previous.path)
+                            };
+                            self.direct_renames.push(PendingRename {
+                                from,
+                                to,
+                                observed_at: previous.observed_at.max(half.observed_at),
+                            });
+                        }
+                    } else {
+                        self.cookie_halves.insert(cookie, half);
+                    }
+                } else {
+                    self.unmatched_renames.push(half);
+                }
+            }
+            kind => {
+                for path in event.paths {
+                    let Some(path) = self.path_key(&path) else {
+                        return self.require_rescan();
+                    };
+                    if !self.reserve_paths([path.clone()]) {
+                        return self.require_rescan();
+                    }
+                    self.record_path(path, kind, event.observed_at);
+                }
+            }
+        }
+        CoalescePush::Accepted
+    }
+
+    pub fn flush_ready(
+        &mut self,
+        now: Instant,
+        prior: &dyn PriorEntryLookup,
+    ) -> Result<Vec<FsChange>, FsError> {
+        if self.rescan_required {
+            self.clear_pending();
+            self.rescan_required = false;
+            return Ok(vec![FsChange::RescanRequired]);
+        }
+
+        let ready_paths = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| ready(now, pending.last_seen, self.debounce))
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let mut changes = BTreeMap::new();
+        for path in ready_paths {
+            let pending = self.pending.remove(&path).expect("ready path exists");
+            self.occupied.remove(&path);
+            let workspace_path = parse_path(&path)?;
+            if self.is_suppressed(&path, now, prior, &workspace_path) {
+                continue;
+            }
+            let change = match pending.kind {
+                PendingKind::Create => FsChange::Create(workspace_path),
+                PendingKind::Modify => FsChange::Update(workspace_path),
+                PendingKind::Remove => FsChange::Delete(workspace_path),
+            };
+            changes.insert(path, change);
+        }
+
+        let mut expired = Vec::new();
+        self.cookie_halves.retain(|_, half| {
+            if ready(now, half.observed_at, self.rename) {
+                expired.push(RenameHalf {
+                    path: half.path.clone(),
+                    kind: half.kind,
+                    observed_at: half.observed_at,
+                });
+                false
+            } else {
+                true
+            }
+        });
+        expired.append(&mut self.unmatched_renames);
+        for half in expired {
+            if !ready(now, half.observed_at, self.rename) {
+                self.unmatched_renames.push(half);
+                continue;
+            }
+            self.occupied.remove(&half.path);
+            let workspace_path = parse_path(&half.path)?;
+            let change = match half.kind {
+                crate::NativeWatchKind::RenameFrom => FsChange::Delete(workspace_path),
+                crate::NativeWatchKind::RenameTo => FsChange::Create(workspace_path),
+                _ => continue,
+            };
+            changes.insert(half.path, change);
+        }
+
+        let mut renames = Vec::new();
+        self.direct_renames.retain(|rename| {
+            if ready(now, rename.observed_at, self.debounce) {
+                renames.push((rename.from.clone(), rename.to.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (from, to) in collapse_renames(renames) {
+            self.occupied.remove(&from);
+            self.occupied.remove(&to);
+            changes.retain(|path, _| !is_descendant(path, &from) && !is_descendant(path, &to));
+            let from_path = parse_path(&from)?;
+            let to_path = parse_path(&to)?;
+            changes.insert(
+                from.clone(),
+                FsChange::Rename {
+                    from: from_path,
+                    to: to_path,
+                },
+            );
+        }
+
+        Ok(changes.into_values().collect())
+    }
+
+    pub fn suppress(&mut self, receipt: &ApplyReceipt) {
+        let expires_at = Instant::now() + self.rename;
+        for (index, path) in receipt.touched.iter().enumerate() {
+            let Some(observed) = receipt.postimages.get(index).and_then(Option::as_ref) else {
+                continue;
+            };
+            self.suppressions.insert(
+                path.as_str().to_owned(),
+                Suppression {
+                    kind: observed.kind,
+                    size: observed.metadata.size,
+                    hash: receipt.postimage_hashes.get(index).cloned().flatten(),
+                    expires_at,
+                },
+            );
+        }
+    }
+
+    fn record_path(&mut self, path: String, kind: crate::NativeWatchKind, observed_at: Instant) {
+        let next = match kind {
+            crate::NativeWatchKind::Create => PendingKind::Create,
+            crate::NativeWatchKind::Modify => PendingKind::Modify,
+            crate::NativeWatchKind::Remove => PendingKind::Remove,
+            _ => return,
+        };
+        let Some(previous) = self.pending.get_mut(&path) else {
+            self.pending.insert(
+                path,
+                PendingPath {
+                    kind: next,
+                    last_seen: observed_at,
+                },
+            );
+            return;
+        };
+        previous.kind = match (previous.kind, next) {
+            (PendingKind::Create, PendingKind::Modify) => PendingKind::Create,
+            (PendingKind::Create, PendingKind::Remove) => {
+                self.occupied.remove(&path);
+                self.pending.remove(&path);
+                return;
+            }
+            (PendingKind::Remove, PendingKind::Create) => PendingKind::Modify,
+            (PendingKind::Remove, PendingKind::Modify) => PendingKind::Modify,
+            (PendingKind::Modify, PendingKind::Remove) => PendingKind::Remove,
+            (previous, _) => previous,
+        };
+        previous.last_seen = observed_at;
+    }
+
+    fn reserve_paths<const N: usize>(&mut self, paths: [String; N]) -> bool {
+        let additional = paths
+            .iter()
+            .filter(|path| !self.occupied.contains(*path))
+            .count();
+        if self.occupied.len() + additional > self.capacity {
+            return false;
+        }
+        self.occupied.extend(paths);
+        true
+    }
+
+    fn path_key(&self, path: &std::path::Path) -> Option<String> {
+        let path = path.to_str()?;
+        #[cfg(windows)]
+        let path = path.replace('\\', "/");
+        Some(path.to_owned())
+    }
+
+    fn require_rescan(&mut self) -> CoalescePush {
+        self.clear_pending();
+        self.rescan_required = true;
+        CoalescePush::RescanRequired
+    }
+
+    fn clear_pending(&mut self) {
+        self.pending.clear();
+        self.occupied.clear();
+        self.cookie_halves.clear();
+        self.unmatched_renames.clear();
+        self.direct_renames.clear();
+    }
+
+    fn is_suppressed(
+        &mut self,
+        path: &str,
+        now: Instant,
+        prior: &dyn PriorEntryLookup,
+        workspace_path: &WorkspacePath,
+    ) -> bool {
+        let Some(suppression) = self.suppressions.get(path) else {
+            return false;
+        };
+        if suppression.expires_at < now {
+            self.suppressions.remove(path);
+            return false;
+        }
+        let Some(current) = prior.signature(workspace_path) else {
+            return false;
+        };
+        current.kind == suppression.kind
+            && current.size == suppression.size
+            && suppression
+                .hash
+                .as_ref()
+                .is_none_or(|hash| current.content_hash.as_ref() == Some(hash))
+    }
+}
+
+fn ready(now: Instant, at: Instant, window: Duration) -> bool {
+    now.checked_duration_since(at)
+        .is_some_and(|elapsed| elapsed >= window)
+}
+
+fn parse_path(path: &str) -> Result<WorkspacePath, FsError> {
+    WorkspacePath::parse(path).map_err(|error| FsError::InvalidPath {
+        reason: error.reason,
+    })
+}
+
+fn is_descendant(path: &str, parent: &str) -> bool {
+    path == parent
+        || path
+            .strip_prefix(parent)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn collapse_renames(mut renames: Vec<(String, String)>) -> Vec<(String, String)> {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        'outer: for left in 0..renames.len() {
+            for right in 0..renames.len() {
+                if left == right || renames[left].1 != renames[right].0 {
+                    continue;
+                }
+                let from = renames[left].0.clone();
+                let to = renames[right].1.clone();
+                renames[left] = (from, to);
+                renames.remove(right);
+                changed = true;
+                break 'outer;
+            }
+        }
+    }
+    renames.sort();
+    renames.dedup();
+    renames.retain(|(from, to)| from != to);
+    renames
+}
