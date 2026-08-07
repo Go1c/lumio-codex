@@ -30,6 +30,8 @@ pub enum SyncError {
     MergeRejected { reason: &'static str },
     #[error("filesystem operation failed")]
     Filesystem(#[source] fns_fs::FsError),
+    #[error("workspace scan incomplete")]
+    ScanIncomplete,
 }
 
 impl From<fns_fs::FsError> for SyncError {

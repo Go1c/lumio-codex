@@ -12,7 +12,7 @@ use crate::error::{SyncError, corrupt, storage_error};
 use crate::ids::now_ms;
 use crate::model::{
     AppliedOperationRecord, ApplyItemKind, ApplyJournalRecord, ApplyStage, ConflictRecord,
-    ConflictStatus, LocalIntentRecord, OutboxRecord, OutboxStage, PathStateRecord,
+    ConflictStatus, LocalIntentRecord, OutboxBody, OutboxRecord, OutboxStage, PathStateRecord,
     StreamConflictRecord, StreamConflictStatus, StreamEntryRecord, StreamItemStatus,
     StreamRevisionItemKind, StreamRevisionItemRecord, StreamStateRecord,
 };
@@ -263,16 +263,27 @@ impl SqliteState {
             .map_err(storage_error)?;
         let mut statement = transaction
             .prepare(
-                "SELECT client_id, operation_id, workspace_id, body_json, body_digest, stage, created_at_ms FROM outbox WHERE client_id = ?1 AND stage IN ('queued','dispatched') ORDER BY created_at_ms, operation_id LIMIT ?2",
+                "SELECT client_id, operation_id, workspace_id, body_json, body_digest, stage, created_at_ms FROM outbox WHERE client_id = ?1 AND stage IN ('queued','dispatched') ORDER BY created_at_ms, operation_id",
             )
             .map_err(storage_error)?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut rows = statement
-            .query(params![self.client_id.to_string(), limit])
+            .query(params![self.client_id.to_string()])
             .map_err(storage_error)?;
         let mut records = Vec::new();
         while let Some(row) = rows.next().map_err(storage_error)? {
-            records.push(row_to_outbox(row).map_err(|_| corrupt("outbox", "body_json"))?);
+            let record = row_to_outbox(row).map_err(|_| corrupt("outbox", "body_json"))?;
+            if !matches!(
+                record
+                    .decoded_body()
+                    .map_err(|_| corrupt("outbox", "body_json"))?,
+                OutboxBody::Mutation(_)
+            ) {
+                continue;
+            }
+            records.push(record);
+            if records.len() == limit {
+                break;
+            }
         }
         drop(rows);
         drop(statement);

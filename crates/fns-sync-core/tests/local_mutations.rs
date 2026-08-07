@@ -4,9 +4,10 @@ use std::fs;
 
 use fns_fs::FsChange;
 use fns_protocol::{
-    RequiredNullable, WorkspaceContentHash, WorkspaceEntryKind, WorkspaceEventMessage,
-    WorkspaceFileMetadata, WorkspaceMutation, WorkspaceMutationAcceptedMessage,
-    WorkspaceMutationRejectReason, WorkspaceMutationRejectedMessage, WorkspaceRevision,
+    RequiredNullable, WorkspaceConflictChoice, WorkspaceConflictResolvedRequest,
+    WorkspaceContentHash, WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceFileMetadata,
+    WorkspaceMutation, WorkspaceMutationAcceptedMessage, WorkspaceMutationRejectReason,
+    WorkspaceMutationRejectedMessage, WorkspaceRevision,
 };
 use fns_sync_core::{OutboxStage, SyncCommand, SyncEngine, SyncEngineConfig, SyncError};
 
@@ -143,6 +144,81 @@ fn change_after_dispatch_becomes_deferred_intent() {
 }
 
 #[test]
+fn dispatched_rename_merges_deferred_intents_on_both_paths() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("old.txt", 5, b"old");
+    fixture.rename("old.txt", "new.txt");
+    fixture.engine.scan_and_record().unwrap();
+    let rename = fixture.engine.pending_commands(1).unwrap()[0]
+        .mutation()
+        .unwrap();
+
+    fixture.write("new.txt", b"newer");
+    fixture.write("old.txt", b"recreated");
+    fixture
+        .engine
+        .record_local_changes([
+            FsChange::Update(support::workspace_path("new.txt")),
+            FsChange::Create(support::workspace_path("old.txt")),
+        ])
+        .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .local_intents()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.path)
+            .collect::<Vec<_>>(),
+        vec![
+            support::workspace_path("new.txt"),
+            support::workspace_path("old.txt"),
+        ]
+    );
+
+    let old_state = support::path_state(
+        "old.txt",
+        7,
+        RequiredNullable::Null,
+        support::file_metadata(0),
+        WorkspaceEntryKind::Tombstone,
+    );
+    let new_state = file_state("new.txt", 7, b"old");
+    fixture
+        .engine
+        .mutation_accepted(WorkspaceMutationAcceptedMessage {
+            workspace_id: fixture.engine.state().workspace_id(),
+            client_id: fixture.engine.state().client_id(),
+            operation_id: rename.operation_id,
+            revision: WorkspaceRevision::new(7),
+            path_state: new_state.clone(),
+            old_path_state: Some(old_state),
+            new_path_state: Some(new_state),
+        })
+        .unwrap();
+
+    let outbox = fixture.engine.state().outbox().unwrap();
+    assert_eq!(outbox.len(), 2);
+    assert!(
+        outbox
+            .iter()
+            .all(|record| record.stage == OutboxStage::Queued)
+    );
+    assert_eq!(
+        outbox
+            .iter()
+            .map(|record| record.mutation().unwrap().path)
+            .collect::<Vec<_>>(),
+        vec![
+            support::workspace_path("new.txt"),
+            support::workspace_path("old.txt"),
+        ]
+    );
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
 fn reconnect_replays_same_operation_and_body() {
     let mut fixture = support::EngineFixture::new();
     fixture.write("replay.txt", b"body");
@@ -181,6 +257,19 @@ fn accepted_updates_path_and_removes_outbox_atomically() {
             .state
             .path_revision,
         WorkspaceRevision::new(7)
+    );
+    assert!(
+        fixture
+            .engine
+            .mutation_accepted(accepted_for(&fixture, &mutation, 7))
+            .is_ok()
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .mutation_accepted(accepted_for(&fixture, &mutation, 8))
+            .unwrap_err(),
+        SyncError::OperationChanged
     );
 }
 
@@ -263,22 +352,81 @@ fn self_event_before_response_settles_same_outbox() {
         .unwrap();
     let state = file_state("self.txt", 7, b"new");
     let stream_id = fns_protocol::StreamId::parse("10000000-0000-4000-8000-000000000201").unwrap();
+    let event = WorkspaceEventMessage {
+        workspace_id: fixture.engine.state().workspace_id(),
+        stream_id,
+        index: 0,
+        revision: WorkspaceRevision::new(7),
+        operation_id: mutation.operation_id,
+        origin_client_id: fixture.engine.state().client_id(),
+        mutation: mutation.clone(),
+        path_state: state,
+        old_path_state: None,
+        new_path_state: None,
+    };
+    fixture.engine.event(event.clone()).unwrap();
+    assert!(fixture.engine.state().outbox().unwrap().is_empty());
+    fixture.engine.event(event.clone()).unwrap();
+
+    let mut changed_revision = event.clone();
+    changed_revision.revision = WorkspaceRevision::new(8);
+    changed_revision.path_state.path_revision = WorkspaceRevision::new(8);
+    assert_eq!(
+        fixture.engine.event(changed_revision).unwrap_err(),
+        SyncError::OperationChanged
+    );
+
+    let mut changed_body = event;
+    changed_body.mutation.path = support::workspace_path("different.txt");
+    assert_eq!(
+        fixture.engine.event(changed_body).unwrap_err(),
+        SyncError::OperationChanged
+    );
+}
+
+#[test]
+fn conflict_resolution_rows_are_not_mutation_commands_or_replayed() {
+    let mut fixture = support::EngineFixture::new();
+    let resolution = WorkspaceConflictResolvedRequest {
+        workspace_id: fixture.engine.state().workspace_id(),
+        client_id: fixture.engine.state().client_id(),
+        operation_id: fns_protocol::OperationId::parse("10000000-0000-4000-8000-000000000200")
+            .unwrap(),
+        conflict_id: fns_protocol::ConflictId::parse("10000000-0000-4000-8000-000000000201")
+            .unwrap(),
+        conflict_revision: fns_protocol::revision::WorkspaceConflictRevision::parse("1").unwrap(),
+        choice: WorkspaceConflictChoice::Current,
+        path: support::workspace_path("conflict.txt"),
+        content_hash: RequiredNullable::Null,
+        metadata: support::file_metadata(0),
+    };
     fixture
         .engine
-        .event(WorkspaceEventMessage {
-            workspace_id: fixture.engine.state().workspace_id(),
-            stream_id,
-            index: 0,
-            revision: WorkspaceRevision::new(7),
-            operation_id: mutation.operation_id,
-            origin_client_id: fixture.engine.state().client_id(),
-            mutation: mutation.clone(),
-            path_state: state,
-            old_path_state: None,
-            new_path_state: None,
-        })
+        .state_mut()
+        .enqueue_conflict_resolution(&resolution)
         .unwrap();
-    assert!(fixture.engine.state().outbox().unwrap().is_empty());
+    fixture.write("mutation.txt", b"mutation");
+    let commands = fixture
+        .engine
+        .scan_and_record()
+        .and_then(|_| fixture.engine.pending_commands(16))
+        .unwrap();
+
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0].mutation().unwrap().path,
+        support::workspace_path("mutation.txt")
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(resolution.operation_id)
+            .unwrap()
+            .unwrap()
+            .stage,
+        OutboxStage::Queued
+    );
 }
 
 #[test]
@@ -385,6 +533,40 @@ fn directory_rename_uses_null_hash_and_zero_metadata() {
 }
 
 #[test]
+fn populated_directory_rename_suppresses_descendant_pairs() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("old/file.txt", 5, b"child");
+    fixture
+        .engine
+        .state_mut()
+        .put_path_state(&support::path_state(
+            "old",
+            5,
+            RequiredNullable::Null,
+            support::file_metadata(0),
+            WorkspaceEntryKind::Directory,
+        ))
+        .unwrap();
+    fixture.rename("old", "new");
+
+    let changes = fixture.engine.scan_changes().unwrap();
+    assert_eq!(
+        changes,
+        vec![FsChange::Rename {
+            from: support::workspace_path("old"),
+            to: support::workspace_path("new"),
+        }]
+    );
+    fixture.engine.record_local_changes(changes).unwrap();
+    let commands = fixture.engine.pending_commands(16).unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        commands[0].mutation().unwrap().new_path,
+        Some(support::workspace_path("new"))
+    );
+}
+
+#[test]
 fn state_and_workspace_roots_must_not_overlap() {
     let workspace = tempfile::tempdir().unwrap();
     let state = workspace.path().join("state");
@@ -399,4 +581,40 @@ fn state_and_workspace_roots_must_not_overlap() {
         SyncEngine::open(config),
         Err(SyncError::InvalidConfiguration { .. })
     ));
+}
+
+#[test]
+fn nonexistent_nested_state_root_is_rejected_without_workspace_residue() {
+    let workspace = tempfile::tempdir().unwrap();
+    let state = workspace.path().join("nested").join("state");
+    let config = SyncEngineConfig::new(
+        fns_protocol::WorkspaceId::parse("10000000-0000-4000-8000-000000000001").unwrap(),
+        fns_protocol::ClientId::parse("10000000-0000-4000-8000-000000000002").unwrap(),
+        workspace.path(),
+        &state,
+    );
+    assert!(matches!(
+        SyncEngine::open(config),
+        Err(SyncError::InvalidConfiguration { .. })
+    ));
+    assert!(!state.exists());
+    assert!(!workspace.path().join("nested").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn incomplete_workspace_scan_never_emits_deletes() {
+    use std::os::unix::fs::symlink;
+
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("remote.txt", 3, b"remote");
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("hidden.txt"), b"hidden").unwrap();
+    symlink(outside.path(), fixture.path("unsafe")).unwrap();
+
+    assert_eq!(
+        fixture.engine.scan_and_record().unwrap_err(),
+        SyncError::ScanIncomplete
+    );
+    assert!(fixture.engine.state().outbox().unwrap().is_empty());
 }

@@ -293,7 +293,9 @@ impl EngineFixture {
 
     pub fn record_all_changes_and_close(&mut self) -> Vec<SyncCommand> {
         self.engine.scan_and_record().expect("scan and record");
-        self.engine.pending_commands(16).expect("dispatch commands")
+        let commands = self.engine.pending_commands(16).expect("dispatch commands");
+        self.engine.close().expect("close engine");
+        commands
     }
 
     pub fn reopen(self) -> Self {

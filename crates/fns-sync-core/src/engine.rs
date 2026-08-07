@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, absolute};
 
 use fns_fs::{
     ContentCache, FsChange, HashCache, ObservedEntry, RootedWorkspace, SyncRuleConfig, SyncRules,
@@ -13,7 +13,7 @@ use fns_protocol::{
 
 use crate::effect::SyncCommand;
 use crate::error::SyncError;
-use crate::model::{LocalDesiredEntry, OutboxStage};
+use crate::model::{LocalDesiredEntry, OutboxBody, OutboxStage};
 use crate::reconcile::{
     DesiredOperation, decode_intent, desired_from_intent, desired_from_mutation, encode_intent,
     mutation_for_desired, mutation_matches_desired, zero_metadata,
@@ -129,12 +129,13 @@ pub enum MutationResult {
 impl SyncEngine {
     pub fn open(config: SyncEngineConfig) -> Result<Self, SyncError> {
         let workspace = RootedWorkspace::open(&config.workspace_root)?;
-        fs::create_dir_all(&config.state_root).map_err(|_| {
+        let state_root = preflight_state_root(workspace.canonical_root(), &config.state_root)?;
+        fs::create_dir_all(&state_root).map_err(|_| {
             SyncError::Filesystem(fns_fs::FsError::Io {
                 operation: "create sync state root",
             })
         })?;
-        let state_root = fs::canonicalize(&config.state_root).map_err(|_| {
+        let state_root = fs::canonicalize(&state_root).map_err(|_| {
             SyncError::Filesystem(fns_fs::FsError::Io {
                 operation: "canonicalize sync state root",
             })
@@ -220,6 +221,9 @@ impl SyncEngine {
             .system
             .workspace
             .scan(&self.runtime.system.rules)?;
+        if !scan.issues.is_empty() {
+            return Err(SyncError::ScanIncomplete);
+        }
         let mut current = BTreeMap::new();
         for observed in scan.entries {
             let entry = self.desired_entry_from_observed(&observed)?;
@@ -260,6 +264,7 @@ impl SyncEngine {
         let mut paired_additions = HashSet::new();
         let mut paired_deletions = HashSet::new();
         let mut renames = Vec::new();
+        let mut directory_renames = Vec::new();
         for (delete_index, old_path) in deletions.iter().enumerate() {
             let Some(old_state) = remote.get(old_path) else {
                 continue;
@@ -274,29 +279,83 @@ impl SyncEngine {
                 .collect::<Vec<_>>();
             if candidates.len() == 1 {
                 let add_index = candidates[0];
+                if directory_renames
+                    .iter()
+                    .any(|(from, _): &(WorkspacePath, WorkspacePath)| {
+                        path_is_descendant(old_path, from)
+                    })
+                {
+                    continue;
+                }
                 paired_additions.insert(add_index);
                 paired_deletions.insert(delete_index);
+                let new_path = additions[add_index].0.clone();
                 renames.push(FsChange::Rename {
                     from: old_path.clone(),
-                    to: additions[add_index].0.clone(),
+                    to: new_path.clone(),
                 });
+                if old_state.kind == WorkspaceEntryKind::Directory
+                    && additions[add_index].1.kind == WorkspaceEntryKind::Directory
+                {
+                    directory_renames.push((old_path.clone(), new_path));
+                }
             }
         }
 
-        let mut changes = additions
-            .into_iter()
-            .enumerate()
-            .filter(|(index, _)| !paired_additions.contains(index))
-            .map(|(_, (path, _))| FsChange::Create(path))
-            .collect::<Vec<_>>();
+        let mut changes =
+            additions
+                .into_iter()
+                .enumerate()
+                .filter(|(index, (path, _))| {
+                    !paired_additions.contains(index)
+                        && !directory_renames.iter().any(
+                            |(_, to): &(WorkspacePath, WorkspacePath)| path_is_descendant(path, to),
+                        )
+                })
+                .map(|(_, (path, _))| FsChange::Create(path))
+                .collect::<Vec<_>>();
         changes.extend(updates.into_iter().map(|(path, _)| FsChange::Update(path)));
         changes.extend(
             deletions
                 .into_iter()
                 .enumerate()
-                .filter(|(index, _)| !paired_deletions.contains(index))
+                .filter(|(index, path)| {
+                    !paired_deletions.contains(index)
+                        && !directory_renames.iter().any(
+                            |(from, _): &(WorkspacePath, WorkspacePath)| {
+                                path_is_descendant(path, from)
+                            },
+                        )
+                })
                 .map(|(_, path)| FsChange::Delete(path)),
         );
+        renames.retain(|change| {
+            let FsChange::Rename { from, .. } = change else {
+                return true;
+            };
+            !directory_renames
+                .iter()
+                .any(|(directory_from, _)| path_is_descendant(from, directory_from))
+        });
+        renames.sort_by(|left, right| {
+            let FsChange::Rename {
+                from: left_from,
+                to: left_to,
+            } = left
+            else {
+                return std::cmp::Ordering::Equal;
+            };
+            let FsChange::Rename {
+                from: right_from,
+                to: right_to,
+            } = right
+            else {
+                return std::cmp::Ordering::Equal;
+            };
+            left_from
+                .cmp(right_from)
+                .then_with(|| left_to.cmp(right_to))
+        });
         changes.extend(renames);
         Ok(changes)
     }
@@ -357,10 +416,14 @@ impl SyncEngine {
                 if record.stage != OutboxStage::AwaitingBlob {
                     continue;
                 }
-                let mutation = record.mutation().map_err(|_| SyncError::CorruptState {
-                    table: "outbox",
-                    field: "body_json",
-                })?;
+                let OutboxBody::Mutation(mutation) =
+                    record.decoded_body().map_err(|_| SyncError::CorruptState {
+                        table: "outbox",
+                        field: "body_json",
+                    })?
+                else {
+                    continue;
+                };
                 let hash = mutation.content_hash.clone().into_option().ok_or(
                     SyncError::ProtocolInvariant {
                         reason: "blob_without_content_hash",
@@ -417,12 +480,14 @@ impl SyncEngine {
         self.validate_identity(accepted.workspace_id, accepted.client_id)?;
         let record = self.runtime.state.outbox_entry(accepted.operation_id)?;
         let Some(record) = record else {
-            if self
+            if let Some(receipt) = self
                 .runtime
                 .state
                 .applied_operation(self.runtime.state.client_id(), accepted.operation_id)?
-                .is_some()
             {
+                if receipt.revision != accepted.revision {
+                    return Err(SyncError::OperationChanged);
+                }
                 return Ok(Vec::new());
             }
             return Err(SyncError::ProtocolInvariant {
@@ -448,20 +513,7 @@ impl SyncEngine {
             accepted.path_state.path.clone(),
             accepted.path_state.clone(),
         );
-        let next = intents
-            .into_iter()
-            .find(|desired| !desired_matches_remote(desired, &states));
-        let next_mutation = match next.as_ref() {
-            Some(desired) => Some(mutation_for_desired(
-                desired,
-                self.runtime.state.workspace_id(),
-                self.runtime.state.client_id(),
-                self.next_operation_id()?,
-                &states,
-            )),
-            None => None,
-        };
-        let timestamp = next_mutation.as_ref().map(|_| self.next_timestamp());
+        let next_mutations = self.next_mutations(&intents, &states)?;
         let body_digest = record.body_digest;
         let client_id = self.runtime.state.client_id();
         self.runtime.state.transaction(|tx| {
@@ -482,8 +534,8 @@ impl SyncEngine {
             for path in &touched {
                 tx.remove_local_intent(path)?;
             }
-            if let (Some(mutation), Some(timestamp)) = (&next_mutation, timestamp) {
-                tx.enqueue_mutation_at(mutation, timestamp)?;
+            for (mutation, timestamp) in &next_mutations {
+                tx.enqueue_mutation_at(mutation, *timestamp)?;
             }
             Ok(())
         })?;
@@ -616,12 +668,17 @@ impl SyncEngine {
                     new_path_state: event.new_path_state,
                 });
             }
-            if self
+            if let Some(receipt) = self
                 .runtime
                 .state
                 .applied_operation(self.runtime.state.client_id(), event.operation_id)?
-                .is_some()
             {
+                let body = canonical_json(&event.mutation)?;
+                if receipt.revision != event.revision
+                    || receipt.body_digest != crate::body_digest(&body)
+                {
+                    return Err(SyncError::OperationChanged);
+                }
                 return Ok(Vec::new());
             }
             return Err(SyncError::ProtocolInvariant {
@@ -647,7 +704,7 @@ impl SyncEngine {
         self.event(event)
     }
 
-    pub fn close(self) -> Result<(), SyncError> {
+    pub fn close(&mut self) -> Result<(), SyncError> {
         Ok(())
     }
 
@@ -775,12 +832,8 @@ impl SyncEngine {
             let intent = desired.intent_for_path(touched[0]);
             let body = encode_intent(&intent)?;
             let timestamp = self.next_timestamp();
-            let mutation_paths = mutation_paths(&mutation);
             let intent_paths = touched.to_vec();
             return self.runtime.state.transaction(|tx| {
-                for path in &mutation_paths {
-                    tx.remove_local_intent(path)?;
-                }
                 for path in &intent_paths {
                     tx.put_local_intent(path.as_str(), &body, timestamp)?;
                 }
@@ -837,6 +890,7 @@ impl SyncEngine {
                 operations.push(desired);
             }
         }
+        operations.sort_by_key(desired_operation_key);
         Ok(operations)
     }
 
@@ -863,22 +917,12 @@ impl SyncEngine {
             }
         }
         let intents = self.deferred_operations(&touched)?;
-        let desired = intents
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| desired_from_mutation(&mutation, None));
-        let next = if !desired_matches_remote(&desired, &states) {
-            Some(mutation_for_desired(
-                &desired,
-                self.runtime.state.workspace_id(),
-                self.runtime.state.client_id(),
-                self.next_operation_id()?,
-                &states,
-            ))
+        let desired = if intents.is_empty() {
+            vec![desired_from_mutation(&mutation, None)]
         } else {
-            None
+            intents
         };
-        let timestamp = next.as_ref().map(|_| self.next_timestamp());
+        let next_mutations = self.next_mutations(&desired, &states)?;
         let paths = touched.clone();
         self.runtime.state.transaction(|tx| {
             match &current {
@@ -889,8 +933,8 @@ impl SyncEngine {
             for path in &paths {
                 tx.remove_local_intent(path)?;
             }
-            if let (Some(next), Some(timestamp)) = (&next, timestamp) {
-                tx.enqueue_mutation_at(next, timestamp)?;
+            for (next, timestamp) in &next_mutations {
+                tx.enqueue_mutation_at(next, *timestamp)?;
             }
             Ok(())
         })?;
@@ -905,6 +949,28 @@ impl SyncEngine {
             .into_iter()
             .map(|record| (record.path, record.state))
             .collect())
+    }
+
+    fn next_mutations(
+        &mut self,
+        desired: &[DesiredOperation],
+        states: &BTreeMap<WorkspacePath, WorkspacePathState>,
+    ) -> Result<Vec<(WorkspaceMutation, i64)>, SyncError> {
+        let mut next = Vec::new();
+        for desired in desired {
+            if desired_matches_remote(desired, states) {
+                continue;
+            }
+            let mutation = mutation_for_desired(
+                desired,
+                self.runtime.state.workspace_id(),
+                self.runtime.state.client_id(),
+                self.next_operation_id()?,
+                states,
+            );
+            next.push((mutation, self.next_timestamp()));
+        }
+        Ok(next)
     }
 
     fn validate_identity(
@@ -949,6 +1015,80 @@ impl SyncEngine {
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
     left == right || left.starts_with(right) || right.starts_with(left)
+}
+
+fn preflight_state_root(workspace_root: &Path, configured: &Path) -> Result<PathBuf, SyncError> {
+    let absolute_workspace = absolute(workspace_root).map_err(|_| {
+        SyncError::Filesystem(fns_fs::FsError::Io {
+            operation: "resolve workspace root",
+        })
+    })?;
+    let absolute_configured = absolute(configured).map_err(|_| {
+        SyncError::Filesystem(fns_fs::FsError::Io {
+            operation: "resolve sync state root",
+        })
+    })?;
+    if paths_overlap(&absolute_workspace, &absolute_configured) {
+        return Err(SyncError::InvalidConfiguration {
+            reason: "roots_overlap",
+        });
+    }
+
+    let mut ancestor = absolute_configured.clone();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(&ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = ancestor.file_name() else {
+                    return Err(SyncError::Filesystem(fns_fs::FsError::Io {
+                        operation: "resolve sync state root",
+                    }));
+                };
+                missing.push(name.to_os_string());
+                if !ancestor.pop() {
+                    return Err(SyncError::Filesystem(fns_fs::FsError::Io {
+                        operation: "resolve sync state root",
+                    }));
+                }
+            }
+            Err(_) => {
+                return Err(SyncError::Filesystem(fns_fs::FsError::Io {
+                    operation: "stat sync state root",
+                }));
+            }
+        }
+    }
+    let mut candidate = fs::canonicalize(&ancestor).map_err(|_| {
+        SyncError::Filesystem(fns_fs::FsError::Io {
+            operation: "canonicalize sync state root parent",
+        })
+    })?;
+    for component in missing.iter().rev() {
+        candidate.push(component);
+    }
+    if paths_overlap(workspace_root, &candidate) {
+        return Err(SyncError::InvalidConfiguration {
+            reason: "roots_overlap",
+        });
+    }
+    Ok(candidate)
+}
+
+fn path_is_descendant(path: &WorkspacePath, ancestor: &WorkspacePath) -> bool {
+    path.as_str()
+        .strip_prefix(ancestor.as_str())
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn desired_operation_key(desired: &DesiredOperation) -> (String, String, u8) {
+    match desired {
+        DesiredOperation::Upsert { entry } => (entry.path.as_str().to_owned(), String::new(), 0),
+        DesiredOperation::Delete { path } => (path.as_str().to_owned(), String::new(), 1),
+        DesiredOperation::Rename { from, to, .. } => {
+            (from.as_str().to_owned(), to.as_str().to_owned(), 2)
+        }
+    }
 }
 
 fn remote_matches_entry(state: &WorkspacePathState, entry: &LocalDesiredEntry) -> bool {
