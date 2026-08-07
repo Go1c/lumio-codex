@@ -101,6 +101,10 @@ impl RootedWorkspace {
         &self.canonical_root
     }
 
+    pub(crate) fn native_path(&self, path: &WorkspacePath) -> Result<Option<PathBuf>, FsError> {
+        self.resolve_native_path(path)
+    }
+
     pub(crate) fn observe_native(
         &self,
         path: WorkspacePath,
