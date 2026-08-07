@@ -3,6 +3,7 @@ mod hash;
 mod root;
 mod rules;
 mod scan;
+mod watcher;
 
 pub use error::FsError;
 pub use hash::{ContentCache, ContentDescriptor, HashCache, HashCacheError, MemoryHashCache};
@@ -12,3 +13,7 @@ pub use rules::{
     RuleSource, SAFE_ENV_BASENAMES, SyncRuleConfig, SyncRules,
 };
 pub use scan::{ScanIssue, WorkspaceScan};
+pub use watcher::{
+    NativeWatchKind, NormalizedWatchEvent, PlatformWatcher, WATCH_QUEUE_CAPACITY, WatchGap,
+    WatchIngress, WatchMessage, WatchReceiver, start_platform_watcher,
+};
