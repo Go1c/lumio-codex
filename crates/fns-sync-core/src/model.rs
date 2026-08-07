@@ -227,7 +227,7 @@ pub struct StreamConflictRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApplyJournalRecord {
-    pub apply_id: String,
+    pub apply_id: fns_fs::ApplyId,
     pub workspace_id: WorkspaceId,
     pub stream_id: StreamId,
     pub item_kind: ApplyItemKind,

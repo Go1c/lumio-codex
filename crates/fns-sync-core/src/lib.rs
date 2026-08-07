@@ -5,6 +5,7 @@ pub mod state;
 pub mod store;
 
 pub use error::SyncError;
+pub use fns_fs::ApplyId;
 pub use model::{
     AppliedOperationRecord, ApplyItemKind, ApplyJournal, ApplyJournalRecord, ApplyStage, Conflict,
     ConflictRecord, ConflictStatus, LocalIntentRecord, OutboxBody, OutboxEntry, OutboxRecord,
