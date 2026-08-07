@@ -7,13 +7,16 @@ use std::{
 use fns_protocol::{
     ACTION_FLOW_SPECS, DecodedEnvelope, DecodedFrame, MessageBody, RequestId, RequiredNullable,
     WorkspaceAction, WorkspaceContentHash, WorkspaceFlow, WorkspacePath, WorkspaceRevision,
-    WorkspaceV2ErrorCode, WorkspaceValidationError, decode_data, decode_server_text_frame,
-    decode_text_frame, deserialize_optional_non_null, encode_failure, encode_request,
-    encode_success,
+    WorkspaceSnapshotMode, WorkspaceV2ErrorCode, WorkspaceValidationError, decode_data,
+    decode_server_text_frame, decode_text_frame, deserialize_optional_non_null, encode_failure,
+    encode_request, encode_success,
 };
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
 use sha2::{Digest, Sha256};
+
+const SOURCE_COMMIT: &str = "ba4caa45bb766dc4f1bc983e134d6b272a70cd05";
+const MANIFEST_SHA256: &str = "86f52715e7827ac99873850961ee84ffd99610a5f0009b16033d5706b18f9e7e";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -99,6 +102,34 @@ fn decoded_body(decoded: &DecodedFrame) -> Option<&MessageBody> {
         DecodedEnvelope::Request { body, .. } | DecodedEnvelope::Success { body, .. } => Some(body),
         DecodedEnvelope::Failure { .. } => None,
     }
+}
+
+fn decode_control_fixture(row: &ControlFixtureRow) -> DecodedFrame {
+    match row.flow {
+        WorkspaceFlow::ClientRequest => {
+            decode_text_frame(row.frame.as_bytes(), WorkspaceFlow::ClientRequest)
+        }
+        WorkspaceFlow::ServerResponse | WorkspaceFlow::ServerPush => {
+            decode_server_text_frame(row.frame.as_bytes())
+        }
+    }
+    .unwrap_or_else(|error| panic!("{}: {error}", row.case))
+}
+
+fn fixture_sequence(name: &str) -> Vec<(ControlFixtureRow, DecodedFrame)> {
+    let controls: Vec<ControlFixtureRow> =
+        read_jsonl(&fixture_root().join("valid/control-frames.jsonl"));
+    let mut rows = controls
+        .into_iter()
+        .filter(|row| row.sequence.as_deref() == Some(name))
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| row.step);
+    rows.into_iter()
+        .map(|row| {
+            let decoded = decode_control_fixture(&row);
+            (row, decoded)
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -275,6 +306,184 @@ fn key_path(path: &str) -> Vec<JsonPathPart> {
 }
 
 #[test]
+fn fixture_source_provenance_is_exact() {
+    let source_sha_path = fixture_root()
+        .parent()
+        .expect("fixture archive has a parent")
+        .join("SOURCE_MANIFEST_SHA256");
+    assert_eq!(
+        fs::read(source_sha_path).unwrap(),
+        format!("{MANIFEST_SHA256}\n").as_bytes(),
+        "source manifest pin must be the exact SHA-256 plus one newline",
+    );
+
+    let readme =
+        fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../README.md"))
+            .unwrap();
+    assert!(readme.lines().any(|line| {
+        line == format!("Workspace sync v2 authority: `fast-note-sync-service@{SOURCE_COMMIT}`.")
+    }));
+    assert!(
+        readme.lines().any(|line| {
+            line == format!("Source fixture manifest SHA-256: `{MANIFEST_SHA256}`.")
+        })
+    );
+}
+
+#[test]
+fn snapshot_conflict_sequences_are_complete_ordered_and_strict() {
+    use WorkspaceAction::{
+        WorkspaceConflictCreated, WorkspaceConflictResolved, WorkspaceEvent,
+        WorkspaceSnapshotBegin, WorkspaceSnapshotEnd, WorkspaceSnapshotEntry,
+    };
+
+    let full = fixture_sequence("snapshot-full-conflicts");
+    assert_eq!(full.len(), 4, "full snapshot sequence length");
+    assert_eq!(
+        full.iter().map(|(row, _)| row.action).collect::<Vec<_>>(),
+        [
+            WorkspaceSnapshotBegin,
+            WorkspaceSnapshotEntry,
+            WorkspaceConflictCreated,
+            WorkspaceSnapshotEnd,
+        ]
+    );
+    assert!(
+        full.iter()
+            .all(|(row, _)| row.flow == WorkspaceFlow::ServerPush)
+    );
+    let Some(MessageBody::SnapshotBegin(full_begin)) = decoded_body(&full[0].1) else {
+        panic!("full snapshot starts with Begin")
+    };
+    let Some(MessageBody::SnapshotEntry(full_entry)) = decoded_body(&full[1].1) else {
+        panic!("full snapshot contains an entry")
+    };
+    let Some(MessageBody::ConflictCreated(full_conflict)) = decoded_body(&full[2].1) else {
+        panic!("full snapshot contains its authoritative conflict")
+    };
+    let Some(MessageBody::SnapshotEnd(full_end)) = decoded_body(&full[3].1) else {
+        panic!("full snapshot ends with End")
+    };
+    assert_eq!(full_begin.mode, WorkspaceSnapshotMode::Snapshot);
+    assert_eq!(full_begin.entry_count, 1);
+    assert_eq!(full_begin.event_count, 0);
+    assert_eq!(full_begin.conflict_count, 1);
+    assert_eq!(full_entry.workspace_id, full_begin.workspace_id);
+    assert_eq!(full_entry.stream_id, full_begin.stream_id);
+    full_entry.validate_at(0).unwrap();
+    assert_eq!(full_conflict.workspace_id, full_begin.workspace_id);
+    full_conflict.validate().unwrap();
+    assert_eq!(full_end.delivered_count, 2);
+    full_end.validate_against(full_begin).unwrap();
+
+    let incremental = fixture_sequence("snapshot-incremental-conflicts");
+    assert_eq!(incremental.len(), 7, "incremental snapshot sequence length");
+    assert_eq!(
+        incremental
+            .iter()
+            .map(|(row, _)| row.action)
+            .collect::<Vec<_>>(),
+        [
+            WorkspaceSnapshotBegin,
+            WorkspaceEvent,
+            WorkspaceConflictResolved,
+            WorkspaceEvent,
+            WorkspaceConflictCreated,
+            WorkspaceConflictCreated,
+            WorkspaceSnapshotEnd,
+        ]
+    );
+    assert!(
+        incremental
+            .iter()
+            .all(|(row, _)| row.flow == WorkspaceFlow::ServerPush)
+    );
+    let Some(MessageBody::SnapshotBegin(incremental_begin)) = decoded_body(&incremental[0].1)
+    else {
+        panic!("incremental snapshot starts with Begin")
+    };
+    let Some(MessageBody::Event(first_event)) = decoded_body(&incremental[1].1) else {
+        panic!("incremental snapshot contains its first Event")
+    };
+    let Some(MessageBody::ConflictResolved(resolved)) = decoded_body(&incremental[2].1) else {
+        panic!("incremental snapshot contains ConflictResolved")
+    };
+    let Some(MessageBody::Event(second_event)) = decoded_body(&incremental[3].1) else {
+        panic!("incremental snapshot contains its second Event")
+    };
+    let Some(MessageBody::ConflictCreated(first_conflict)) = decoded_body(&incremental[4].1) else {
+        panic!("incremental snapshot contains its first ConflictCreated")
+    };
+    let Some(MessageBody::ConflictCreated(second_conflict)) = decoded_body(&incremental[5].1)
+    else {
+        panic!("incremental snapshot contains its second ConflictCreated")
+    };
+    let Some(MessageBody::SnapshotEnd(incremental_end)) = decoded_body(&incremental[6].1) else {
+        panic!("incremental snapshot ends with End")
+    };
+    assert_eq!(incremental_begin.mode, WorkspaceSnapshotMode::Incremental);
+    assert_eq!(incremental_begin.entry_count, 0);
+    assert_eq!(incremental_begin.event_count, 3);
+    assert_eq!(incremental_begin.conflict_count, 2);
+    first_event
+        .validate_after(0, incremental_begin.from_revision)
+        .unwrap();
+    resolved.validate().unwrap();
+    second_event
+        .validate_after(first_event.index, resolved.revision)
+        .unwrap();
+    assert_eq!(second_event.index, first_event.index + 1);
+    assert!(first_event.revision < resolved.revision);
+    assert!(resolved.revision < second_event.revision);
+    assert_eq!(second_event.revision, incremental_begin.final_revision);
+    assert!(first_conflict.conflict_id < second_conflict.conflict_id);
+    assert_eq!(first_conflict.workspace_id, incremental_begin.workspace_id);
+    assert_eq!(second_conflict.workspace_id, incremental_begin.workspace_id);
+    first_conflict.validate().unwrap();
+    second_conflict.validate().unwrap();
+    assert_eq!(incremental_end.delivered_count, 5);
+    incremental_end.validate_against(incremental_begin).unwrap();
+
+    let controls: Vec<ControlFixtureRow> =
+        read_jsonl(&fixture_root().join("valid/control-frames.jsonl"));
+    let created = controls
+        .iter()
+        .filter(|row| row.action == WorkspaceConflictCreated)
+        .collect::<Vec<_>>();
+    assert_eq!(created.len(), 4);
+    for row in created {
+        assert_eq!(row.flow, WorkspaceFlow::ServerPush, "{}", row.case);
+        let data = raw_data(&row.frame).expect("ConflictCreated fixture has data");
+        let object = serde_json::from_str::<Value>(data.get())
+            .unwrap()
+            .as_object()
+            .expect("ConflictCreated data is an object")
+            .clone();
+        for (field, value) in [
+            (
+                "streamId",
+                Value::String("10000000-0000-4000-8000-000000000003".to_owned()),
+            ),
+            ("index", Value::from(0)),
+        ] {
+            assert!(!object.contains_key(field), "{} has {field}", row.case);
+            let mut injected = object.clone();
+            injected.insert(field.to_owned(), value);
+            assert!(
+                decode_data(
+                    WorkspaceConflictCreated,
+                    WorkspaceFlow::ServerPush,
+                    &serde_json::to_vec(&Value::Object(injected)).unwrap(),
+                )
+                .is_err(),
+                "{} accepted injected {field}",
+                row.case,
+            );
+        }
+    }
+}
+
+#[test]
 fn manifest_and_rows_qualifies_required_nullable_paths() {
     use WorkspaceAction::{WorkspaceBlobNeed, WorkspaceConflictCreated, WorkspaceMutation};
     use WorkspaceFlow::{ClientRequest, ServerPush};
@@ -366,8 +575,6 @@ fn manifest_and_rows_qualifies_required_nullable_paths() {
 
 #[test]
 fn manifest_and_rows() {
-    const MANIFEST_SHA256: &str =
-        "db4dbc5466ce4f01ef3fe81b96fe73a7dfb24e900936d850637667ea5095d2ff";
     let expected_files = BTreeMap::from([
         (
             "binary/header-vectors.json".to_owned(),
@@ -387,7 +594,7 @@ fn manifest_and_rows() {
         ),
         (
             "valid/control-frames.jsonl".to_owned(),
-            "bbe6d00abb3e9e426c608f36af6cd83d7f4c7ef97d90c4f969eea72f1403385d".to_owned(),
+            "37d388e43d10865d29421ba3e2b4f2a6cf2f8d33cf1cb6d016533545e86df85d".to_owned(),
         ),
         (
             "valid/error-envelopes.jsonl".to_owned(),
@@ -404,7 +611,7 @@ fn manifest_and_rows() {
     assert_eq!(sha256_hex(&manifest_bytes), MANIFEST_SHA256);
     let source_sha =
         fs::read_to_string(root.parent().unwrap().join("SOURCE_MANIFEST_SHA256")).unwrap();
-    assert_eq!(source_sha.trim(), MANIFEST_SHA256);
+    assert_eq!(source_sha, format!("{MANIFEST_SHA256}\n"));
     for (relative, expected_sha) in &manifest.files {
         assert_eq!(
             sha256_hex(&fs::read(root.join(relative)).unwrap()),
@@ -419,7 +626,7 @@ fn manifest_and_rows() {
         read_jsonl(&root.join("invalid/revisions.jsonl"));
     let invalid_hashes: Vec<InvalidFixtureRow> = read_jsonl(&root.join("invalid/hashes.jsonl"));
     let invalid_paths: Vec<InvalidFixtureRow> = read_jsonl(&root.join("invalid/paths.jsonl"));
-    assert_eq!(controls.len(), 48);
+    assert_eq!(controls.len(), 51);
     assert_eq!(errors.len(), 24);
     assert_eq!(invalid_revisions.len(), 5);
     assert_eq!(invalid_hashes.len(), 5);
@@ -578,10 +785,15 @@ fn manifest_and_rows() {
             _ => panic!("{} has only one sequence coordinate", row.case),
         }
     }
+    for rows in sequences.values_mut() {
+        rows.sort_by_key(|(step, _, _)| *step);
+    }
     let expected_steps = BTreeMap::from([
         ("merged-conflict-reconnect-missing", 3_u32),
         ("merged-conflict-stale", 2_u32),
         ("merged-conflict-upload", 9_u32),
+        ("snapshot-full-conflicts", 4_u32),
+        ("snapshot-incremental-conflicts", 7_u32),
     ]);
     assert_eq!(
         sequences

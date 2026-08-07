@@ -2,5 +2,5 @@
 
 Rust workspace for FNS workspace synchronization, remote agent, and desktop application.
 
-Workspace sync v2 authority: `fast-note-sync-service@08c749773d0644f0289a97dcba8e1543023da164`.
-Source fixture manifest SHA-256: `db4dbc5466ce4f01ef3fe81b96fe73a7dfb24e900936d850637667ea5095d2ff`.
+Workspace sync v2 authority: `fast-note-sync-service@ba4caa45bb766dc4f1bc983e134d6b272a70cd05`.
+Source fixture manifest SHA-256: `86f52715e7827ac99873850961ee84ffd99610a5f0009b16033d5706b18f9e7e`.

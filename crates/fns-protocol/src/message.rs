@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::revision::WorkspaceConflictRevision;
 use crate::{
     BLOB_CHUNK_BYTES, ClientId, ConflictId, MAX_BLOB_BYTES, OperationId, RequiredNullable,
     StreamId, TransferId, WorkspaceBlobDirection, WorkspaceConflictChoice, WorkspaceConflictKind,
@@ -120,6 +121,7 @@ pub struct WorkspaceSnapshotBeginMessage {
     pub final_revision: WorkspaceRevision,
     pub entry_count: u32,
     pub event_count: u32,
+    pub conflict_count: u32,
 }
 
 impl WorkspaceSnapshotBeginMessage {
@@ -189,10 +191,13 @@ impl WorkspaceSnapshotEndMessage {
         {
             return Err(validation_error("snapshotEnd", "begin_mismatch"));
         }
-        let expected = match begin.mode {
+        let selected_count = match begin.mode {
             WorkspaceSnapshotMode::Snapshot => begin.entry_count,
             WorkspaceSnapshotMode::Incremental => begin.event_count,
         };
+        let expected = selected_count
+            .checked_add(begin.conflict_count)
+            .ok_or_else(|| validation_error("deliveredCount", "count_overflow"))?;
         if self.delivered_count != expected {
             return Err(validation_error("deliveredCount", "count_mismatch"));
         }
@@ -661,7 +666,7 @@ impl WorkspaceConflictSide {
 pub struct WorkspaceConflictCreatedMessage {
     pub workspace_id: WorkspaceId,
     pub conflict_id: ConflictId,
-    pub conflict_revision: WorkspaceRevision,
+    pub conflict_revision: WorkspaceConflictRevision,
     pub path: WorkspacePath,
     pub kind: WorkspaceConflictKind,
     pub ancestor: WorkspaceConflictSide,
@@ -672,9 +677,6 @@ pub struct WorkspaceConflictCreatedMessage {
 
 impl WorkspaceConflictCreatedMessage {
     pub fn validate(&self) -> Result<(), WorkspaceValidationError> {
-        if self.conflict_revision == WorkspaceRevision::ZERO {
-            return Err(validation_error("conflictRevision", "must_be_positive"));
-        }
         self.ancestor.validate_with_field("ancestor")?;
         self.current.validate_with_field("current")?;
         self.incoming.validate_with_field("incoming")?;
@@ -725,7 +727,7 @@ pub struct WorkspaceConflictResolvedRequest {
     pub client_id: ClientId,
     pub operation_id: OperationId,
     pub conflict_id: ConflictId,
-    pub conflict_revision: WorkspaceRevision,
+    pub conflict_revision: WorkspaceConflictRevision,
     pub choice: WorkspaceConflictChoice,
     pub path: WorkspacePath,
     pub content_hash: RequiredNullable<WorkspaceContentHash>,
@@ -784,7 +786,7 @@ impl WorkspaceConflictResolvedRequest {
 pub struct WorkspaceConflictResolvedMessage {
     pub workspace_id: WorkspaceId,
     pub conflict_id: ConflictId,
-    pub conflict_revision: WorkspaceRevision,
+    pub conflict_revision: WorkspaceConflictRevision,
     pub operation_id: OperationId,
     pub revision: WorkspaceRevision,
     pub choice: WorkspaceConflictChoice,
@@ -794,9 +796,7 @@ pub struct WorkspaceConflictResolvedMessage {
 
 impl WorkspaceConflictResolvedMessage {
     pub fn validate(&self) -> Result<(), WorkspaceValidationError> {
-        if self.conflict_revision == WorkspaceRevision::ZERO
-            || self.revision == WorkspaceRevision::ZERO
-        {
+        if self.revision == WorkspaceRevision::ZERO {
             return Err(validation_error("revision", "must_be_positive"));
         }
         if self.path_state.path_revision != self.revision {
