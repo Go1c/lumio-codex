@@ -33,6 +33,31 @@ fn stages_hello_with_go_compatible_blake3_and_reuses_stable_cache() {
     assert_eq!(cache.hits(), 1);
 }
 
+#[cfg(unix)]
+#[test]
+fn staging_remains_confined_after_root_path_is_replaced() {
+    let area = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let root_path = area.path().join("root");
+    let moved_path = area.path().join("moved");
+    fs::create_dir(&root_path).unwrap();
+    fs::write(root_path.join("entry"), b"original").unwrap();
+    let root = RootedWorkspace::open(&root_path).unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let mut cache = MemoryHashCache::default();
+    let path = WorkspacePath::parse("entry").unwrap();
+
+    fs::rename(&root_path, &moved_path).unwrap();
+    fs::create_dir(&root_path).unwrap();
+    fs::write(root_path.join("entry"), b"replacement").unwrap();
+
+    let descriptor = content
+        .stage_workspace_entry(&root, &path, &mut cache)
+        .unwrap();
+    assert_eq!(descriptor.size, 8);
+    assert_eq!(fs::read(moved_path.join("entry")).unwrap(), b"original");
+}
+
 #[test]
 fn import_hash_mismatch_keeps_existing_blob() {
     let state_dir = tempfile::tempdir().unwrap();
@@ -76,4 +101,19 @@ fn same_size_tampered_blob_is_rejected_without_replacement() {
 
     assert!(matches!(error, fns_fs::FsError::ContentMismatch));
     assert_eq!(fs::read(blob_path).unwrap(), b"jello");
+}
+
+#[test]
+fn opening_content_cache_cleans_only_stale_temp_files() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    drop(content);
+    let temp_path = state_dir.path().join("tmp").join(".fns-tmp-stale");
+    fs::write(&temp_path, b"stale").unwrap();
+    fs::write(state_dir.path().join("tmp").join("keep.txt"), b"keep").unwrap();
+
+    let _ = ContentCache::open(state_dir.path()).unwrap();
+
+    assert!(!temp_path.exists());
+    assert!(state_dir.path().join("tmp").join("keep.txt").exists());
 }

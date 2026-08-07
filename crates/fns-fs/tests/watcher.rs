@@ -97,3 +97,39 @@ fn started_watcher_reports_a_real_file_change() {
 
     assert!(found, "watcher did not report the changed file");
 }
+
+#[cfg(unix)]
+#[test]
+fn watcher_reports_a_gap_when_the_bound_root_path_is_replaced() {
+    use std::os::unix::fs::symlink;
+
+    let area = tempfile::tempdir().unwrap();
+    let root_path = area.path().join("root");
+    let moved_path = area.path().join("moved");
+    let outside_path = area.path().join("outside");
+    std::fs::create_dir(&root_path).unwrap();
+    std::fs::create_dir(&outside_path).unwrap();
+    let root = RootedWorkspace::open(&root_path).unwrap();
+    let (_watcher, receiver) = start_platform_watcher(&root, 32).unwrap();
+
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::rename(&root_path, &moved_path).unwrap();
+    symlink(&outside_path, &root_path).unwrap();
+    std::fs::write(moved_path.join("changed.txt"), b"changed").unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut found_gap = false;
+    while Instant::now() < deadline {
+        match receiver.try_recv() {
+            Ok(WatchMessage::Gap(fns_fs::WatchGap::OutsideRoot)) => {
+                found_gap = true;
+                break;
+            }
+            Ok(WatchMessage::Gap(_)) => {}
+            Ok(WatchMessage::Event(_)) => {}
+            Err(_) => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+
+    assert!(found_gap, "watcher did not report root replacement");
+}

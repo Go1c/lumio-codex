@@ -177,6 +177,29 @@ fn normalization_alias_is_collision_never_existing() {
 
 #[cfg(unix)]
 #[test]
+fn scan_reports_normalization_collision_without_aborting_or_panicking() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let area = tempfile::tempdir().unwrap();
+    let decomposed = OsString::from_vec("cafe\u{301}".as_bytes().to_vec());
+    fs::write(area.path().join(decomposed), b"nfd").unwrap();
+
+    let rooted = RootedWorkspace::open(area.path()).unwrap();
+    let scan = rooted
+        .scan(&SyncRules::compile(SyncRuleConfig::default()).unwrap())
+        .unwrap();
+
+    assert!(scan.entries.is_empty());
+    assert!(
+        scan.issues
+            .iter()
+            .any(|issue| issue.reason == "path_collision")
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn inspect_remains_confined_after_root_path_is_replaced() {
     let area = tempfile::tempdir().unwrap();
     let root = area.path().join("root");
@@ -191,5 +214,31 @@ fn inspect_remains_confined_after_root_path_is_replaced() {
 
     let observed = rooted.inspect(&path("entry")).unwrap().unwrap();
     assert_eq!(observed.metadata.size, 8);
+    assert_eq!(fs::read(moved.join("entry")).unwrap(), b"original");
+}
+
+#[cfg(unix)]
+#[test]
+fn scan_remains_confined_after_root_path_is_replaced() {
+    let area = tempfile::tempdir().unwrap();
+    let root = area.path().join("root");
+    let moved = area.path().join("moved");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("entry"), b"original").unwrap();
+    let rooted = RootedWorkspace::open(&root).unwrap();
+
+    fs::rename(&root, &moved).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("entry"), b"replacement").unwrap();
+
+    let scan = rooted
+        .scan(&SyncRules::compile(SyncRuleConfig::default()).unwrap())
+        .unwrap();
+    let entry = scan
+        .entries
+        .iter()
+        .find(|entry| entry.path.as_str() == "entry")
+        .unwrap();
+    assert_eq!(entry.metadata.size, 8);
     assert_eq!(fs::read(moved.join("entry")).unwrap(), b"original");
 }

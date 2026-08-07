@@ -95,10 +95,14 @@ fn locked_rule_constants_are_exposed_verbatim() {
         &[
             ".fns_state.json",
             "**/.fns_state.json",
+            ".fns-case-probe-*",
+            "**/.fns-case-probe-*",
             ".fns-tmp-*",
             "**/.fns-tmp-*",
             ".fns-delete-*",
             "**/.fns-delete-*",
+            ".fns-rename-*",
+            "**/.fns-rename-*",
             ".fns-internal/**",
             "**/.fns-internal/**",
         ]
@@ -212,6 +216,22 @@ fn every_hard_internal_exclusion_matches_at_root_and_when_nested() {
         ".fns-internal/blob",
         "state/.fns-internal/blob",
     ] {
+        let decision = rules.decide(&path(value), false);
+        assert_eq!(decision.source, RuleSource::HardInternal, "{value}");
+        assert!(!decision.included, "{value}");
+    }
+}
+
+#[test]
+fn case_probe_artifacts_are_hard_internal_at_any_depth() {
+    let rules = SyncRules::compile(SyncRuleConfig {
+        includes: vec!["**".into()],
+        excludes: Vec::new(),
+        protect_secrets: false,
+    })
+    .unwrap();
+
+    for value in [".fns-case-probe-aA-test", "nested/.fns-case-probe-aA-test"] {
         let decision = rules.decide(&path(value), false);
         assert_eq!(decision.source, RuleSource::HardInternal, "{value}");
         assert!(!decision.included, "{value}");

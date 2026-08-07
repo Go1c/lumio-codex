@@ -15,7 +15,25 @@ pub const HASH_BUFFER_BYTES: usize = 262_144;
 
 struct CacheTempFile {
     file: File,
+    _lock_file: File,
     path: PathBuf,
+    lock_path: PathBuf,
+    keep: bool,
+}
+
+impl CacheTempFile {
+    fn keep(&mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for CacheTempFile {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = fs::remove_file(&self.path);
+        }
+        let _ = fs::remove_file(&self.lock_path);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -111,6 +129,27 @@ impl ContentCache {
         fs::create_dir_all(&temp_dir).map_err(|_| FsError::Io {
             operation: "create blob staging",
         })?;
+        if let Ok(entries) = fs::read_dir(&temp_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                if !name.starts_with(".fns-tmp-") || name.ends_with(".lock") {
+                    continue;
+                }
+                let lock_path = entry.path().with_file_name(format!("{name}.lock"));
+                let lock_available = match File::options().read(true).write(true).open(&lock_path) {
+                    Ok(lock) => lock.try_lock().is_ok(),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                    Err(_) => false,
+                };
+                if lock_available {
+                    let _ = fs::remove_file(entry.path());
+                    let _ = fs::remove_file(lock_path);
+                }
+            }
+        }
         Ok(Self { blob_dir, temp_dir })
     }
 
@@ -162,7 +201,7 @@ impl ContentCache {
                 operation: "stage missing entry",
             })?;
             if before.fingerprint != after.fingerprint {
-                let _ = fs::remove_file(&temporary);
+                drop(temporary);
                 if attempt == 0 {
                     continue;
                 }
@@ -194,11 +233,11 @@ impl ContentCache {
     ) -> Result<ContentDescriptor, FsError> {
         let (temporary, hash, actual_size) = self.stream_reader(&mut reader, || {})?;
         if actual_size != size {
-            let _ = fs::remove_file(temporary);
+            drop(temporary);
             return Err(FsError::SizeMismatch);
         }
         if hash != *expected {
-            let _ = fs::remove_file(temporary);
+            drop(temporary);
             return Err(FsError::ContentMismatch);
         }
         self.commit_temporary(temporary, expected, size)?;
@@ -228,15 +267,15 @@ impl ContentCache {
         path: &WorkspacePath,
         observed: &ObservedEntry,
         observer: F,
-    ) -> Result<(PathBuf, WorkspaceContentHash, u64), FsError> {
+    ) -> Result<(CacheTempFile, WorkspaceContentHash, u64), FsError> {
         if observed.kind == WorkspaceEntryKind::Symlink {
             let bytes = observed.symlink_target.as_deref().unwrap_or_default();
             return self.stream_bytes(bytes, observer);
         }
-        let native = root.native_path(path)?.ok_or(FsError::Io {
+        let (parent, name, _) = root.open_entry(path)?.ok_or(FsError::Io {
             operation: "open workspace entry",
         })?;
-        let mut file = File::open(native).map_err(|_| FsError::Io {
+        let mut file = parent.open(&name).map_err(|_| FsError::Io {
             operation: "open workspace entry",
         })?;
         self.stream_reader(&mut file, observer)
@@ -246,10 +285,9 @@ impl ContentCache {
         &self,
         reader: &mut R,
         mut observer: F,
-    ) -> Result<(PathBuf, WorkspaceContentHash, u64), FsError> {
-        let temporary = self.temp_file()?;
-        let temporary_path = temporary.path.clone();
-        let mut writer = temporary.file;
+    ) -> Result<(CacheTempFile, WorkspaceContentHash, u64), FsError> {
+        let mut temporary = self.temp_file()?;
+        let writer = &mut temporary.file;
         let mut hasher = Hasher::new();
         let mut total = 0_u64;
         let mut buffer = [0_u8; HASH_BUFFER_BYTES];
@@ -264,7 +302,6 @@ impl ContentCache {
                 .checked_add(count as u64)
                 .ok_or(FsError::SizeMismatch)?;
             if total > MAX_BLOB_BYTES {
-                let _ = fs::remove_file(&temporary_path);
                 return Err(FsError::SizeMismatch);
             }
             hasher.update(&buffer[..count]);
@@ -283,14 +320,14 @@ impl ContentCache {
         })?;
         let hash = WorkspaceContentHash::parse(&format!("blake3:{}", hasher.finalize().to_hex()))
             .map_err(|_| FsError::ContentMismatch)?;
-        Ok((temporary_path, hash, total))
+        Ok((temporary, hash, total))
     }
 
     fn stream_bytes<F: FnMut()>(
         &self,
         bytes: &[u8],
         observer: F,
-    ) -> Result<(PathBuf, WorkspaceContentHash, u64), FsError> {
+    ) -> Result<(CacheTempFile, WorkspaceContentHash, u64), FsError> {
         self.stream_reader(&mut std::io::Cursor::new(bytes), observer)
     }
 
@@ -299,15 +336,65 @@ impl ContentCache {
             let path = self
                 .temp_dir
                 .join(format!(".fns-tmp-{}", uuid::Uuid::new_v4()));
+            let lock_path = path.with_file_name(format!(
+                "{}.lock",
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+            ));
+            let staging_path = path.with_file_name(format!(
+                "{}.staging",
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+            ));
+            let lock_file = match File::options()
+                .write(true)
+                .read(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => break,
+            };
+            if lock_file.try_lock().is_err() {
+                drop(lock_file);
+                let _ = fs::remove_file(&lock_path);
+                continue;
+            }
             match File::options()
                 .write(true)
                 .read(true)
                 .create_new(true)
-                .open(&path)
+                .open(&staging_path)
             {
-                Ok(file) => return Ok(CacheTempFile { file, path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(_) => break,
+                Ok(file) => {
+                    if fs::rename(&staging_path, &path).is_err() {
+                        drop(file);
+                        drop(lock_file);
+                        let _ = fs::remove_file(&staging_path);
+                        let _ = fs::remove_file(&lock_path);
+                        continue;
+                    }
+                    return Ok(CacheTempFile {
+                        file,
+                        _lock_file: lock_file,
+                        path,
+                        lock_path,
+                        keep: false,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    drop(lock_file);
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                Err(_) => {
+                    drop(lock_file);
+                    let _ = fs::remove_file(&lock_path);
+                    break;
+                }
             }
         }
         Err(FsError::Io {
@@ -317,23 +404,32 @@ impl ContentCache {
 
     fn commit_temporary(
         &self,
-        temporary: PathBuf,
+        mut temporary: CacheTempFile,
         hash: &WorkspaceContentHash,
         size: u64,
     ) -> Result<PathBuf, FsError> {
-        let final_path = self.blob_path(hash);
-        if fs::metadata(&final_path).is_ok() {
-            if !self.blob_matches(hash, size)? {
-                let _ = fs::remove_file(&temporary);
-                return Err(FsError::ContentMismatch);
+        let result = (|| {
+            let final_path = self.blob_path(hash);
+            if fs::metadata(&final_path).is_ok() {
+                if !self.blob_matches(hash, size)? {
+                    return Err(FsError::ContentMismatch);
+                }
+                let temporary_path = temporary.path.clone();
+                temporary.keep();
+                let _ = fs::remove_file(temporary_path);
+                return Ok(final_path);
             }
-            let _ = fs::remove_file(&temporary);
-            return Ok(final_path);
+            let temporary_path = temporary.path.clone();
+            fs::rename(&temporary_path, &final_path).map_err(|_| FsError::Io {
+                operation: "commit content cache",
+            })?;
+            temporary.keep();
+            Ok(final_path)
+        })();
+        if result.is_err() {
+            drop(temporary);
         }
-        fs::rename(&temporary, &final_path).map_err(|_| FsError::Io {
-            operation: "commit content cache",
-        })?;
-        Ok(final_path)
+        result
     }
 
     fn blob_matches(&self, hash: &WorkspaceContentHash, size: u64) -> Result<bool, FsError> {
@@ -400,8 +496,9 @@ fn synthetic_fingerprint(size: u64) -> FileFingerprint {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
 
-    use fns_protocol::WorkspacePath;
+    use fns_protocol::{WorkspaceContentHash, WorkspacePath};
 
     use super::{ContentCache, HASH_BUFFER_BYTES, MemoryHashCache};
     use crate::{FsError, RootedWorkspace};
@@ -431,5 +528,59 @@ mod tests {
         assert!(matches!(result, Err(FsError::UnstableFile { .. })));
         assert_eq!(rewrites, 2);
         assert_eq!(cache.hits(), 0);
+    }
+
+    #[test]
+    fn commit_failure_removes_temporary_staging() {
+        let state_dir = tempfile::tempdir().unwrap();
+        let content = ContentCache::open(state_dir.path()).unwrap();
+        let hash = WorkspaceContentHash::parse(
+            "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
+        let mut temporary = content.temp_file().unwrap();
+        temporary.file.write_all(b"x").unwrap();
+        temporary.file.sync_all().unwrap();
+        let temporary_path = temporary.path.clone();
+        let final_path = content.blob_path(&hash);
+        fs::create_dir(&final_path).unwrap();
+        let size = fs::metadata(&final_path).unwrap().len();
+
+        assert!(content.commit_temporary(temporary, &hash, size).is_err());
+        assert!(!temporary_path.exists());
+    }
+
+    #[test]
+    fn cache_temp_guard_survives_post_read_failure_and_open_sweep() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let state_dir = tempfile::tempdir().unwrap();
+        let native_path = root_dir.path().join("moving");
+        fs::write(&native_path, vec![b'a'; HASH_BUFFER_BYTES * 2]).unwrap();
+        let root = RootedWorkspace::open(root_dir.path()).unwrap();
+        let content = ContentCache::open(state_dir.path()).unwrap();
+        let workspace_path = WorkspacePath::parse("moving").unwrap();
+        let mut cache = MemoryHashCache::default();
+        let mut removed = false;
+
+        let result =
+            content.stage_workspace_entry_with_observer(&root, &workspace_path, &mut cache, || {
+                if !removed {
+                    fs::remove_file(&native_path).unwrap();
+                    removed = true;
+                }
+            });
+        assert!(matches!(result, Err(FsError::Io { .. })));
+        let leaked = fs::read_dir(state_dir.path().join("tmp"))
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().starts_with(".fns-tmp-"));
+
+        let active = content.temp_file().unwrap();
+        let active_path = active.path.clone();
+        let _reopened = ContentCache::open(state_dir.path()).unwrap();
+        let active_removed = !active_path.exists();
+
+        assert!(!leaked, "post-read failure leaked a temporary staging file");
+        assert!(!active_removed, "open sweep removed active staging");
     }
 }

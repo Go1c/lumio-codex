@@ -3,7 +3,7 @@ mod platform;
 
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicU8, Ordering},
 };
 use std::time::Instant;
@@ -50,6 +50,7 @@ pub enum WatchMessage {
 struct GapState {
     code: AtomicU8,
     wake: Sender<()>,
+    gate: Mutex<()>,
 }
 
 impl GapState {
@@ -57,10 +58,16 @@ impl GapState {
         Self {
             code: AtomicU8::new(0),
             wake,
+            gate: Mutex::new(()),
         }
     }
 
     fn set(&self, gap: WatchGap) {
+        let _guard = self.gate.lock().expect("watch gap gate is not poisoned");
+        self.set_locked(gap);
+    }
+
+    fn set_locked(&self, gap: WatchGap) {
         let code = gap_code(gap);
         if self
             .code
@@ -111,17 +118,22 @@ impl WatchIngress {
     }
 
     pub fn try_send(&self, event: NormalizedWatchEvent) -> Result<(), FsError> {
+        let _guard = self
+            .gap
+            .gate
+            .lock()
+            .expect("watch gap gate is not poisoned");
         if self.gap.is_set() {
             return Err(FsError::QueueDisconnected);
         }
         match self.sender.try_send(WatchMessage::Event(event)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => {
-                self.gap.set(WatchGap::Overflow);
+                self.gap.set_locked(WatchGap::Overflow);
                 Err(FsError::QueueDisconnected)
             }
             Err(TrySendError::Disconnected(_)) => {
-                self.gap.set(WatchGap::Backend);
+                self.gap.set_locked(WatchGap::Backend);
                 Err(FsError::QueueDisconnected)
             }
         }
@@ -140,7 +152,11 @@ impl WatchReceiver {
             }
             crossbeam_channel::select! {
                 recv(self.receiver) -> message => {
-                    return message.map_err(|_| FsError::QueueDisconnected);
+                    let message = message.map_err(|_| FsError::QueueDisconnected)?;
+                    if let Some(gap) = self.take_gap() {
+                        return Ok(WatchMessage::Gap(gap));
+                    }
+                    return Ok(message);
                 }
                 recv(self.gap_wake) -> _ => {}
             }
@@ -151,13 +167,22 @@ impl WatchReceiver {
         if let Some(gap) = self.take_gap() {
             return Ok(WatchMessage::Gap(gap));
         }
-        self.receiver.try_recv().map_err(|error| match error {
+        let message = self.receiver.try_recv().map_err(|error| match error {
             TryRecvError::Empty => FsError::QueueDisconnected,
             TryRecvError::Disconnected => FsError::QueueDisconnected,
-        })
+        })?;
+        if let Some(gap) = self.take_gap() {
+            return Ok(WatchMessage::Gap(gap));
+        }
+        Ok(message)
     }
 
     fn take_gap(&self) -> Option<WatchGap> {
+        let _guard = self
+            .gap
+            .gate
+            .lock()
+            .expect("watch gap gate is not poisoned");
         if !self.gap.is_set() {
             return None;
         }
@@ -199,8 +224,12 @@ pub fn start_platform_watcher(
 ) -> Result<(PlatformWatcher, WatchReceiver), FsError> {
     let (ingress, receiver) = WatchIngress::bounded(capacity);
     let root_path = root.canonical_root().to_path_buf();
+    let callback_root = root.clone_for_watcher()?;
     let callback_ingress = ingress.clone();
     let watcher = notify::recommended_watcher(move |result| match result {
+        Ok(_event) if !callback_root.bound_path_is_current() => {
+            callback_ingress.mark_gap(WatchGap::OutsideRoot);
+        }
         Ok(event) => match notify_adapter::normalize_notify_event(&root_path, event) {
             Ok(event) => {
                 if callback_ingress.try_send(event).is_err() {

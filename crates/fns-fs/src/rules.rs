@@ -29,10 +29,14 @@ pub const DEFAULT_EXCLUDES: &[&str] = &[
 pub const HARD_INTERNAL_EXCLUDES: &[&str] = &[
     ".fns_state.json",
     "**/.fns_state.json",
+    ".fns-case-probe-*",
+    "**/.fns-case-probe-*",
     ".fns-tmp-*",
     "**/.fns-tmp-*",
     ".fns-delete-*",
     "**/.fns-delete-*",
+    ".fns-rename-*",
+    "**/.fns-rename-*",
     ".fns-internal/**",
     "**/.fns-internal/**",
 ];

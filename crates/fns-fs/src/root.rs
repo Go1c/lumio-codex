@@ -1,6 +1,9 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use cap_std::ambient_authority;
@@ -66,14 +69,21 @@ impl RootedWorkspace {
             .map_err(|_| FsError::Io {
             operation: "open root",
         })?;
+        #[cfg(test)]
+        run_open_test_hook(root);
+        let opened_metadata = capability.symlink_metadata(".").map_err(|_| FsError::Io {
+            operation: "stat opened root",
+        })?;
+        if !same_file_identity(&metadata, &opened_metadata) {
+            return Err(FsError::Io {
+                operation: "root changed while opening",
+            });
+        }
+        let case_sensitivity = detect_case_sensitivity(&capability);
         Ok(Self {
             canonical_root,
             capability,
-            case_sensitivity: if cfg!(windows) {
-                CaseSensitivity::Insensitive
-            } else {
-                CaseSensitivity::Sensitive
-            },
+            case_sensitivity,
         })
     }
 
@@ -83,6 +93,29 @@ impl RootedWorkspace {
 
     pub fn case_sensitivity(&self) -> CaseSensitivity {
         self.case_sensitivity
+    }
+
+    pub(crate) fn clone_for_watcher(&self) -> Result<Self, FsError> {
+        Ok(Self {
+            canonical_root: self.canonical_root.clone(),
+            capability: self.capability.try_clone().map_err(|_| FsError::Io {
+                operation: "clone watcher root capability",
+            })?,
+            case_sensitivity: self.case_sensitivity,
+        })
+    }
+
+    pub(crate) fn bound_path_is_current(&self) -> bool {
+        let Ok(path_metadata) = fs::symlink_metadata(&self.canonical_root) else {
+            return false;
+        };
+        if path_metadata.file_type().is_symlink() || !path_metadata.is_dir() {
+            return false;
+        }
+        let Ok(capability_metadata) = self.capability.symlink_metadata(".") else {
+            return false;
+        };
+        same_file_identity(&path_metadata, &capability_metadata)
     }
 
     pub fn inspect(&self, path: &WorkspacePath) -> Result<Option<ObservedEntry>, FsError> {
@@ -101,12 +134,42 @@ impl RootedWorkspace {
         scan_workspace(self, rules)
     }
 
-    pub(crate) fn root_path(&self) -> &Path {
-        &self.canonical_root
-    }
-
-    pub(crate) fn native_path(&self, path: &WorkspacePath) -> Result<Option<PathBuf>, FsError> {
-        self.resolve_native_path(path)
+    pub(crate) fn read_dir_names(
+        &self,
+        path: Option<&WorkspacePath>,
+    ) -> Result<Vec<OsString>, FsError> {
+        let directory = match path {
+            Some(path) => {
+                let Some((parent, name, metadata)) = self.resolve_cap_entry(path)? else {
+                    return Ok(Vec::new());
+                };
+                if metadata.file_type().is_symlink() {
+                    return Err(FsError::UnsupportedSymlink);
+                }
+                if !metadata.is_dir() {
+                    return Ok(Vec::new());
+                }
+                parent.open_dir(&name).map_err(|_| FsError::Io {
+                    operation: "open workspace directory",
+                })?
+            }
+            None => self.capability.try_clone().map_err(|_| FsError::Io {
+                operation: "clone root capability",
+            })?,
+        };
+        directory
+            .entries()
+            .map_err(|_| FsError::Io {
+                operation: "read directory",
+            })?
+            .map(|entry| {
+                entry
+                    .map(|entry| entry.file_name())
+                    .map_err(|_| FsError::Io {
+                        operation: "read directory entry",
+                    })
+            })
+            .collect()
     }
 
     pub(crate) fn open_parent(
@@ -199,83 +262,6 @@ impl RootedWorkspace {
             }
             WorkspaceEntryKind::Tombstone => Err(FsError::ContentMismatch),
         }
-    }
-
-    pub(crate) fn observe_native(
-        &self,
-        path: WorkspacePath,
-        native: PathBuf,
-    ) -> Result<ObservedEntry, FsError> {
-        let metadata = fs::symlink_metadata(&native).map_err(|_| FsError::Io {
-            operation: "stat entry",
-        })?;
-        if metadata.file_type().is_symlink() {
-            self.validate_symlink(&native)?;
-        }
-        self.observed(path, native, metadata)
-    }
-
-    pub(crate) fn resolve_child_name(
-        &self,
-        parent: &Path,
-        name: &str,
-        workspace_path: &WorkspacePath,
-    ) -> Result<Option<PathBuf>, FsError> {
-        let entries = fs::read_dir(parent).map_err(|_| FsError::Io {
-            operation: "read directory",
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|_| FsError::Io {
-                operation: "read directory entry",
-            })?;
-            let native_name = entry.file_name();
-            let Some(native_name) = native_name.to_str() else {
-                continue;
-            };
-            if native_name == name {
-                return Ok(Some(parent.join(native_name)));
-            }
-            let normalized = native_name.nfc().collect::<String>();
-            let normalized_match = normalized == name;
-            let case_match = self.case_sensitivity == CaseSensitivity::Insensitive
-                && normalized.eq_ignore_ascii_case(name);
-            if normalized_match || case_match {
-                return Err(FsError::PathCollision {
-                    path: workspace_path.clone(),
-                });
-            }
-        }
-        Ok(None)
-    }
-
-    fn resolve_native_path(&self, path: &WorkspacePath) -> Result<Option<PathBuf>, FsError> {
-        let mut current = self.canonical_root.clone();
-        let components = path.as_str().split('/').collect::<Vec<_>>();
-        for (index, component) in components.iter().enumerate() {
-            let is_last = index + 1 == components.len();
-            let workspace_prefix = components[..=index].join("/");
-            let workspace_prefix =
-                WorkspacePath::parse(&workspace_prefix).map_err(|error| FsError::InvalidPath {
-                    reason: error.reason,
-                })?;
-            let Some(next) = self.resolve_child_name(&current, component, &workspace_prefix)?
-            else {
-                return Ok(None);
-            };
-            let metadata = fs::symlink_metadata(&next).map_err(|_| FsError::Io {
-                operation: "stat path component",
-            })?;
-            if metadata.file_type().is_symlink() {
-                self.validate_symlink(&next)?;
-                if !is_last {
-                    return Err(FsError::UnsupportedSymlink);
-                }
-            } else if !is_last && !metadata.is_dir() {
-                return Ok(None);
-            }
-            current = next;
-        }
-        Ok(Some(current))
     }
 
     fn resolve_cap_entry(
@@ -394,6 +380,41 @@ impl RootedWorkspace {
         }
     }
 
+    pub(crate) fn validate_symlink_target(
+        &self,
+        path: &WorkspacePath,
+        target: &str,
+    ) -> Result<(), FsError> {
+        let parent = path
+            .as_str()
+            .rsplit_once('/')
+            .map_or("", |(parent, _)| parent);
+        validate_relative_target(parent, target)?;
+        let mut components = if parent.is_empty() {
+            Vec::new()
+        } else {
+            parent.split('/').map(str::to_owned).collect::<Vec<_>>()
+        };
+        for component in Path::new(target).components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    components.pop().ok_or(FsError::PathEscape)?;
+                }
+                Component::Normal(component) => {
+                    components.push(component.to_str().ok_or(FsError::PathEscape)?.to_owned());
+                }
+                Component::Prefix(_) | Component::RootDir => return Err(FsError::PathEscape),
+            }
+        }
+        if !components.is_empty() {
+            let resolved =
+                WorkspacePath::parse(&components.join("/")).map_err(|_| FsError::PathEscape)?;
+            let _ = self.inspect(&resolved)?;
+        }
+        Ok(())
+    }
+
     fn observed_cap(
         &self,
         path: WorkspacePath,
@@ -434,75 +455,7 @@ impl RootedWorkspace {
         let metadata = WorkspaceFileMetadata {
             size,
             modified_at_ms,
-            executable: executable_cap(&metadata),
-        };
-        Ok(ObservedEntry {
-            path,
-            kind,
-            metadata,
-            fingerprint,
-            symlink_target,
-        })
-    }
-
-    fn validate_symlink(&self, path: &Path) -> Result<(), FsError> {
-        let target = fs::read_link(path).map_err(|_| FsError::Io {
-            operation: "read symlink",
-        })?;
-        if target.is_absolute() || target.to_str().is_none() {
-            return Err(FsError::PathEscape);
-        }
-        let resolved = path.parent().unwrap_or(self.root_path()).join(target);
-        let canonical = match fs::canonicalize(&resolved) {
-            Ok(canonical) => canonical,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                lexical_normalize(&resolved)
-            }
-            Err(_) => return Err(FsError::PathEscape),
-        };
-        if !canonical.starts_with(self.root_path()) {
-            return Err(FsError::PathEscape);
-        }
-        Ok(())
-    }
-
-    fn observed(
-        &self,
-        path: WorkspacePath,
-        native: PathBuf,
-        metadata: fs::Metadata,
-    ) -> Result<ObservedEntry, FsError> {
-        let file_type = metadata.file_type();
-        let (kind, symlink_target) = if file_type.is_symlink() {
-            let target = fs::read_link(&native).map_err(|_| FsError::Io {
-                operation: "read symlink",
-            })?;
-            let target_bytes = target.to_string_lossy().as_bytes().to_vec();
-            (WorkspaceEntryKind::Symlink, Some(target_bytes))
-        } else if metadata.is_dir() {
-            (WorkspaceEntryKind::Directory, None)
-        } else if metadata.is_file() {
-            (WorkspaceEntryKind::File, None)
-        } else {
-            return Err(FsError::Io {
-                operation: "classify entry",
-            });
-        };
-        let size = if kind == WorkspaceEntryKind::Directory {
-            0
-        } else {
-            metadata.len()
-        };
-        let modified_at_ms = metadata
-            .modified()
-            .ok()
-            .and_then(|value| value.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map_or(0, |value| value.as_millis().min(i64::MAX as u128) as i64);
-        let fingerprint = fingerprint(&metadata);
-        let metadata = WorkspaceFileMetadata {
-            size,
-            modified_at_ms,
-            executable: executable(&metadata),
+            executable: kind == WorkspaceEntryKind::File && executable_cap(&metadata),
         };
         Ok(ObservedEntry {
             path,
@@ -514,21 +467,66 @@ impl RootedWorkspace {
     }
 }
 
-fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(value) => normalized.push(value),
-            Component::Prefix(value) => normalized.push(value.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-        }
+fn detect_case_sensitivity(root: &cap_std::fs::Dir) -> CaseSensitivity {
+    let probe = format!(".fns-case-probe-aA-{}", uuid::Uuid::new_v4());
+    let alternate = probe.to_uppercase();
+    if root.create_dir(&probe).is_ok() {
+        let insensitive = root.symlink_metadata(&alternate).is_ok();
+        let _ = root.remove_dir(&probe);
+        return if insensitive {
+            CaseSensitivity::Insensitive
+        } else {
+            CaseSensitivity::Sensitive
+        };
     }
-    normalized
+    if cfg!(any(windows, target_os = "macos")) {
+        CaseSensitivity::Insensitive
+    } else {
+        CaseSensitivity::Sensitive
+    }
 }
+
+fn same_file_identity(left: &fs::Metadata, right: &cap_std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt as CapMetadataExt;
+        use std::os::unix::fs::MetadataExt as StdMetadataExt;
+
+        left.dev() == right.dev() && left.ino() == right.ino()
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt as CapMetadataExt;
+        use std::os::windows::fs::MetadataExt as StdMetadataExt;
+
+        left.creation_time() == right.creation_time()
+            && left.last_write_time() == right.last_write_time()
+            && left.file_size() == right.file_size()
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (left, right);
+        true
+    }
+}
+
+#[cfg(test)]
+fn run_open_test_hook(root: &Path) {
+    if let Some(hook) = OPEN_TEST_HOOK
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .expect("root open test hook is not poisoned")
+        .as_ref()
+    {
+        hook(root);
+    }
+}
+
+#[cfg(test)]
+type OpenTestHook = Box<dyn Fn(&Path) + Send + Sync>;
+
+#[cfg(test)]
+static OPEN_TEST_HOOK: OnceLock<Mutex<Option<OpenTestHook>>> = OnceLock::new();
 
 fn validate_relative_target(parent_path: &str, target: &str) -> Result<(), FsError> {
     let mut depth = if parent_path.is_empty() {
@@ -557,19 +555,6 @@ fn hash_bytes(bytes: &[u8]) -> Result<WorkspaceContentHash, FsError> {
         .map_err(|_| FsError::ContentMismatch)
 }
 
-fn executable(metadata: &fs::Metadata) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = metadata;
-        false
-    }
-}
-
 fn executable_cap(metadata: &cap_std::fs::Metadata) -> bool {
     #[cfg(unix)]
     {
@@ -580,49 +565,6 @@ fn executable_cap(metadata: &cap_std::fs::Metadata) -> bool {
     {
         let _ = metadata;
         false
-    }
-}
-
-#[allow(clippy::needless_return)]
-fn fingerprint(metadata: &fs::Metadata) -> FileFingerprint {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        return FileFingerprint {
-            file_id: NativeFileId::Unix {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-            },
-            size: metadata.len(),
-            modified_at_ns: metadata.mtime() as i128 * 1_000_000_000
-                + metadata.mtime_nsec() as i128,
-            changed_at_ns: metadata.ctime() as i128 * 1_000_000_000 + metadata.ctime_nsec() as i128,
-        };
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        return FileFingerprint {
-            file_id: NativeFileId::Windows {
-                volume_serial: metadata.volume_serial_number().unwrap_or_default() as u64,
-                file_index: metadata.file_index().unwrap_or_default(),
-            },
-            size: metadata.file_size(),
-            modified_at_ns: metadata.last_write_time() as i128 * 100,
-            changed_at_ns: metadata.last_write_time() as i128 * 100,
-        };
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        FileFingerprint {
-            file_id: NativeFileId::Unix {
-                device: 0,
-                inode: 0,
-            },
-            size: metadata.len(),
-            modified_at_ns: 0,
-            changed_at_ns: 0,
-        }
     }
 }
 
@@ -644,15 +586,20 @@ fn fingerprint_cap(metadata: &cap_std::fs::Metadata) -> FileFingerprint {
     }
     #[cfg(windows)]
     {
-        use cap_std::fs::MetadataExt;
+        use cap_fs_ext::MetadataExt;
+        let modified_at_ns = metadata
+            .modified()
+            .ok()
+            .and_then(|value| value.into_std().duration_since(SystemTime::UNIX_EPOCH).ok())
+            .map_or(0, |value| value.as_nanos().min(i128::MAX as u128) as i128);
         return FileFingerprint {
             file_id: NativeFileId::Windows {
-                volume_serial: metadata.volume_serial_number().unwrap_or_default() as u64,
-                file_index: metadata.file_index().unwrap_or_default(),
+                volume_serial: metadata.dev(),
+                file_index: metadata.ino(),
             },
-            size: metadata.file_size(),
-            modified_at_ns: metadata.last_write_time() as i128 * 100,
-            changed_at_ns: metadata.last_write_time() as i128 * 100,
+            size: metadata.len(),
+            modified_at_ns,
+            changed_at_ns: modified_at_ns,
         };
     }
     #[cfg(not(any(unix, windows)))]
@@ -666,5 +613,60 @@ fn fingerprint_cap(metadata: &cap_std::fs::Metadata) -> FileFingerprint {
             modified_at_ns: 0,
             changed_at_ns: 0,
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::{OPEN_TEST_HOOK, RootedWorkspace};
+    use fns_protocol::WorkspacePath;
+
+    #[test]
+    fn root_capability_is_bound_before_path_swap_can_follow_a_symlink() {
+        let area = tempfile::tempdir().unwrap();
+        let root_path = area.path().join("root");
+        let moved_path = area.path().join("moved");
+        let outside_path = area.path().join("outside");
+        std::fs::create_dir(&root_path).unwrap();
+        std::fs::create_dir(&outside_path).unwrap();
+        std::fs::write(root_path.join("entry"), b"original").unwrap();
+        std::fs::write(outside_path.join("entry"), b"outside").unwrap();
+
+        *OPEN_TEST_HOOK
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .unwrap() = Some(Box::new({
+            let root_path = root_path.clone();
+            let moved_path = moved_path.clone();
+            let outside_path = outside_path.clone();
+            move |path| {
+                if path != root_path {
+                    return;
+                }
+                std::fs::rename(path, &moved_path).unwrap();
+                symlink(&outside_path, path).unwrap();
+            }
+        }));
+
+        let rooted = RootedWorkspace::open(&root_path).unwrap();
+        let entry = rooted
+            .inspect(&WorkspacePath::parse("entry").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.metadata.size, 8);
+        assert_eq!(
+            std::fs::read(outside_path.join("entry")).unwrap(),
+            b"outside"
+        );
+        assert_eq!(
+            std::fs::read(moved_path.join("entry")).unwrap(),
+            b"original"
+        );
+        *OPEN_TEST_HOOK
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+            .unwrap() = None;
     }
 }

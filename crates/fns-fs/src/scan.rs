@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::fs;
+use std::collections::HashSet;
 
 use fns_protocol::WorkspacePath;
 use unicode_normalization::UnicodeNormalization;
@@ -21,20 +20,23 @@ pub(crate) fn scan_workspace(
     root: &RootedWorkspace,
     rules: &SyncRules,
 ) -> Result<WorkspaceScan, FsError> {
-    let mut pending = vec![(root.root_path().to_path_buf(), String::new())];
+    let mut pending = vec![(None, String::new())];
     let mut entries = Vec::new();
     let mut issues = Vec::new();
-    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut seen = HashSet::new();
 
     while let Some((parent, prefix)) = pending.pop() {
-        let children = fs::read_dir(&parent).map_err(|_| FsError::Io {
-            operation: "scan directory",
-        })?;
-        for child in children {
-            let child = child.map_err(|_| FsError::Io {
-                operation: "scan directory entry",
-            })?;
-            let name = child.file_name();
+        let children = match root.read_dir_names(parent.as_ref()) {
+            Ok(children) => children,
+            Err(FsError::PathEscape | FsError::UnsupportedSymlink) => {
+                issues.push(ScanIssue {
+                    reason: "unsafe_symlink",
+                });
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        for name in children {
             let Some(name) = name.to_str() else {
                 issues.push(ScanIssue {
                     reason: "non_utf8_name",
@@ -56,38 +58,36 @@ pub(crate) fn scan_workspace(
                     continue;
                 }
             };
-            let metadata = fs::symlink_metadata(child.path()).map_err(|_| FsError::Io {
-                operation: "scan entry",
-            })?;
-            let is_dir = metadata.is_dir() && !metadata.file_type().is_symlink();
-            if is_dir && rules.should_descend(&path) {
-                pending.push((child.path(), value.clone()));
-            }
-            if !rules.decide(&path, is_dir).included {
-                continue;
-            }
-            let observed = match root.observe_native(path, child.path()) {
-                Ok(observed) => observed,
+            let observed = match root.inspect(&path) {
+                Ok(Some(observed)) => observed,
+                Ok(None) => continue,
                 Err(FsError::PathEscape | FsError::UnsupportedSymlink) => {
                     issues.push(ScanIssue {
                         reason: "unsafe_symlink",
                     });
                     continue;
                 }
+                Err(FsError::PathCollision { .. }) => {
+                    issues.push(ScanIssue {
+                        reason: "path_collision",
+                    });
+                    continue;
+                }
                 Err(error) => return Err(error),
             };
+            let is_dir = observed.kind == fns_protocol::WorkspaceEntryKind::Directory;
+            if is_dir && rules.should_descend(&path) {
+                pending.push((Some(path.clone()), value.clone()));
+            }
+            if !rules.decide(&path, is_dir).included {
+                continue;
+            }
             let key = if root.case_sensitivity() == CaseSensitivity::Insensitive {
                 value.to_lowercase()
             } else {
                 value.clone()
             };
-            if let Some(previous) = seen.insert(key, entries.len()) {
-                entries.remove(previous);
-                for index in seen.values_mut() {
-                    if *index > previous {
-                        *index -= 1;
-                    }
-                }
+            if !seen.insert(key) {
                 issues.push(ScanIssue {
                     reason: "path_collision",
                 });

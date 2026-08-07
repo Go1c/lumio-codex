@@ -33,8 +33,40 @@ impl PriorEntryLookup for ObservedPrior {
     }
 }
 
+struct TwoObservedPrior {
+    signatures: BTreeMap<String, EntrySignature>,
+    observed: BTreeMap<String, fns_fs::ObservedEntry>,
+}
+
+impl PriorEntryLookup for TwoObservedPrior {
+    fn signature(&self, path: &WorkspacePath) -> Option<EntrySignature> {
+        self.signatures.get(path.as_str()).cloned()
+    }
+
+    fn observed(&self, path: &WorkspacePath) -> Option<fns_fs::ObservedEntry> {
+        self.observed.get(path.as_str()).cloned()
+    }
+}
+
 fn path(value: &str) -> WorkspacePath {
     WorkspacePath::parse(value).unwrap()
+}
+
+fn synthetic_file_id() -> NativeFileId {
+    #[cfg(unix)]
+    {
+        NativeFileId::Unix {
+            device: 1,
+            inode: 2,
+        }
+    }
+    #[cfg(windows)]
+    {
+        NativeFileId::Windows {
+            volume_serial: 1,
+            file_index: 2,
+        }
+    }
 }
 
 fn event(
@@ -78,10 +110,7 @@ fn receipt(path_value: &str, hash: &str, size: u64) -> ApplyReceipt {
                 executable: false,
             },
             fingerprint: FileFingerprint {
-                file_id: NativeFileId::Unix {
-                    device: 1,
-                    inode: 2,
-                },
+                file_id: synthetic_file_id(),
                 size,
                 modified_at_ns: 3,
                 changed_at_ns: 4,
@@ -357,7 +386,148 @@ fn ambiguous_signature_does_not_guess_rename() {
 }
 
 #[test]
+fn unique_signature_pairs_cookie_free_rename_halves() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.push(event(NativeWatchKind::RenameFrom, &["old"], None, start));
+    coalescer.push(event(NativeWatchKind::RenameTo, &["new"], None, start));
+    let prior = Prior(BTreeMap::from([
+        (
+            "old".into(),
+            file_signature(
+                Some("blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f"),
+                5,
+            ),
+        ),
+        (
+            "new".into(),
+            file_signature(
+                Some("blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f"),
+                5,
+            ),
+        ),
+    ]));
+    assert_eq!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(1_002), &prior)
+            .unwrap(),
+        vec![FsChange::Rename {
+            from: path("old"),
+            to: path("new"),
+        }]
+    );
+}
+
+#[test]
+fn cookie_free_rename_halves_outside_window_are_not_paired() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.push(event(NativeWatchKind::RenameFrom, &["old"], None, start));
+    coalescer.push(event(
+        NativeWatchKind::RenameTo,
+        &["new"],
+        None,
+        start + fns_fs::RENAME_WINDOW + Duration::from_millis(1),
+    ));
+    let prior = Prior(BTreeMap::from([
+        (
+            "old".into(),
+            file_signature(
+                Some("blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f"),
+                5,
+            ),
+        ),
+        (
+            "new".into(),
+            file_signature(
+                Some("blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f"),
+                5,
+            ),
+        ),
+    ]));
+
+    assert_eq!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(1_002), &prior)
+            .unwrap(),
+        vec![FsChange::Create(path("new")), FsChange::Delete(path("old"))]
+    );
+}
+
+#[test]
+fn directory_rule_exclusion_wins_for_a_root_path() {
+    let start = Instant::now();
+    let rules = SyncRules::compile(SyncRuleConfig::default()).unwrap();
+    let mut coalescer = EventCoalescer::with_rules(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+        rules,
+    );
+
+    coalescer.push(event(NativeWatchKind::Modify, &["target"], None, start));
+    assert!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &Prior(BTreeMap::new()))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn hard_excluded_directory_root_is_not_accepted_when_file_rule_disagrees() {
+    let start = Instant::now();
+    let rules = SyncRules::compile(SyncRuleConfig::default()).unwrap();
+    let mut coalescer = EventCoalescer::with_rules(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+        rules,
+    );
+
+    coalescer.push(event(NativeWatchKind::Modify, &["target"], None, start));
+    assert!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &Prior(BTreeMap::new()))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn exact_postimage_is_suppressed() {
+    let start = Instant::now();
+    let hash = "blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f";
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.suppress(&receipt("a", hash, 5));
+    coalescer.push(event(NativeWatchKind::Modify, &["a"], None, start));
+    let observed = receipt("a", hash, 5).postimages[0].clone().unwrap();
+    let prior = ObservedPrior {
+        signature: file_signature(Some(hash), 5),
+        observed,
+    };
+    assert!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &prior)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn matching_signature_without_observed_entry_is_not_suppressed() {
     let start = Instant::now();
     let hash = "blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f";
     let mut coalescer = EventCoalescer::new(
@@ -371,9 +541,75 @@ fn exact_postimage_is_suppressed() {
         "a".into(),
         file_signature(Some(hash), 5),
     )]));
+
+    assert_eq!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &prior)
+            .unwrap(),
+        vec![FsChange::Update(path("a"))]
+    );
+}
+
+#[test]
+fn rename_postimages_are_suppressed_as_a_pair() {
+    let start = Instant::now();
+    let hash = "blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f";
+    let receipt = ApplyReceipt {
+        apply_id: ApplyId(uuid::Uuid::nil()),
+        touched: vec![path("old"), path("new")],
+        postimages: vec![
+            None,
+            Some(receipt("new", hash, 5).postimages[0].clone().unwrap()),
+        ],
+        postimage_hashes: vec![None, Some(WorkspaceContentHash::parse(hash).unwrap())],
+        cleanup_name: None,
+    };
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.suppress(&receipt);
+    coalescer.push(event(
+        NativeWatchKind::RenameBoth,
+        &["old", "new"],
+        None,
+        start,
+    ));
+    let mut observed = BTreeMap::new();
+    observed.insert("new".into(), receipt.postimages[1].clone().unwrap());
+    let prior = TwoObservedPrior {
+        signatures: BTreeMap::from([("new".into(), file_signature(Some(hash), 5))]),
+        observed,
+    };
+
     assert!(
         coalescer
             .flush_ready(start + Duration::from_millis(201), &prior)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn exact_delete_postimage_is_suppressed() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.suppress(&ApplyReceipt {
+        apply_id: ApplyId(uuid::Uuid::nil()),
+        touched: vec![path("a")],
+        postimages: vec![None],
+        postimage_hashes: vec![None],
+        cleanup_name: None,
+    });
+    coalescer.push(event(NativeWatchKind::Remove, &["a"], None, start));
+    assert!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &Prior(BTreeMap::new()))
             .unwrap()
             .is_empty()
     );
@@ -450,6 +686,22 @@ fn capacity_overflow_is_one_rescan() {
     assert_eq!(
         flush(&mut coalescer, start, &Prior(BTreeMap::new())),
         vec![FsChange::RescanRequired]
+    );
+}
+
+#[test]
+fn suppressions_consume_coalescer_capacity() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(fns_fs::DEBOUNCE_WINDOW, fns_fs::RENAME_WINDOW, 1);
+    coalescer.suppress(&receipt(
+        "remote.txt",
+        "blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f",
+        5,
+    ));
+
+    assert_eq!(
+        coalescer.push(event(NativeWatchKind::Modify, &["local.txt"], None, start)),
+        fns_fs::CoalescePush::RescanRequired
     );
 }
 

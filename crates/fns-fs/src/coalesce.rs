@@ -92,6 +92,7 @@ enum PathKey {
 }
 
 struct Suppression {
+    missing: bool,
     kind: WorkspaceEntryKind,
     size: u64,
     executable: bool,
@@ -306,19 +307,108 @@ impl EventCoalescer {
             }
         });
         expired.append(&mut self.unmatched_renames);
+        let mut froms = Vec::new();
+        let mut tos = Vec::new();
         for half in expired {
             if !ready(now, half.observed_at, self.rename) {
                 self.unmatched_renames.push(half);
                 continue;
             }
-            self.occupied.remove(&half.path);
-            let workspace_path = parse_path(&half.path)?;
-            let change = match half.kind {
-                crate::NativeWatchKind::RenameFrom => FsChange::Delete(workspace_path),
-                crate::NativeWatchKind::RenameTo => FsChange::Create(workspace_path),
-                _ => continue,
+            match half.kind {
+                crate::NativeWatchKind::RenameFrom => froms.push(half),
+                crate::NativeWatchKind::RenameTo => tos.push(half),
+                _ => {}
+            }
+        }
+        let from_signatures = froms
+            .iter()
+            .map(|half| {
+                parse_path(&half.path)
+                    .ok()
+                    .and_then(|path| prior.signature(&path))
+            })
+            .collect::<Vec<_>>();
+        let to_signatures = tos
+            .iter()
+            .map(|half| {
+                parse_path(&half.path)
+                    .ok()
+                    .and_then(|path| prior.signature(&path))
+            })
+            .collect::<Vec<_>>();
+        let mut paired_from = BTreeSet::new();
+        let mut paired_to = BTreeSet::new();
+        for (from_index, from_signature) in from_signatures.iter().enumerate() {
+            let Some(from_signature) = from_signature else {
+                continue;
             };
-            changes.insert(half.path, change);
+            let candidates = to_signatures
+                .iter()
+                .enumerate()
+                .filter(|(index, to_signature)| {
+                    to_signature.as_ref() == Some(from_signature)
+                        && within_window(
+                            froms[from_index].observed_at,
+                            tos[*index].observed_at,
+                            self.rename,
+                        )
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if candidates.len() != 1 {
+                continue;
+            }
+            let to_index = candidates[0];
+            let Some(to_signature) = to_signatures[to_index].as_ref() else {
+                continue;
+            };
+            let reverse_candidates = from_signatures
+                .iter()
+                .filter(|candidate| candidate.as_ref() == Some(to_signature))
+                .count();
+            if reverse_candidates != 1 {
+                continue;
+            }
+            paired_from.insert(from_index);
+            paired_to.insert(to_index);
+            let from = &froms[from_index].path;
+            let to = &tos[to_index].path;
+            self.occupied.remove(from);
+            self.occupied.remove(to);
+            changes.retain(|path, _| !is_descendant(path, from) && !is_descendant(path, to));
+            let from_path = parse_path(from)?;
+            let to_path = parse_path(to)?;
+            if !(self.is_suppressed(from, now, prior, &from_path)
+                && self.is_suppressed(to, now, prior, &to_path))
+            {
+                changes.insert(
+                    from.clone(),
+                    FsChange::Rename {
+                        from: from_path,
+                        to: to_path,
+                    },
+                );
+            }
+        }
+        for (index, half) in froms.into_iter().enumerate() {
+            if paired_from.contains(&index) {
+                continue;
+            }
+            self.occupied.remove(&half.path);
+            let path = parse_path(&half.path)?;
+            if !self.is_suppressed(&half.path, now, prior, &path) {
+                changes.insert(half.path.clone(), FsChange::Delete(path));
+            }
+        }
+        for (index, half) in tos.into_iter().enumerate() {
+            if paired_to.contains(&index) {
+                continue;
+            }
+            self.occupied.remove(&half.path);
+            let path = parse_path(&half.path)?;
+            if !self.is_suppressed(&half.path, now, prior, &path) {
+                changes.insert(half.path.clone(), FsChange::Create(path));
+            }
         }
 
         let mut renames = Vec::new();
@@ -330,19 +420,28 @@ impl EventCoalescer {
                 true
             }
         });
+        let raw_renames = renames.clone();
         for (from, to) in collapse_renames(renames) {
             self.occupied.remove(&from);
             self.occupied.remove(&to);
+            for (raw_from, raw_to) in &raw_renames {
+                self.occupied.remove(raw_from);
+                self.occupied.remove(raw_to);
+            }
             changes.retain(|path, _| !is_descendant(path, &from) && !is_descendant(path, &to));
             let from_path = parse_path(&from)?;
             let to_path = parse_path(&to)?;
-            changes.insert(
-                from.clone(),
-                FsChange::Rename {
-                    from: from_path,
-                    to: to_path,
-                },
-            );
+            if !(self.is_suppressed(&from, now, prior, &from_path)
+                && self.is_suppressed(&to, now, prior, &to_path))
+            {
+                changes.insert(
+                    from.clone(),
+                    FsChange::Rename {
+                        from: from_path,
+                        to: to_path,
+                    },
+                );
+            }
         }
 
         Ok(changes.into_values().collect())
@@ -352,16 +451,30 @@ impl EventCoalescer {
         self.prune_suppressions(Instant::now());
         let expires_at = Instant::now() + self.rename;
         for (index, path) in receipt.touched.iter().enumerate() {
-            let Some(observed) = receipt.postimages.get(index).and_then(Option::as_ref) else {
-                continue;
-            };
+            let already_tracked = self.suppressions.contains_key(path.as_str());
+            if !already_tracked && self.occupied.len() + self.suppressions.len() >= self.capacity {
+                let Some(oldest) = self
+                    .suppressions
+                    .iter()
+                    .min_by_key(|(_, suppression)| suppression.expires_at)
+                    .map(|(path, _)| path.clone())
+                else {
+                    continue;
+                };
+                self.suppressions.remove(&oldest);
+            }
+            let observed = receipt.postimages.get(index).and_then(Option::as_ref);
             self.suppressions.insert(
                 path.as_str().to_owned(),
                 Suppression {
-                    kind: observed.kind,
-                    size: observed.metadata.size,
-                    executable: observed.metadata.executable,
-                    fingerprint: observed.fingerprint.clone(),
+                    missing: observed.is_none(),
+                    kind: observed.map_or(WorkspaceEntryKind::Tombstone, |observed| observed.kind),
+                    size: observed.map_or(0, |observed| observed.metadata.size),
+                    executable: observed.is_some_and(|observed| observed.metadata.executable),
+                    fingerprint: observed
+                        .map_or_else(synthetic_suppression_fingerprint, |observed| {
+                            observed.fingerprint.clone()
+                        }),
                     hash: receipt.postimage_hashes.get(index).cloned().flatten(),
                     expires_at,
                 },
@@ -406,7 +519,7 @@ impl EventCoalescer {
             .iter()
             .filter(|path| !self.occupied.contains(*path))
             .count();
-        if self.occupied.len() + additional > self.capacity {
+        if self.occupied.len() + additional + self.suppressions.len() > self.capacity {
             return false;
         }
         self.occupied.extend(paths);
@@ -414,7 +527,8 @@ impl EventCoalescer {
     }
 
     fn reserve_rename_slot(&self) -> bool {
-        self.pending.len()
+        self.suppressions.len()
+            + self.pending.len()
             + self.cookie_halves.len()
             + self.unmatched_renames.len()
             + self.direct_renames.len()
@@ -441,7 +555,9 @@ impl EventCoalescer {
         let path = path.to_str().ok_or(())?;
         #[cfg(windows)]
         let path = path.replace('\\', "/");
-        let workspace_path = WorkspacePath::parse(&path).map_err(|_| ())?;
+        #[cfg(windows)]
+        let path = path.as_str();
+        let workspace_path = WorkspacePath::parse(path).map_err(|_| ())?;
         let included_as_file = self.rules.decide(&workspace_path, false).included;
         let included_as_directory = self.rules.decide(&workspace_path, true).included;
         if included_as_file && included_as_directory {
@@ -479,6 +595,9 @@ impl EventCoalescer {
             self.suppressions.remove(path);
             return false;
         }
+        if suppression.missing {
+            return prior.signature(workspace_path).is_none();
+        }
         let Some(current) = prior.signature(workspace_path) else {
             return false;
         };
@@ -492,7 +611,7 @@ impl EventCoalescer {
             return false;
         }
         let Some(observed) = prior.observed(workspace_path) else {
-            return true;
+            return false;
         };
         observed.kind == suppression.kind
             && observed.metadata.size == suppression.size
@@ -503,6 +622,25 @@ impl EventCoalescer {
     fn prune_suppressions(&mut self, now: Instant) {
         self.suppressions
             .retain(|_, suppression| suppression.expires_at > now);
+    }
+}
+
+fn synthetic_suppression_fingerprint() -> crate::FileFingerprint {
+    #[cfg(unix)]
+    let file_id = crate::NativeFileId::Unix {
+        device: 0,
+        inode: 0,
+    };
+    #[cfg(windows)]
+    let file_id = crate::NativeFileId::Windows {
+        volume_serial: 0,
+        file_index: 0,
+    };
+    crate::FileFingerprint {
+        file_id,
+        size: 0,
+        modified_at_ns: 0,
+        changed_at_ns: 0,
     }
 }
 
