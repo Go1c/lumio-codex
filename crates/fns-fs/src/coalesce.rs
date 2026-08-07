@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use fns_protocol::{WorkspaceContentHash, WorkspaceEntryKind, WorkspacePath};
 
-use crate::{FsError, NativeWatchKind, ObservedEntry};
+use crate::{FsError, NativeWatchKind, ObservedEntry, SyncRuleConfig, SyncRules};
 
 pub const COALESCER_PATH_CAPACITY: usize = 8_192;
 pub const DEBOUNCE_WINDOW: Duration = Duration::from_millis(200);
@@ -44,6 +44,10 @@ pub struct EntrySignature {
 
 pub trait PriorEntryLookup {
     fn signature(&self, path: &WorkspacePath) -> Option<EntrySignature>;
+
+    fn observed(&self, _path: &WorkspacePath) -> Option<ObservedEntry> {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -82,9 +86,16 @@ struct PendingRename {
     observed_at: Instant,
 }
 
+enum PathKey {
+    Accepted(String),
+    Ignored,
+}
+
 struct Suppression {
     kind: WorkspaceEntryKind,
     size: u64,
+    executable: bool,
+    fingerprint: crate::FileFingerprint,
     hash: Option<WorkspaceContentHash>,
     expires_at: Instant,
 }
@@ -100,10 +111,22 @@ pub struct EventCoalescer {
     direct_renames: Vec<PendingRename>,
     suppressions: BTreeMap<String, Suppression>,
     rescan_required: bool,
+    rules: SyncRules,
 }
 
 impl EventCoalescer {
     pub fn new(debounce: Duration, rename: Duration, capacity: usize) -> Self {
+        let rules = SyncRules::compile(SyncRuleConfig::default())
+            .expect("default synchronization rules are valid");
+        Self::with_rules(debounce, rename, capacity, rules)
+    }
+
+    pub fn with_rules(
+        debounce: Duration,
+        rename: Duration,
+        capacity: usize,
+        rules: SyncRules,
+    ) -> Self {
         Self {
             debounce,
             rename,
@@ -115,10 +138,12 @@ impl EventCoalescer {
             direct_renames: Vec::new(),
             suppressions: BTreeMap::new(),
             rescan_required: false,
+            rules,
         }
     }
 
     pub fn push(&mut self, event: crate::NormalizedWatchEvent) -> CoalescePush {
+        self.prune_suppressions(Instant::now());
         if self.rescan_required {
             return CoalescePush::RescanRequired;
         }
@@ -127,27 +152,51 @@ impl EventCoalescer {
                 if event.paths.len() != 2 {
                     return self.require_rescan();
                 }
-                let Some(from) = self.path_key(&event.paths[0]) else {
-                    return self.require_rescan();
+                let from = match self.path_key(&event.paths[0]) {
+                    Ok(path) => path,
+                    Err(()) => return self.require_rescan(),
                 };
-                let Some(to) = self.path_key(&event.paths[1]) else {
-                    return self.require_rescan();
+                let to = match self.path_key(&event.paths[1]) {
+                    Ok(path) => path,
+                    Err(()) => return self.require_rescan(),
                 };
-                if !self.reserve_paths([from.clone(), to.clone()]) {
-                    return self.require_rescan();
+                match (from, to) {
+                    (PathKey::Accepted(from), PathKey::Accepted(to)) => {
+                        if !self.reserve_paths([from.clone(), to.clone()]) {
+                            return self.require_rescan();
+                        }
+                        if !self.reserve_rename_slot() {
+                            return self.require_rescan();
+                        }
+                        self.direct_renames.push(PendingRename {
+                            from,
+                            to,
+                            observed_at: event.observed_at,
+                        });
+                    }
+                    (PathKey::Accepted(path), PathKey::Ignored) => {
+                        if !self.reserve_paths([path.clone()]) {
+                            return self.require_rescan();
+                        }
+                        self.record_path(path, NativeWatchKind::Remove, event.observed_at);
+                    }
+                    (PathKey::Ignored, PathKey::Accepted(path)) => {
+                        if !self.reserve_paths([path.clone()]) {
+                            return self.require_rescan();
+                        }
+                        self.record_path(path, NativeWatchKind::Create, event.observed_at);
+                    }
+                    (PathKey::Ignored, PathKey::Ignored) => {}
                 }
-                self.direct_renames.push(PendingRename {
-                    from,
-                    to,
-                    observed_at: event.observed_at,
-                });
             }
             crate::NativeWatchKind::RenameFrom | crate::NativeWatchKind::RenameTo => {
                 if event.paths.len() != 1 {
                     return self.require_rescan();
                 }
-                let Some(path) = self.path_key(&event.paths[0]) else {
-                    return self.require_rescan();
+                let path = match self.path_key(&event.paths[0]) {
+                    Ok(PathKey::Accepted(path)) => path,
+                    Ok(PathKey::Ignored) => return CoalescePush::Accepted,
+                    Err(()) => return self.require_rescan(),
                 };
                 if !self.reserve_paths([path.clone()]) {
                     return self.require_rescan();
@@ -159,10 +208,14 @@ impl EventCoalescer {
                 };
                 if let Some(cookie) = event.rename_cookie {
                     if let Some(previous) = self.cookie_halves.get(&cookie) {
-                        if previous.kind == half.kind {
+                        if previous.kind == half.kind
+                            || !within_window(previous.observed_at, half.observed_at, self.rename)
+                        {
                             let previous = self.cookie_halves.remove(&cookie).unwrap();
-                            self.unmatched_renames.push(previous);
-                            self.unmatched_renames.push(half);
+                            if !self.push_unmatched(previous) || !self.reserve_rename_slot() {
+                                return self.require_rescan();
+                            }
+                            self.cookie_halves.insert(cookie, half);
                         } else {
                             let previous = self.cookie_halves.remove(&cookie).unwrap();
                             let (from, to) = if previous.kind == crate::NativeWatchKind::RenameFrom
@@ -178,16 +231,23 @@ impl EventCoalescer {
                             });
                         }
                     } else {
+                        if !self.reserve_rename_slot() {
+                            return self.require_rescan();
+                        }
                         self.cookie_halves.insert(cookie, half);
                     }
                 } else {
-                    self.unmatched_renames.push(half);
+                    if !self.push_unmatched(half) {
+                        return self.require_rescan();
+                    }
                 }
             }
             kind => {
                 for path in event.paths {
-                    let Some(path) = self.path_key(&path) else {
-                        return self.require_rescan();
+                    let path = match self.path_key(&path) {
+                        Ok(PathKey::Accepted(path)) => path,
+                        Ok(PathKey::Ignored) => continue,
+                        Err(()) => return self.require_rescan(),
                     };
                     if !self.reserve_paths([path.clone()]) {
                         return self.require_rescan();
@@ -204,12 +264,12 @@ impl EventCoalescer {
         now: Instant,
         prior: &dyn PriorEntryLookup,
     ) -> Result<Vec<FsChange>, FsError> {
+        self.prune_suppressions(now);
         if self.rescan_required {
             self.clear_pending();
             self.rescan_required = false;
             return Ok(vec![FsChange::RescanRequired]);
         }
-
         let ready_paths = self
             .pending
             .iter()
@@ -289,6 +349,7 @@ impl EventCoalescer {
     }
 
     pub fn suppress(&mut self, receipt: &ApplyReceipt) {
+        self.prune_suppressions(Instant::now());
         let expires_at = Instant::now() + self.rename;
         for (index, path) in receipt.touched.iter().enumerate() {
             let Some(observed) = receipt.postimages.get(index).and_then(Option::as_ref) else {
@@ -299,6 +360,8 @@ impl EventCoalescer {
                 Suppression {
                     kind: observed.kind,
                     size: observed.metadata.size,
+                    executable: observed.metadata.executable,
+                    fingerprint: observed.fingerprint.clone(),
                     hash: receipt.postimage_hashes.get(index).cloned().flatten(),
                     expires_at,
                 },
@@ -350,11 +413,42 @@ impl EventCoalescer {
         true
     }
 
-    fn path_key(&self, path: &std::path::Path) -> Option<String> {
-        let path = path.to_str()?;
+    fn reserve_rename_slot(&self) -> bool {
+        self.pending.len()
+            + self.cookie_halves.len()
+            + self.unmatched_renames.len()
+            + self.direct_renames.len()
+            < self.capacity
+    }
+
+    fn push_unmatched(&mut self, half: RenameHalf) -> bool {
+        if let Some(previous) = self
+            .unmatched_renames
+            .iter_mut()
+            .find(|previous| previous.path == half.path && previous.kind == half.kind)
+        {
+            previous.observed_at = previous.observed_at.max(half.observed_at);
+            return true;
+        }
+        if !self.reserve_rename_slot() {
+            return false;
+        }
+        self.unmatched_renames.push(half);
+        true
+    }
+
+    fn path_key(&self, path: &std::path::Path) -> Result<PathKey, ()> {
+        let path = path.to_str().ok_or(())?;
         #[cfg(windows)]
         let path = path.replace('\\', "/");
-        Some(path.to_owned())
+        let workspace_path = WorkspacePath::parse(&path).map_err(|_| ())?;
+        let included_as_file = self.rules.decide(&workspace_path, false).included;
+        let included_as_directory = self.rules.decide(&workspace_path, true).included;
+        if included_as_file && included_as_directory {
+            Ok(PathKey::Accepted(path.to_owned()))
+        } else {
+            Ok(PathKey::Ignored)
+        }
     }
 
     fn require_rescan(&mut self) -> CoalescePush {
@@ -381,25 +475,46 @@ impl EventCoalescer {
         let Some(suppression) = self.suppressions.get(path) else {
             return false;
         };
-        if suppression.expires_at < now {
+        if suppression.expires_at <= now {
             self.suppressions.remove(path);
             return false;
         }
         let Some(current) = prior.signature(workspace_path) else {
             return false;
         };
-        current.kind == suppression.kind
+        let basic_match = current.kind == suppression.kind
             && current.size == suppression.size
             && suppression
                 .hash
                 .as_ref()
-                .is_none_or(|hash| current.content_hash.as_ref() == Some(hash))
+                .is_none_or(|hash| current.content_hash.as_ref() == Some(hash));
+        if !basic_match {
+            return false;
+        }
+        let Some(observed) = prior.observed(workspace_path) else {
+            return true;
+        };
+        observed.kind == suppression.kind
+            && observed.metadata.size == suppression.size
+            && observed.metadata.executable == suppression.executable
+            && observed.fingerprint == suppression.fingerprint
+    }
+
+    fn prune_suppressions(&mut self, now: Instant) {
+        self.suppressions
+            .retain(|_, suppression| suppression.expires_at > now);
     }
 }
 
 fn ready(now: Instant, at: Instant, window: Duration) -> bool {
     now.checked_duration_since(at)
         .is_some_and(|elapsed| elapsed >= window)
+}
+
+fn within_window(left: Instant, right: Instant, window: Duration) -> bool {
+    left.checked_duration_since(right)
+        .or_else(|| right.checked_duration_since(left))
+        .is_some_and(|elapsed| elapsed <= window)
 }
 
 fn parse_path(path: &str) -> Result<WorkspacePath, FsError> {

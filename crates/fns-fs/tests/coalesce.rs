@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use fns_fs::{
     ApplyId, ApplyReceipt, EntrySignature, EventCoalescer, FileFingerprint, FsChange, NativeFileId,
-    NativeWatchKind, NormalizedWatchEvent, PriorEntryLookup,
+    NativeWatchKind, NormalizedWatchEvent, PriorEntryLookup, SyncRuleConfig, SyncRules,
 };
 use fns_protocol::{
     WorkspaceContentHash, WorkspaceEntryKind, WorkspaceFileMetadata, WorkspacePath,
@@ -15,6 +15,21 @@ struct Prior(BTreeMap<String, EntrySignature>);
 impl PriorEntryLookup for Prior {
     fn signature(&self, path: &WorkspacePath) -> Option<EntrySignature> {
         self.0.get(path.as_str()).cloned()
+    }
+}
+
+struct ObservedPrior {
+    signature: EntrySignature,
+    observed: fns_fs::ObservedEntry,
+}
+
+impl PriorEntryLookup for ObservedPrior {
+    fn signature(&self, path: &WorkspacePath) -> Option<EntrySignature> {
+        (path == &self.observed.path).then(|| self.signature.clone())
+    }
+
+    fn observed(&self, path: &WorkspacePath) -> Option<fns_fs::ObservedEntry> {
+        (path == &self.observed.path).then(|| self.observed.clone())
     }
 }
 
@@ -257,6 +272,71 @@ fn unmatched_rename_expires_to_delete_or_create() {
 }
 
 #[test]
+fn cookie_rename_after_pairing_window_is_not_paired() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    coalescer.push(event(
+        NativeWatchKind::RenameFrom,
+        &["old"],
+        Some(11),
+        start,
+    ));
+    coalescer.push(event(
+        NativeWatchKind::RenameTo,
+        &["new"],
+        Some(11),
+        start + fns_fs::RENAME_WINDOW + Duration::from_millis(1),
+    ));
+
+    assert_eq!(
+        coalescer
+            .flush_ready(
+                start + Duration::from_millis(1_002),
+                &Prior(BTreeMap::new())
+            )
+            .unwrap(),
+        vec![FsChange::Create(path("new")), FsChange::Delete(path("old"))]
+    );
+}
+
+#[test]
+fn rules_filter_events_before_the_coalescer_reserves_capacity() {
+    let start = Instant::now();
+    let rules = SyncRules::compile(SyncRuleConfig {
+        includes: vec!["src/**".into()],
+        excludes: Vec::new(),
+        protect_secrets: true,
+    })
+    .unwrap();
+    let mut coalescer =
+        EventCoalescer::with_rules(fns_fs::DEBOUNCE_WINDOW, fns_fs::RENAME_WINDOW, 1, rules);
+
+    assert_eq!(
+        coalescer.push(event(
+            NativeWatchKind::Modify,
+            &["target/ignored"],
+            None,
+            start
+        )),
+        fns_fs::CoalescePush::Accepted
+    );
+    assert_eq!(
+        coalescer.push(event(NativeWatchKind::Modify, &["src/kept"], None, start)),
+        fns_fs::CoalescePush::Accepted
+    );
+    assert_eq!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &Prior(BTreeMap::new()))
+            .unwrap(),
+        vec![FsChange::Update(path("src/kept"))]
+    );
+}
+
+#[test]
 fn ambiguous_signature_does_not_guess_rename() {
     let start = Instant::now();
     let mut coalescer = EventCoalescer::new(
@@ -296,6 +376,34 @@ fn exact_postimage_is_suppressed() {
             .flush_ready(start + Duration::from_millis(201), &prior)
             .unwrap()
             .is_empty()
+    );
+}
+
+#[test]
+fn suppression_requires_exact_executable_and_fingerprint() {
+    let start = Instant::now();
+    let hash = "blake3:ea8f163db38682925e4491c5e58d4bb3506ef8c14eb78a86e908c5624a67200f";
+    let mut coalescer = EventCoalescer::new(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+    );
+    let receipt = receipt("a", hash, 5);
+    coalescer.suppress(&receipt);
+    let mut changed = receipt.postimages[0].clone().unwrap();
+    changed.metadata.executable = true;
+    changed.fingerprint.modified_at_ns += 1;
+    let prior = ObservedPrior {
+        signature: file_signature(Some(hash), 5),
+        observed: changed,
+    };
+    coalescer.push(event(NativeWatchKind::Modify, &["a"], None, start));
+
+    assert_eq!(
+        coalescer
+            .flush_ready(start + Duration::from_millis(201), &prior)
+            .unwrap(),
+        vec![FsChange::Update(path("a"))]
     );
 }
 
@@ -342,5 +450,24 @@ fn capacity_overflow_is_one_rescan() {
     assert_eq!(
         flush(&mut coalescer, start, &Prior(BTreeMap::new())),
         vec![FsChange::RescanRequired]
+    );
+}
+
+#[test]
+fn duplicate_cookie_halves_cannot_exceed_pending_capacity() {
+    let start = Instant::now();
+    let mut coalescer = EventCoalescer::new(fns_fs::DEBOUNCE_WINDOW, fns_fs::RENAME_WINDOW, 1);
+    assert_eq!(
+        coalescer.push(event(NativeWatchKind::RenameFrom, &["old"], Some(1), start,)),
+        fns_fs::CoalescePush::Accepted
+    );
+    assert_eq!(
+        coalescer.push(event(
+            NativeWatchKind::RenameFrom,
+            &["old"],
+            Some(2),
+            start + Duration::from_millis(1),
+        )),
+        fns_fs::CoalescePush::RescanRequired
     );
 }
