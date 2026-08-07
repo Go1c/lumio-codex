@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use fns_protocol::revision::WorkspaceConflictRevision;
 use fns_protocol::{
     ACTION_FLOW_SPECS, ClientId, ConflictId, DecodedEnvelope, MAX_ACTION_BYTES, MAX_BLOB_BYTES,
     MAX_CONTROL_FRAME_BYTES, MessageBody, MessageBodyKind, OperationId, ProtocolDecodeError,
@@ -32,7 +33,7 @@ const HASH: &str = "blake3:ababababababababababababababababababababababababababa
 const HELLO_REQUEST_JSON: &str = r#"{"protocolVersion":"2","clientId":"10000000-0000-4000-8000-000000000001","clientVersion":"1.0.0","capabilities":["binary_chunks","conflicts","snapshot_v1"]}"#;
 const HELLO_RESPONSE_JSON: &str = r#"{"protocolVersion":"2","serverVersion":"2.0.0","maxControlFrameBytes":65536,"maxBinaryChunkBytes":1048576,"maxBlobBytes":5368709120,"maxTransfersPerConnection":4,"heartbeatSeconds":25}"#;
 const SUBSCRIBE_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","lastAckRevision":"0"}"#;
-const SNAPSHOT_BEGIN_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","mode":"snapshot","fromRevision":"0","finalRevision":"1","entryCount":1,"eventCount":0}"#;
+const SNAPSHOT_BEGIN_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","mode":"snapshot","fromRevision":"0","finalRevision":"1","entryCount":1,"eventCount":0,"conflictCount":0}"#;
 const SNAPSHOT_ENTRY_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","index":0,"entry":{"path":"notes/café.md","pathRevision":"1","kind":"file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false},"tombstone":false}}"#;
 const SNAPSHOT_END_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","mode":"snapshot","deliveredCount":1,"finalRevision":"1"}"#;
 const MUTATION_JSON: &str = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","clientId":"10000000-0000-4000-8000-000000000001","operationId":"10000000-0000-4000-8000-000000000004","path":"notes/a.md","basePathRevision":"0","kind":"upsert_file","contentHash":"blake3:abababababababababababababababababababababababababababababababab","metadata":{"size":3,"modifiedAtMs":1,"executable":false}}"#;
@@ -166,6 +167,7 @@ fn for_each_body_schema_case(mut visit: impl FnMut(BodySchemaCase<'_>)) {
                 required_non_null("finalRevision"),
                 required_non_null("entryCount"),
                 required_non_null("eventCount"),
+                required_non_null("conflictCount"),
             ],
         },
         BodySchemaCase {
@@ -1656,6 +1658,9 @@ fn conflict_id() -> ConflictId {
 fn revision(value: u64) -> WorkspaceRevision {
     WorkspaceRevision::new(value)
 }
+fn conflict_revision(value: &str) -> WorkspaceConflictRevision {
+    WorkspaceConflictRevision::parse(value).unwrap()
+}
 fn path(value: &str) -> WorkspacePath {
     WorkspacePath::parse(value).unwrap()
 }
@@ -1669,6 +1674,17 @@ fn metadata(size: u64) -> WorkspaceFileMetadata {
         executable: false,
     }
 }
+
+#[test]
+fn snapshot_begin_requires_conflict_count_on_wire() {
+    let missing_conflict_count = r#"{"workspaceId":"10000000-0000-4000-8000-000000000002","streamId":"10000000-0000-4000-8000-000000000003","mode":"snapshot","fromRevision":"0","finalRevision":"1","entryCount":1,"eventCount":0}"#;
+
+    assert!(
+        serde_json::from_str::<WorkspaceSnapshotBeginMessage>(missing_conflict_count).is_err(),
+        "WorkspaceSnapshotBegin accepted an omitted conflictCount",
+    );
+}
+
 fn live_state(value: &str, rev: u64) -> WorkspacePathState {
     WorkspacePathState {
         path: path(value),
@@ -1757,6 +1773,7 @@ fn hello_path_state_and_snapshot_validators_have_exact_boundaries() {
         final_revision: revision(1),
         entry_count: 1,
         event_count: 0,
+        conflict_count: 0,
     };
     begin.validate().unwrap();
     let mut invalid_begin = begin.clone();
@@ -1791,6 +1808,67 @@ fn hello_path_state_and_snapshot_validators_have_exact_boundaries() {
         "deliveredCount",
         "count_mismatch",
     );
+}
+
+#[test]
+fn snapshot_end_counts_authoritative_conflicts_in_both_modes() {
+    for (mode, entry_count, event_count, conflict_count, delivered_count) in [
+        (WorkspaceSnapshotMode::Snapshot, 2, 0, 3, 5),
+        (WorkspaceSnapshotMode::Incremental, 0, 4, 3, 7),
+    ] {
+        let begin = WorkspaceSnapshotBeginMessage {
+            workspace_id: workspace_id(),
+            stream_id: stream_id(),
+            mode,
+            from_revision: revision(1),
+            final_revision: revision(9),
+            entry_count,
+            event_count,
+            conflict_count,
+        };
+        let end = WorkspaceSnapshotEndMessage {
+            workspace_id: workspace_id(),
+            stream_id: stream_id(),
+            mode,
+            delivered_count,
+            final_revision: revision(9),
+        };
+
+        end.validate_against(&begin)
+            .unwrap_or_else(|error| panic!("{mode:?}: {error}"));
+    }
+}
+
+#[test]
+fn snapshot_end_reports_count_overflow_before_mismatch_in_both_modes() {
+    for (mode, entry_count, event_count) in [
+        (WorkspaceSnapshotMode::Snapshot, u32::MAX, 0),
+        (WorkspaceSnapshotMode::Incremental, 0, u32::MAX),
+    ] {
+        let begin = WorkspaceSnapshotBeginMessage {
+            workspace_id: workspace_id(),
+            stream_id: stream_id(),
+            mode,
+            from_revision: revision(1),
+            final_revision: revision(9),
+            entry_count,
+            event_count,
+            conflict_count: 1,
+        };
+        let end = WorkspaceSnapshotEndMessage {
+            workspace_id: workspace_id(),
+            stream_id: stream_id(),
+            mode,
+            delivered_count: 0,
+            final_revision: revision(9),
+        };
+
+        assert_validation_error(
+            end.validate_against(&begin),
+            "deliveredCount",
+            "count_overflow",
+        );
+    }
 }
 
 #[test]
@@ -1980,7 +2058,7 @@ fn created_conflict(kind: WorkspaceConflictKind) -> WorkspaceConflictCreatedMess
     let mut created = WorkspaceConflictCreatedMessage {
         workspace_id: workspace_id(),
         conflict_id: conflict_id(),
-        conflict_revision: revision(7),
+        conflict_revision: conflict_revision("7"),
         path: path("notes/a.md"),
         kind,
         ancestor: live_side("notes/a.md", 3),
@@ -2020,7 +2098,7 @@ fn conflict_validators_cover_all_four_kinds_and_choices_with_stale_first() {
         client_id: client_id(),
         operation_id: operation_id(),
         conflict_id: conflict_id(),
-        conflict_revision: revision(7),
+        conflict_revision: conflict_revision("7"),
         choice: WorkspaceConflictChoice::Current,
         path: path("notes/a.md"),
         content_hash: RequiredNullable::Value(hash()),
@@ -2041,7 +2119,7 @@ fn conflict_validators_cover_all_four_kinds_and_choices_with_stale_first() {
     request.metadata = metadata(0);
     request.validate_against(&created).unwrap();
 
-    request.conflict_revision = revision(6);
+    request.conflict_revision = conflict_revision("6");
     request.content_hash = RequiredNullable::Value(hash());
     request.metadata.size = 99;
     assert_validation_error(
@@ -2053,7 +2131,7 @@ fn conflict_validators_cover_all_four_kinds_and_choices_with_stale_first() {
     let resolved = WorkspaceConflictResolvedMessage {
         workspace_id: workspace_id(),
         conflict_id: conflict_id(),
-        conflict_revision: revision(7),
+        conflict_revision: conflict_revision("7"),
         operation_id: operation_id(),
         revision: revision(8),
         choice: WorkspaceConflictChoice::Merged,

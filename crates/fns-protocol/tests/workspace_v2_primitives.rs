@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use fns_protocol::revision::WorkspaceConflictRevision;
 use fns_protocol::{
     ClientId, ConflictId, MAX_BLOB_BYTES, OperationId, RequestId, RequiredNullable, StreamId,
     TransferId, WorkspaceContentHash, WorkspaceEntryKind, WorkspaceFileMetadata, WorkspaceId,
@@ -46,6 +47,35 @@ fn revisions_use_canonical_decimal_json_strings() {
         assert_validation_error(
             WorkspaceRevision::decode_json(raw.as_bytes()),
             "revision",
+            reason,
+        );
+    }
+}
+
+#[test]
+fn conflict_revisions_are_positive_opaque_canonical_decimal_strings() {
+    for value in ["1", "18446744073709551615"] {
+        let raw = format!("\"{value}\"");
+        let decoded = WorkspaceConflictRevision::decode_json(raw.as_bytes())
+            .expect("valid conflict revision");
+        assert_eq!(
+            decoded,
+            WorkspaceConflictRevision::parse(value).expect("valid conflict revision")
+        );
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), raw);
+    }
+
+    for (raw, reason) in [
+        ("1", "must_be_string"),
+        ("\"0\"", "must_be_positive"),
+        ("\"-1\"", "non_canonical_decimal"),
+        ("\"01\"", "non_canonical_decimal"),
+        ("\"18446744073709551616\"", "non_canonical_decimal"),
+        ("\"\"", "empty"),
+    ] {
+        assert_validation_error(
+            WorkspaceConflictRevision::decode_json(raw.as_bytes()),
+            "conflictRevision",
             reason,
         );
     }
