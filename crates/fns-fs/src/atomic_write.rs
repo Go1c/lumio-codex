@@ -1,9 +1,10 @@
-use std::fs::{self, File};
+use std::fs;
 use std::io::{Read, Write};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use std::sync::Arc;
 
 use blake3::Hasher;
+use cap_std::fs::{Dir, OpenOptions};
 use fns_protocol::{
     WorkspaceContentHash, WorkspaceEntryKind, WorkspaceFileMetadata, WorkspacePath,
 };
@@ -131,14 +132,17 @@ impl AtomicWorkspaceWriter {
 
     pub fn observe(
         &self,
-        _apply_id: ApplyId,
+        apply_id: ApplyId,
         operation: &FsOperation,
     ) -> Result<ApplyObservation, FsError> {
+        if self.has_unrelated_artifact(apply_id, operation)? {
+            return Ok(ApplyObservation::Diverged);
+        }
         let mut cache = MemoryHashCache::default();
         if self.matches_preimage(operation, &mut cache)? {
             return Ok(ApplyObservation::Preimage);
         }
-        if self.matches_postimage(operation, &mut cache)? {
+        if self.matches_postimage(apply_id, operation, &mut cache)? {
             return Ok(ApplyObservation::Postimage);
         }
         Ok(ApplyObservation::Diverged)
@@ -153,28 +157,23 @@ impl AtomicWorkspaceWriter {
         if !leaf.starts_with(".fns-delete-") {
             return Err(FsError::PathEscape);
         }
-        let Some(tomb) = self.root.native_path(&cleanup_path)? else {
+        let expected_leaf = format!(".fns-delete-{}", receipt.apply_id.0);
+        if leaf != expected_leaf {
+            return Err(FsError::PathEscape);
+        }
+        let Some((parent, name, metadata)) = self.root.open_entry(&cleanup_path)? else {
             return Ok(());
         };
-        let metadata = match fs::symlink_metadata(&tomb) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(_) => {
-                return Err(FsError::Io {
-                    operation: "stat delete staging",
-                });
-            }
-        };
         if metadata.is_dir() {
-            fs::remove_dir_all(&tomb).map_err(|_| FsError::Io {
+            parent.remove_dir_all(&name).map_err(|_| FsError::Io {
                 operation: "finalize directory delete",
             })?;
         } else {
-            fs::remove_file(&tomb).map_err(|_| FsError::Io {
+            parent.remove_file(&name).map_err(|_| FsError::Io {
                 operation: "finalize delete",
             })?;
         }
-        sync_parent(tomb.parent().ok_or(FsError::PathEscape)?)
+        sync_parent(&parent)
     }
 
     fn validate_preimage(
@@ -213,30 +212,61 @@ impl AtomicWorkspaceWriter {
 
     fn matches_postimage(
         &self,
+        apply_id: ApplyId,
         operation: &FsOperation,
         cache: &mut MemoryHashCache,
     ) -> Result<bool, FsError> {
         match operation {
             FsOperation::UpsertFile {
-                path, content_hash, ..
-            } => self.matches_live(path, WorkspaceEntryKind::File, Some(content_hash), cache),
-            FsOperation::Mkdir { path, .. } => {
-                self.matches_live(path, WorkspaceEntryKind::Directory, None, cache)
-            }
+                path,
+                content_hash,
+                metadata,
+                ..
+            } => self.matches_live(
+                path,
+                WorkspaceEntryKind::File,
+                Some(content_hash),
+                Some(metadata),
+                cache,
+            ),
+            FsOperation::Mkdir { path, metadata, .. } => self.matches_live(
+                path,
+                WorkspaceEntryKind::Directory,
+                None,
+                Some(metadata),
+                cache,
+            ),
             FsOperation::UpsertSymlink {
-                path, content_hash, ..
-            } => self.matches_live(path, WorkspaceEntryKind::Symlink, Some(content_hash), cache),
-            FsOperation::Delete { path, .. } => Ok(self.root.inspect(path)?.is_none()),
+                path,
+                content_hash,
+                metadata,
+                ..
+            } => self.matches_live(
+                path,
+                WorkspaceEntryKind::Symlink,
+                Some(content_hash),
+                Some(metadata),
+                cache,
+            ),
+            FsOperation::Delete { path, .. } => {
+                let Some((parent, _)) = self.root.open_parent(path, false).ok() else {
+                    return Ok(false);
+                };
+                let tomb = format!(".fns-delete-{}", apply_id.0);
+                Ok(self.root.inspect(path)?.is_none() && parent.symlink_metadata(tomb).is_ok())
+            }
             FsOperation::Rename {
                 path,
                 new_path,
                 content_hash,
+                metadata,
                 ..
             } => {
                 let Some(observed) = self.root.inspect(new_path)? else {
                     return Ok(false);
                 };
                 Ok(self.root.inspect(path)?.is_none()
+                    && observed.metadata == *metadata
                     && (!content_hash.is_some()
                         || self.matches_hash(new_path, &observed, content_hash.as_ref(), cache)?))
             }
@@ -272,12 +302,15 @@ impl AtomicWorkspaceWriter {
         path: &WorkspacePath,
         kind: WorkspaceEntryKind,
         content_hash: Option<&WorkspaceContentHash>,
+        metadata: Option<&WorkspaceFileMetadata>,
         cache: &mut MemoryHashCache,
     ) -> Result<bool, FsError> {
         let Some(observed) = self.root.inspect(path)? else {
             return Ok(false);
         };
-        Ok(observed.kind == kind && self.matches_hash(path, &observed, content_hash, cache)?)
+        Ok(observed.kind == kind
+            && metadata.is_none_or(|metadata| observed.metadata == *metadata)
+            && self.matches_hash(path, &observed, content_hash, cache)?)
     }
 
     fn matches_hash(
@@ -290,11 +323,8 @@ impl AtomicWorkspaceWriter {
         let Some(expected) = expected else {
             return Ok(true);
         };
-        let descriptor = self
-            .content
-            .stage_workspace_entry(&self.root, path, cache)?;
-        Ok(descriptor.content_hash == *expected
-            && descriptor.metadata.size == observed.metadata.size)
+        let _ = cache;
+        Ok(self.root.content_hash(path, observed)?.as_ref() == Some(expected))
     }
 
     fn apply_file(
@@ -306,18 +336,22 @@ impl AtomicWorkspaceWriter {
         expected: &ExpectedEntry,
     ) -> Result<ApplyReceipt, FsError> {
         let (parent, leaf) = self.parent_path(path)?;
-        let temporary = parent.join(format!(".fns-tmp-{}", apply_id.0));
-        self.copy_blob_to_temp(&temporary, content_hash, metadata)?;
+        let temporary = format!(".fns-tmp-{}", apply_id.0);
+        self.copy_blob_to_temp(&parent, &temporary, content_hash, metadata)?;
         self.observer.checkpoint(ApplyCheckpoint::TempSynced);
         let mut cache = MemoryHashCache::default();
         if !self.matches_expected(path, expected, true, &mut cache)? {
-            let _ = fs::remove_file(&temporary);
+            let _ = parent.remove_file(&temporary);
             return Err(FsError::ContentMismatch);
         }
         self.rename_checked(
+            &parent,
             &temporary,
-            &parent.join(leaf),
+            &leaf,
             !matches!(expected, ExpectedEntry::Missing),
+            apply_id,
+            path,
+            expected,
         )?;
         sync_parent(&parent)?;
         self.observer
@@ -332,13 +366,12 @@ impl AtomicWorkspaceWriter {
         _metadata: &WorkspaceFileMetadata,
     ) -> Result<ApplyReceipt, FsError> {
         let (parent, leaf) = self.parent_path(path)?;
-        let destination = parent.join(&leaf);
-        if let Ok(metadata) = fs::symlink_metadata(&destination) {
+        if let Ok(metadata) = parent.symlink_metadata(&leaf) {
             if !metadata.is_dir() {
                 return Err(FsError::ContentMismatch);
             }
         } else {
-            fs::create_dir(&destination).map_err(|_| FsError::Io {
+            parent.create_dir(&leaf).map_err(|_| FsError::Io {
                 operation: "create workspace directory",
             })?;
         }
@@ -359,18 +392,22 @@ impl AtomicWorkspaceWriter {
         let (parent, leaf) = self.parent_path(path)?;
         let target = self.read_link_target(content_hash, metadata.size)?;
         validate_relative_target(path, &target)?;
-        let temporary = parent.join(format!(".fns-tmp-{}", apply_id.0));
-        create_symlink(&target, &temporary)?;
+        let temporary = format!(".fns-tmp-{}", apply_id.0);
+        create_symlink(&parent, &target, &temporary)?;
         self.observer.checkpoint(ApplyCheckpoint::TempSynced);
         let mut cache = MemoryHashCache::default();
         if !self.matches_expected(path, expected, true, &mut cache)? {
-            let _ = fs::remove_file(&temporary);
+            let _ = parent.remove_file(&temporary);
             return Err(FsError::ContentMismatch);
         }
         self.rename_checked(
+            &parent,
             &temporary,
-            &parent.join(leaf),
+            &leaf,
             !matches!(expected, ExpectedEntry::Missing),
+            apply_id,
+            path,
+            expected,
         )?;
         sync_parent(&parent)?;
         self.observer
@@ -384,21 +421,21 @@ impl AtomicWorkspaceWriter {
         path: &WorkspacePath,
         expected: &ExpectedEntry,
     ) -> Result<ApplyReceipt, FsError> {
-        let native = self
+        let (parent, name, _) = self
             .root
-            .native_path(path)?
+            .open_entry(path)?
             .ok_or(FsError::ContentMismatch)?;
-        let parent = native.parent().ok_or(FsError::PathEscape)?;
         let tomb_name = format!(".fns-delete-{}", apply_id.0);
-        let tomb = parent.join(&tomb_name);
         let mut cache = MemoryHashCache::default();
         if !self.matches_expected(path, expected, true, &mut cache)? {
             return Err(FsError::ContentMismatch);
         }
-        fs::rename(&native, &tomb).map_err(|_| FsError::Io {
-            operation: "stage workspace delete",
-        })?;
-        sync_parent(parent)?;
+        parent
+            .rename(&name, &parent, &tomb_name)
+            .map_err(|_| FsError::Io {
+                operation: "stage workspace delete",
+            })?;
+        sync_parent(&parent)?;
         self.observer
             .checkpoint(ApplyCheckpoint::FilesystemCommitted);
         let cleanup_name = path.as_str().rsplit_once('/').map_or_else(
@@ -430,22 +467,23 @@ impl AtomicWorkspaceWriter {
         else {
             return Err(FsError::ContentMismatch);
         };
-        let source = self
+        let (source_parent, source_name, _) = self
             .root
-            .native_path(path)?
+            .open_entry(path)?
             .ok_or(FsError::ContentMismatch)?;
         let (target_parent, target_leaf) = self.parent_path(new_path)?;
-        let target = target_parent.join(target_leaf);
         let mut cache = MemoryHashCache::default();
         if !self.matches_expected(path, source_expected, true, &mut cache)?
             || !self.matches_expected(new_path, target_expected, true, &mut cache)?
         {
             return Err(FsError::ContentMismatch);
         }
-        fs::rename(&source, &target).map_err(|_| FsError::Io {
-            operation: "rename workspace entry",
-        })?;
-        sync_parent(source.parent().ok_or(FsError::PathEscape)?)?;
+        source_parent
+            .rename(&source_name, &target_parent, &target_leaf)
+            .map_err(|_| FsError::Io {
+                operation: "rename workspace entry",
+            })?;
+        sync_parent(&source_parent)?;
         sync_parent(&target_parent)?;
         self.observer
             .checkpoint(ApplyCheckpoint::FilesystemCommitted);
@@ -477,58 +515,26 @@ impl AtomicWorkspaceWriter {
         })
     }
 
-    fn parent_path(&self, path: &WorkspacePath) -> Result<(PathBuf, String), FsError> {
-        let components = path.as_str().split('/').collect::<Vec<_>>();
-        let leaf = components.last().ok_or(FsError::InvalidPath {
-            reason: "empty_path".to_owned(),
-        })?;
-        let mut current = self.root.root_path().to_path_buf();
-        for (index, component) in components[..components.len() - 1].iter().enumerate() {
-            let prefix =
-                WorkspacePath::parse(&components[..=index].join("/")).map_err(|error| {
-                    FsError::InvalidPath {
-                        reason: error.reason,
-                    }
-                })?;
-            let next = match self.root.resolve_child_name(&current, component, &prefix)? {
-                Some(next) => next,
-                None => {
-                    let next = current.join(component);
-                    fs::create_dir(&next).map_err(|_| FsError::Io {
-                        operation: "create workspace parent",
-                    })?;
-                    next
-                }
-            };
-            let metadata = fs::symlink_metadata(&next).map_err(|_| FsError::Io {
-                operation: "stat workspace parent",
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(FsError::UnsupportedSymlink);
-            }
-            if !metadata.is_dir() {
-                return Err(FsError::ContentMismatch);
-            }
-            current = next;
-        }
-        Ok((current, (*leaf).to_owned()))
+    fn parent_path(&self, path: &WorkspacePath) -> Result<(Dir, String), FsError> {
+        self.root.open_parent(path, true)
     }
 
     fn copy_blob_to_temp(
         &self,
-        temporary: &Path,
+        parent: &Dir,
+        temporary: &str,
         expected: &WorkspaceContentHash,
         metadata: &WorkspaceFileMetadata,
     ) -> Result<(), FsError> {
         let mut source = self.content.open_blob(expected)?;
-        let mut destination = File::options()
-            .write(true)
-            .read(true)
-            .create_new(true)
-            .open(temporary)
+        let mut options = OpenOptions::new();
+        options.write(true).read(true).create_new(true);
+        let destination = parent
+            .open_with(temporary, &options)
             .map_err(|_| FsError::Io {
                 operation: "create workspace staging",
             })?;
+        let mut destination = destination.into_std();
         let mut hasher = Hasher::new();
         let mut total = 0_u64;
         let mut buffer = [0_u8; crate::hash::HASH_BUFFER_BYTES];
@@ -552,7 +558,7 @@ impl AtomicWorkspaceWriter {
         let actual = WorkspaceContentHash::parse(&format!("blake3:{}", hasher.finalize().to_hex()))
             .map_err(|_| FsError::ContentMismatch)?;
         if actual != *expected || total != metadata.size {
-            let _ = fs::remove_file(temporary);
+            let _ = parent.remove_file(temporary);
             return Err(FsError::ContentMismatch);
         }
         #[cfg(unix)]
@@ -611,26 +617,97 @@ impl AtomicWorkspaceWriter {
         Ok(target)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rename_checked(
         &self,
-        temporary: &Path,
-        destination: &Path,
+        parent: &Dir,
+        temporary: &str,
+        destination: &str,
         replace_existing: bool,
+        _apply_id: ApplyId,
+        _path: &WorkspacePath,
+        _expected: &ExpectedEntry,
     ) -> Result<(), FsError> {
-        if fs::symlink_metadata(destination).is_ok() && !replace_existing {
-            let _ = fs::remove_file(temporary);
+        if parent.symlink_metadata(destination).is_ok() && !replace_existing {
+            let _ = parent.remove_file(temporary);
             return Err(FsError::ContentMismatch);
         }
         #[cfg(windows)]
         if replace_existing {
-            let _ = fs::remove_file(destination);
+            let backup = format!(".fns-delete-{}", _apply_id.0);
+            if parent.symlink_metadata(&backup).is_ok() {
+                let _ = parent.remove_file(temporary);
+                return Err(FsError::ContentMismatch);
+            }
+            parent
+                .rename(destination, parent, &backup)
+                .map_err(|_| FsError::ContentMismatch)?;
+            let backup_path = sibling_path(_path, &backup)?;
+            let mut cache = MemoryHashCache::default();
+            if !self.matches_expected(&backup_path, _expected, true, &mut cache)? {
+                let _ = parent.rename(&backup, parent, destination);
+                let _ = parent.remove_file(temporary);
+                return Err(FsError::ContentMismatch);
+            }
+            if let Err(error) = parent.rename(temporary, parent, destination) {
+                let _ = parent.rename(&backup, parent, destination);
+                return Err(FsError::Io {
+                    operation: if error.kind() == std::io::ErrorKind::AlreadyExists {
+                        "commit workspace staging"
+                    } else {
+                        "commit workspace staging"
+                    },
+                });
+            }
+            parent.remove_file(&backup).map_err(|_| FsError::Io {
+                operation: "remove workspace replacement backup",
+            })?;
+            return Ok(());
         }
-        fs::rename(temporary, destination).map_err(|_| {
-            let _ = fs::remove_file(temporary);
+        parent.rename(temporary, parent, destination).map_err(|_| {
+            let _ = parent.remove_file(temporary);
             FsError::Io {
                 operation: "commit workspace staging",
             }
         })
+    }
+
+    fn has_unrelated_artifact(
+        &self,
+        apply_id: ApplyId,
+        operation: &FsOperation,
+    ) -> Result<bool, FsError> {
+        let check = |path: &WorkspacePath| -> Result<bool, FsError> {
+            let Some((parent, _)) = self.root.open_parent(path, false).ok() else {
+                return Ok(false);
+            };
+            let expected_temp = format!(".fns-tmp-{}", apply_id.0);
+            let expected_tomb = format!(".fns-delete-{}", apply_id.0);
+            for entry in parent.entries().map_err(|_| FsError::Io {
+                operation: "read directory",
+            })? {
+                let entry = entry.map_err(|_| FsError::Io {
+                    operation: "read directory entry",
+                })?;
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                if (name.starts_with(".fns-tmp-") || name.starts_with(".fns-delete-"))
+                    && name != expected_temp
+                    && name != expected_tomb
+                {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        };
+        match operation {
+            FsOperation::Rename { path, new_path, .. } => Ok(check(path)? || check(new_path)?),
+            FsOperation::UpsertFile { path, .. }
+            | FsOperation::Mkdir { path, .. }
+            | FsOperation::UpsertSymlink { path, .. }
+            | FsOperation::Delete { path, .. } => check(path),
+        }
     }
 }
 
@@ -653,33 +730,40 @@ fn validate_relative_target(path: &WorkspacePath, target: &str) -> Result<(), Fs
     Ok(())
 }
 
-fn create_symlink(target: &str, temporary: &Path) -> Result<(), FsError> {
+fn create_symlink(parent: &Dir, target: &str, temporary: &str) -> Result<(), FsError> {
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(target, temporary).map_err(|_| FsError::Io {
+        parent.symlink(target, temporary).map_err(|_| FsError::Io {
             operation: "create workspace symlink",
         })
     }
     #[cfg(windows)]
     {
-        std::os::windows::fs::symlink_file(target, temporary).map_err(|_| FsError::Io {
-            operation: "create workspace symlink",
-        })
+        parent
+            .symlink_file(target, temporary)
+            .map_err(|_| FsError::Io {
+                operation: "create workspace symlink",
+            })
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = (target, temporary);
+        let _ = (parent, target, temporary);
         Err(FsError::Io {
             operation: "create workspace symlink",
         })
     }
 }
 
-fn sync_parent(parent: &Path) -> Result<(), FsError> {
+fn sync_parent(parent: &Dir) -> Result<(), FsError> {
     #[cfg(unix)]
     {
-        File::open(parent)
-            .and_then(|file| file.sync_all())
+        parent
+            .try_clone()
+            .map_err(|_| FsError::Io {
+                operation: "clone workspace parent",
+            })?
+            .into_std_file()
+            .sync_all()
             .map_err(|_| FsError::Io {
                 operation: "sync workspace parent",
             })?;
@@ -687,4 +771,13 @@ fn sync_parent(parent: &Path) -> Result<(), FsError> {
     #[cfg(not(unix))]
     let _ = parent;
     Ok(())
+}
+
+#[cfg(windows)]
+fn sibling_path(path: &WorkspacePath, leaf: &str) -> Result<WorkspacePath, FsError> {
+    let value = path
+        .as_str()
+        .rsplit_once('/')
+        .map_or_else(|| leaf.to_owned(), |(parent, _)| format!("{parent}/{leaf}"));
+    WorkspacePath::parse(&value).map_err(|_| FsError::PathEscape)
 }

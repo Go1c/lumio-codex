@@ -174,3 +174,22 @@ fn normalization_alias_is_collision_never_existing() {
     let result = rooted.inspect(&path("café")).unwrap_err();
     assert!(matches!(result, fns_fs::FsError::PathCollision { .. }));
 }
+
+#[cfg(unix)]
+#[test]
+fn inspect_remains_confined_after_root_path_is_replaced() {
+    let area = tempfile::tempdir().unwrap();
+    let root = area.path().join("root");
+    let moved = area.path().join("moved");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("entry"), b"original").unwrap();
+    let rooted = RootedWorkspace::open(&root).unwrap();
+
+    fs::rename(&root, &moved).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("entry"), b"replacement").unwrap();
+
+    let observed = rooted.inspect(&path("entry")).unwrap().unwrap();
+    assert_eq!(observed.metadata.size, 8);
+    assert_eq!(fs::read(moved.join("entry")).unwrap(), b"original");
+}

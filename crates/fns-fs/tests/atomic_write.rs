@@ -380,3 +380,143 @@ fn successful_finalize_leaves_no_internal_residue() {
     assert!(fs::read_dir(state_dir.path()).unwrap().next().is_some());
     let _ = MemoryHashCache::default();
 }
+
+#[cfg(unix)]
+#[test]
+fn apply_remains_confined_after_root_path_is_replaced() {
+    let area = tempfile::tempdir().unwrap();
+    let root_dir = area.path().join("root");
+    let moved = area.path().join("moved");
+    fs::create_dir(&root_dir).unwrap();
+    let rooted = RootedWorkspace::open(&root_dir).unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let content_hash = import(&content, b"original-root");
+    let writer = AtomicWorkspaceWriter::new(rooted, content);
+
+    fs::rename(&root_dir, &moved).unwrap();
+    fs::create_dir(&root_dir).unwrap();
+
+    writer
+        .apply(
+            ApplyId(uuid::Uuid::new_v4()),
+            &FsOperation::UpsertFile {
+                path: path("entry"),
+                content_hash,
+                metadata: metadata(13),
+                expected: ExpectedEntry::Missing,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(fs::read(moved.join("entry")).unwrap(), b"original-root");
+    assert!(!root_dir.join("entry").exists());
+}
+
+#[test]
+fn observe_requires_the_matching_apply_id_for_a_delete_tomb() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::write(root_dir.path().join("a"), b"a").unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let operation = FsOperation::Delete {
+        path: path("a"),
+        expected: present(&root, &path("a"), Some(hash(b"a"))),
+    };
+    let writer = AtomicWorkspaceWriter::new(root, ContentCache::open(state_dir.path()).unwrap());
+    let apply_id = ApplyId(uuid::Uuid::new_v4());
+    let other_apply_id = ApplyId(uuid::Uuid::new_v4());
+
+    writer.apply(apply_id, &operation).unwrap();
+
+    assert_eq!(
+        writer.observe(apply_id, &operation).unwrap(),
+        ApplyObservation::Postimage
+    );
+    assert_eq!(
+        writer.observe(other_apply_id, &operation).unwrap(),
+        ApplyObservation::Diverged
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn observe_rejects_postimage_with_changed_metadata() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let content_hash = import(&content, b"hello");
+    let writer =
+        AtomicWorkspaceWriter::new(RootedWorkspace::open(root_dir.path()).unwrap(), content);
+    let operation = FsOperation::UpsertFile {
+        path: path("a"),
+        content_hash,
+        metadata: metadata(5),
+        expected: ExpectedEntry::Missing,
+    };
+    let apply_id = ApplyId(uuid::Uuid::new_v4());
+
+    writer.apply(apply_id, &operation).unwrap();
+    fs::set_permissions(root_dir.path().join("a"), fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(
+        writer.observe(apply_id, &operation).unwrap(),
+        ApplyObservation::Diverged
+    );
+}
+
+#[test]
+fn observe_rejects_unrelated_temp_artifact() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let content_hash = import(&content, b"hello");
+    let writer =
+        AtomicWorkspaceWriter::new(RootedWorkspace::open(root_dir.path()).unwrap(), content);
+    let operation = FsOperation::UpsertFile {
+        path: path("a"),
+        content_hash,
+        metadata: metadata(5),
+        expected: ExpectedEntry::Missing,
+    };
+    let apply_id = ApplyId(uuid::Uuid::new_v4());
+    let other_apply_id = ApplyId(uuid::Uuid::new_v4());
+    fs::write(
+        root_dir
+            .path()
+            .join(format!(".fns-tmp-{}", other_apply_id.0)),
+        b"stale",
+    )
+    .unwrap();
+
+    assert_eq!(
+        writer.observe(apply_id, &operation).unwrap(),
+        ApplyObservation::Diverged
+    );
+}
+
+#[test]
+fn finalize_rejects_a_receipt_with_a_different_apply_id() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::write(root_dir.path().join("a"), b"a").unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let operation = FsOperation::Delete {
+        path: path("a"),
+        expected: present(&root, &path("a"), Some(hash(b"a"))),
+    };
+    let writer = AtomicWorkspaceWriter::new(root, ContentCache::open(state_dir.path()).unwrap());
+    let apply_id = ApplyId(uuid::Uuid::new_v4());
+    let mut receipt = writer.apply(apply_id, &operation).unwrap();
+    receipt.apply_id = ApplyId(uuid::Uuid::new_v4());
+
+    assert!(writer.finalize(&receipt).is_err());
+    assert!(
+        root_dir
+            .path()
+            .join(format!(".fns-delete-{}", apply_id.0))
+            .exists()
+    );
+}
