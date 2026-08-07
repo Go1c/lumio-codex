@@ -109,6 +109,9 @@ impl RootedWorkspace {
         let metadata = fs::symlink_metadata(&native).map_err(|_| FsError::Io {
             operation: "stat entry",
         })?;
+        if metadata.file_type().is_symlink() {
+            self.validate_symlink(&native)?;
+        }
         self.observed(path, native, metadata)
     }
 
@@ -179,11 +182,10 @@ impl RootedWorkspace {
         let target = fs::read_link(path).map_err(|_| FsError::Io {
             operation: "read symlink",
         })?;
-        let resolved = if target.is_absolute() {
-            target
-        } else {
-            path.parent().unwrap_or(self.root_path()).join(target)
-        };
+        if target.is_absolute() || target.to_str().is_none() {
+            return Err(FsError::PathEscape);
+        }
+        let resolved = path.parent().unwrap_or(self.root_path()).join(target);
         let canonical = fs::canonicalize(resolved).map_err(|_| FsError::PathEscape)?;
         if !canonical.starts_with(self.root_path()) {
             return Err(FsError::PathEscape);

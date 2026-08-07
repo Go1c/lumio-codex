@@ -19,7 +19,7 @@ fn rejects_symlink_root_and_outside_escape_without_following_scan_links() {
     fs::create_dir_all(&outside).unwrap();
     fs::write(outside.join("secret"), b"secret").unwrap();
     symlink(&outside, root.join("escape")).unwrap();
-    symlink(root.join("real"), root.join("inside")).unwrap();
+    symlink("real", root.join("inside")).unwrap();
     symlink(&root, area.path().join("root-link")).unwrap();
 
     assert!(RootedWorkspace::open(&area.path().join("root-link")).is_err());
@@ -47,6 +47,39 @@ fn rejects_symlink_root_and_outside_escape_without_following_scan_links() {
             .iter()
             .any(|entry| entry.path.as_str().starts_with("escape/"))
     );
+    assert!(
+        !scan
+            .entries
+            .iter()
+            .any(|entry| entry.path.as_str() == "escape")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_absolute_and_non_utf8_symlink_targets() {
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::symlink;
+
+    let area = tempfile::tempdir().unwrap();
+    let root = area.path().join("root");
+    let outside = area.path().join("outside");
+    fs::create_dir_all(root.join("real")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    symlink(root.join("real"), root.join("absolute")).unwrap();
+    let invalid_target = std::ffi::OsString::from_vec(vec![b'r', b'e', b'a', b'l', 0xff]);
+    symlink(&invalid_target, root.join("invalid-utf8")).unwrap();
+
+    let rooted = RootedWorkspace::open(&root).unwrap();
+
+    assert!(matches!(
+        rooted.inspect(&path("absolute")),
+        Err(fns_fs::FsError::PathEscape)
+    ));
+    assert!(matches!(
+        rooted.inspect(&path("invalid-utf8")),
+        Err(fns_fs::FsError::PathEscape)
+    ));
 }
 
 #[test]
