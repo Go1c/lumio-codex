@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use cap_std::ambient_authority;
@@ -190,7 +190,13 @@ impl RootedWorkspace {
             return Err(FsError::PathEscape);
         }
         let resolved = path.parent().unwrap_or(self.root_path()).join(target);
-        let canonical = fs::canonicalize(resolved).map_err(|_| FsError::PathEscape)?;
+        let canonical = match fs::canonicalize(&resolved) {
+            Ok(canonical) => canonical,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                lexical_normalize(&resolved)
+            }
+            Err(_) => return Err(FsError::PathEscape),
+        };
         if !canonical.starts_with(self.root_path()) {
             return Err(FsError::PathEscape);
         }
@@ -243,6 +249,22 @@ impl RootedWorkspace {
             symlink_target,
         })
     }
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+            Component::Prefix(value) => normalized.push(value.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn executable(metadata: &fs::Metadata) -> bool {

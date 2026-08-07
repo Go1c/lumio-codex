@@ -82,6 +82,22 @@ fn rejects_absolute_and_non_utf8_symlink_targets() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn accepts_confined_broken_relative_symlink_target() {
+    use std::os::unix::fs::symlink;
+
+    let area = tempfile::tempdir().unwrap();
+    let root = area.path().join("root");
+    fs::create_dir_all(&root).unwrap();
+    symlink("missing", root.join("link")).unwrap();
+
+    let rooted = RootedWorkspace::open(&root).unwrap();
+    let observed = rooted.inspect(&path("link")).unwrap().unwrap();
+
+    assert_eq!(observed.kind, WorkspaceEntryKind::Symlink);
+}
+
 #[test]
 fn scan_sorts_workspace_paths_by_utf8_bytes() {
     let area = tempfile::tempdir().unwrap();
