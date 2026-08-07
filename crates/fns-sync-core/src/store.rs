@@ -622,7 +622,7 @@ impl SqliteState {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT workspace_id, stream_id, revision, item_kind, body_json, body_digest, event_index, status FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2 ORDER BY revision",
+                "SELECT workspace_id, stream_id, revision, item_kind, body_json, body_digest, event_index, status FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2",
             )
             .map_err(storage_error)?;
         let rows = statement
@@ -631,8 +631,11 @@ impl SqliteState {
                 row_to_stream_revision_item,
             )
             .map_err(storage_error)?;
-        rows.map(|row| row.map_err(storage_error))
-            .collect::<Result<Vec<_>, _>>()
+        let mut items = rows
+            .map(|row| row.map_err(storage_error))
+            .collect::<Result<Vec<_>, _>>()?;
+        items.sort_by_key(|item| item.revision);
+        Ok(items)
     }
 
     pub fn put_stream_conflict(
@@ -2009,22 +2012,36 @@ pub(crate) fn put_stream_revision_item_tx(
                 reason: "stream_revision_out_of_range",
             });
         }
-        if let Some(previous_revision) = transaction
-            .query_row(
-                "SELECT revision FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2 ORDER BY revision DESC LIMIT 1",
-                params![workspace_id.to_string(), stream_id.to_string()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(storage_error)?
-        {
-            let previous_revision = parse_revision(&previous_revision)
-                .map_err(|_| corrupt("stream_revision_items", "revision"))?;
-            if revision <= previous_revision {
-                return Err(SyncError::StreamInvariant {
-                    reason: "stream_revision_order",
-                });
+        let previous_revision = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT revision FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2",
+                )
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map(
+                    params![workspace_id.to_string(), stream_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(storage_error)?;
+            let mut previous_revision = None;
+            for row in rows {
+                let revision = parse_revision(&row.map_err(storage_error)?)
+                    .map_err(|_| corrupt("stream_revision_items", "revision"))?;
+                previous_revision = match previous_revision {
+                    None => Some(revision),
+                    Some(previous) if revision > previous => Some(revision),
+                    Some(previous) => Some(previous),
+                };
             }
+            previous_revision
+        };
+        if let Some(previous_revision) = previous_revision
+            && revision <= previous_revision
+        {
+            return Err(SyncError::StreamInvariant {
+                reason: "stream_revision_order",
+            });
         }
         match item_kind {
             StreamRevisionItemKind::Event => {

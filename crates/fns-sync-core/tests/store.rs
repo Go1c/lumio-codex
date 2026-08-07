@@ -376,6 +376,52 @@ fn stream_events_enforce_mode_count_index_and_revision_order() {
 }
 
 #[test]
+fn stream_revision_items_use_numeric_order_and_reject_revision_regression() {
+    let fixture = support::StateFixture::new();
+    let mut state = fixture.open();
+    let stream_id = fns_protocol::StreamId::parse("10000000-0000-4000-8000-000000000043").unwrap();
+    state
+        .begin_stream(&WorkspaceSnapshotBeginMessage {
+            workspace_id: fixture.workspace_id(),
+            stream_id,
+            mode: WorkspaceSnapshotMode::Incremental,
+            from_revision: WorkspaceRevision::ZERO,
+            final_revision: WorkspaceRevision::new(10),
+            entry_count: 0,
+            event_count: 4,
+            conflict_count: 0,
+        })
+        .unwrap();
+
+    for (index, revision, path) in [
+        (0, 1, "first.txt"),
+        (1, 2, "second.txt"),
+        (2, 10, "tenth.txt"),
+    ] {
+        let event = fixture.event(stream_id, index, revision, path);
+        state
+            .put_stream_event(&event, fns_sync_core::StreamItemStatus::Received)
+            .unwrap();
+    }
+
+    let revisions = state
+        .stream_revision_items(stream_id)
+        .unwrap()
+        .into_iter()
+        .map(|item| item.revision.get())
+        .collect::<Vec<_>>();
+    assert_eq!(revisions, vec![1, 2, 10]);
+
+    let regressed = fixture.event(stream_id, 3, 3, "third.txt");
+    assert!(matches!(
+        state.put_stream_event(&regressed, fns_sync_core::StreamItemStatus::Received),
+        Err(SyncError::StreamInvariant {
+            reason: "stream_revision_order"
+        })
+    ));
+}
+
+#[test]
 fn stream_conflicts_require_active_stream_and_expected_count() {
     let fixture = support::StateFixture::new();
     let mut state = fixture.open();
