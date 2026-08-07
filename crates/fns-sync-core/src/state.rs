@@ -103,6 +103,15 @@ impl SqliteState {
         Self::open(":memory:", workspace_id, client_id)
     }
 
+    pub(crate) fn close(&mut self) -> Result<(), SyncError> {
+        // Replace the live connection so dropping it releases the SQLite
+        // handle while preserving the state object's closed identity.
+        let replacement = Connection::open_in_memory().map_err(storage_error)?;
+        let connection = std::mem::replace(&mut self.conn, replacement);
+        drop(connection);
+        Ok(())
+    }
+
     pub const fn workspace_id(&self) -> WorkspaceId {
         self.workspace_id
     }

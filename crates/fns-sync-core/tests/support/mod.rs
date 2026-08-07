@@ -291,9 +291,13 @@ impl EngineFixture {
             .expect("remote path state");
     }
 
-    pub fn record_all_changes_and_close(&mut self) -> Vec<SyncCommand> {
+    pub fn record_all_changes(&mut self) -> Vec<SyncCommand> {
         self.engine.scan_and_record().expect("scan and record");
-        let commands = self.engine.pending_commands(16).expect("dispatch commands");
+        self.engine.pending_commands(16).expect("dispatch commands")
+    }
+
+    pub fn record_all_changes_and_close(&mut self) -> Vec<SyncCommand> {
+        let commands = self.record_all_changes();
         self.engine.close().expect("close engine");
         commands
     }

@@ -93,6 +93,7 @@ pub struct SyncEngine {
     pub(crate) runtime: EngineRuntime,
     operation_ids: VecDeque<fns_protocol::OperationId>,
     timestamps: VecDeque<i64>,
+    closed: bool,
 }
 
 impl SystemRuntime {
@@ -163,6 +164,7 @@ impl SyncEngine {
             },
             operation_ids: config.operation_ids.into(),
             timestamps: config.timestamps.into(),
+            closed: false,
         })
     }
 
@@ -195,6 +197,7 @@ impl SyncEngine {
         expected: &fns_protocol::WorkspaceContentHash,
         bytes: &[u8],
     ) -> Result<(), SyncError> {
+        self.ensure_open()?;
         self.runtime.system.content_cache.import(
             expected,
             bytes.len() as u64,
@@ -207,15 +210,18 @@ impl SyncEngine {
         &self,
         hash: &fns_protocol::WorkspaceContentHash,
     ) -> Result<std::fs::File, SyncError> {
+        self.ensure_open()?;
         self.runtime.system.open_blob(hash)
     }
 
     pub fn scan_and_record(&mut self) -> Result<(), SyncError> {
+        self.ensure_open()?;
         let changes = self.scan_changes()?;
         self.record_local_changes(changes)
     }
 
     pub fn scan_changes(&mut self) -> Result<Vec<FsChange>, SyncError> {
+        self.ensure_open()?;
         let scan = self
             .runtime
             .system
@@ -386,6 +392,7 @@ impl SyncEngine {
     where
         I: IntoIterator<Item = FsChange>,
     {
+        self.ensure_open()?;
         let mut pending = changes.into_iter().collect::<VecDeque<_>>();
         while let Some(change) = pending.pop_front() {
             if change == FsChange::RescanRequired {
@@ -399,6 +406,7 @@ impl SyncEngine {
     }
 
     pub fn pending_commands(&mut self, limit: usize) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -472,6 +480,7 @@ impl SyncEngine {
         &mut self,
         accepted: WorkspaceMutationAcceptedMessage,
     ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
         accepted
             .validate()
             .map_err(|_| SyncError::ProtocolInvariant {
@@ -502,6 +511,7 @@ impl SyncEngine {
         validate_acceptance_shape(&mutation, &accepted)?;
         let touched = mutation_paths(&mutation);
         let intents = self.deferred_operations(&touched)?;
+        let settled_paths = paths_for_desired_operations(&touched, &intents);
         let mut states = self.path_state_map()?;
         if let Some(old) = &accepted.old_path_state {
             states.insert(old.path.clone(), old.clone());
@@ -531,7 +541,7 @@ impl SyncEngine {
                 accepted.revision,
                 body_digest,
             )?;
-            for path in &touched {
+            for path in &settled_paths {
                 tx.remove_local_intent(path)?;
             }
             for (mutation, timestamp) in &next_mutations {
@@ -567,6 +577,7 @@ impl SyncEngine {
         &mut self,
         rejected: WorkspaceMutationRejectedMessage,
     ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
         rejected
             .validate()
             .map_err(|_| SyncError::ProtocolInvariant {
@@ -642,6 +653,7 @@ impl SyncEngine {
     }
 
     pub fn event(&mut self, event: WorkspaceEventMessage) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
         event.validate().map_err(|_| SyncError::ProtocolInvariant {
             reason: "invalid_workspace_event",
         })?;
@@ -705,6 +717,13 @@ impl SyncEngine {
     }
 
     pub fn close(&mut self) -> Result<(), SyncError> {
+        if self.closed {
+            return Ok(());
+        }
+        // Drop the durable SQLite connection before marking the engine closed;
+        // the fixture can then safely discard this engine during reopen.
+        self.runtime.state.close()?;
+        self.closed = true;
         Ok(())
     }
 
@@ -841,6 +860,21 @@ impl SyncEngine {
             });
         }
 
+        if let Some((merged, existing_paths)) = self.compact_deferred(&desired, &touched)? {
+            let merged_paths = merged.paths().into_iter().cloned().collect::<Vec<_>>();
+            let body = encode_intent(&merged.intent_for_path(&merged_paths[0]))?;
+            let timestamp = self.next_timestamp();
+            return self.runtime.state.transaction(|tx| {
+                for path in &existing_paths {
+                    tx.remove_local_intent(path)?;
+                }
+                for path in &merged_paths {
+                    tx.put_local_intent(path.as_str(), &body, timestamp)?;
+                }
+                Ok(())
+            });
+        }
+
         if desired_matches_remote(&desired, &states) {
             let paths = touched.to_vec();
             return self.runtime.state.transaction(|tx| {
@@ -894,6 +928,28 @@ impl SyncEngine {
         Ok(operations)
     }
 
+    fn compact_deferred(
+        &self,
+        incoming: &DesiredOperation,
+        touched: &[&WorkspacePath],
+    ) -> Result<Option<(DesiredOperation, Vec<WorkspacePath>)>, SyncError> {
+        let touched = touched
+            .iter()
+            .map(|path| (*path).clone())
+            .collect::<Vec<_>>();
+        let existing = self.deferred_operations(&touched)?;
+        if existing.is_empty() {
+            return Ok(None);
+        }
+        let mut merged = incoming.clone();
+        let mut existing_paths = Vec::new();
+        for current in existing {
+            existing_paths.extend(current.paths().into_iter().cloned());
+            merged = merge_deferred_desired(&current, &merged);
+        }
+        Ok(Some((merged, unique_paths(existing_paths))))
+    }
+
     fn reconcile_stale(
         &mut self,
         mutation: WorkspaceMutation,
@@ -923,7 +979,7 @@ impl SyncEngine {
             intents
         };
         let next_mutations = self.next_mutations(&desired, &states)?;
-        let paths = touched.clone();
+        let paths = paths_for_desired_operations(&touched, &desired);
         self.runtime.state.transaction(|tx| {
             match &current {
                 RequiredNullable::Null => tx.remove_path_state(&mutation.path)?,
@@ -971,6 +1027,15 @@ impl SyncEngine {
             next.push((mutation, self.next_timestamp()));
         }
         Ok(next)
+    }
+
+    fn ensure_open(&self) -> Result<(), SyncError> {
+        if self.closed {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "engine_closed",
+            });
+        }
+        Ok(())
     }
 
     fn validate_identity(
@@ -1089,6 +1154,68 @@ fn desired_operation_key(desired: &DesiredOperation) -> (String, String, u8) {
             (from.as_str().to_owned(), to.as_str().to_owned(), 2)
         }
     }
+}
+
+fn merge_deferred_desired(
+    current: &DesiredOperation,
+    incoming: &DesiredOperation,
+) -> DesiredOperation {
+    match (current, incoming) {
+        (DesiredOperation::Rename { from, to, .. }, DesiredOperation::Upsert { entry })
+            if entry.path == *to =>
+        {
+            DesiredOperation::Rename {
+                from: from.clone(),
+                to: to.clone(),
+                kind: entry.kind,
+                content_hash: entry.content_hash.clone(),
+                metadata: entry.metadata.clone(),
+            }
+        }
+        (
+            DesiredOperation::Rename { from, to, .. },
+            DesiredOperation::Rename {
+                from: incoming_from,
+                to: incoming_to,
+                kind,
+                content_hash,
+                metadata,
+            },
+        ) if *incoming_from == *to => DesiredOperation::Rename {
+            from: from.clone(),
+            to: incoming_to.clone(),
+            kind: *kind,
+            content_hash: content_hash.clone(),
+            metadata: metadata.clone(),
+        },
+        (DesiredOperation::Rename { from, to, .. }, DesiredOperation::Delete { path })
+            if *path == *to =>
+        {
+            DesiredOperation::Delete { path: from.clone() }
+        }
+        _ => incoming.clone(),
+    }
+}
+
+fn paths_for_desired_operations(
+    touched: &[WorkspacePath],
+    desired: &[DesiredOperation],
+) -> Vec<WorkspacePath> {
+    let mut paths = touched.to_vec();
+    for operation in desired {
+        paths.extend(operation.paths().into_iter().cloned());
+    }
+    unique_paths(paths)
+}
+
+fn unique_paths(paths: Vec<WorkspacePath>) -> Vec<WorkspacePath> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.contains(&path) {
+            unique.push(path);
+        }
+    }
+    unique
 }
 
 fn remote_matches_entry(state: &WorkspacePathState, entry: &LocalDesiredEntry) -> bool {

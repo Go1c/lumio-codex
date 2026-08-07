@@ -219,6 +219,80 @@ fn dispatched_rename_merges_deferred_intents_on_both_paths() {
 }
 
 #[test]
+fn chained_deferred_rename_compacts_a_changed_destination() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("a.txt", 5, b"old");
+    fixture.rename("a.txt", "b.txt");
+    fixture.engine.scan_and_record().unwrap();
+    let first = fixture.engine.pending_commands(1).unwrap()[0]
+        .mutation()
+        .unwrap();
+
+    fixture.rename("b.txt", "c.txt");
+    fixture
+        .engine
+        .record_local_changes([FsChange::Rename {
+            from: support::workspace_path("b.txt"),
+            to: support::workspace_path("c.txt"),
+        }])
+        .unwrap();
+    fixture.write("c.txt", b"final");
+    fixture
+        .engine
+        .record_local_changes([FsChange::Update(support::workspace_path("c.txt"))])
+        .unwrap();
+
+    let outbox = fixture.engine.state().outbox().unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].stage, OutboxStage::Dispatched);
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .local_intents()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.path)
+            .collect::<Vec<_>>(),
+        vec![
+            support::workspace_path("b.txt"),
+            support::workspace_path("c.txt"),
+        ]
+    );
+
+    let old_state = support::path_state(
+        "a.txt",
+        7,
+        RequiredNullable::Null,
+        support::file_metadata(0),
+        WorkspaceEntryKind::Tombstone,
+    );
+    let new_state = file_state("b.txt", 7, b"old");
+    fixture
+        .engine
+        .mutation_accepted(WorkspaceMutationAcceptedMessage {
+            workspace_id: fixture.engine.state().workspace_id(),
+            client_id: fixture.engine.state().client_id(),
+            operation_id: first.operation_id,
+            revision: WorkspaceRevision::new(7),
+            path_state: new_state.clone(),
+            old_path_state: Some(old_state),
+            new_path_state: Some(new_state),
+        })
+        .unwrap();
+
+    let outbox = fixture.engine.state().outbox().unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(outbox[0].stage, OutboxStage::Queued);
+    let next = outbox[0].mutation().unwrap();
+    assert_eq!(next.kind, fns_protocol::WorkspaceMutationKind::Rename);
+    assert_eq!(next.path, support::workspace_path("b.txt"));
+    assert_eq!(next.new_path, Some(support::workspace_path("c.txt")));
+    assert_eq!(next.content_hash, RequiredNullable::Value(hash(b"final")));
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
 fn reconnect_replays_same_operation_and_body() {
     let mut fixture = support::EngineFixture::new();
     fixture.write("replay.txt", b"body");
@@ -236,10 +310,28 @@ fn reconnect_replays_same_operation_and_body() {
 }
 
 #[test]
+fn record_all_changes_and_close_closes_engine() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.write("closed.txt", b"closed");
+    let commands = fixture.record_all_changes_and_close();
+    assert_eq!(commands.len(), 1);
+    assert!(matches!(
+        fixture.engine.pending_commands(16),
+        Err(SyncError::ProtocolInvariant {
+            reason: "engine_closed"
+        })
+    ));
+    assert_eq!(
+        fixture.engine.state().row_counts().unwrap_err(),
+        SyncError::StorageUnavailable
+    );
+}
+
+#[test]
 fn accepted_updates_path_and_removes_outbox_atomically() {
     let mut fixture = support::EngineFixture::new();
     fixture.write("accepted.txt", b"new");
-    let commands = fixture.record_all_changes_and_close();
+    let commands = fixture.record_all_changes();
     let mutation = commands[0].mutation().unwrap();
     fixture
         .engine
