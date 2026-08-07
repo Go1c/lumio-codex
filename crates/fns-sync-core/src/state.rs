@@ -377,6 +377,14 @@ impl StateTransaction<'_> {
         &mut self,
         mutation: &WorkspaceMutation,
     ) -> Result<OutboxRecord, SyncError> {
+        self.enqueue_mutation_at(mutation, now_ms())
+    }
+
+    pub fn enqueue_mutation_at(
+        &mut self,
+        mutation: &WorkspaceMutation,
+        created_at_ms: i64,
+    ) -> Result<OutboxRecord, SyncError> {
         mutation
             .validate()
             .map_err(|_| SyncError::ProtocolInvariant {
@@ -394,7 +402,7 @@ impl StateTransaction<'_> {
             mutation.operation_id,
             mutation.workspace_id,
             body_json,
-            now_ms(),
+            created_at_ms,
         )
     }
 

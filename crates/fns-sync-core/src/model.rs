@@ -1,6 +1,7 @@
 use fns_protocol::revision::WorkspaceConflictRevision;
 use fns_protocol::{
-    ClientId, ConflictId, OperationId, StreamId, WorkspaceId, WorkspacePath, WorkspaceRevision,
+    ClientId, ConflictId, OperationId, RequiredNullable, StreamId, WorkspaceContentHash,
+    WorkspaceEntryKind, WorkspaceFileMetadata, WorkspaceId, WorkspacePath, WorkspaceRevision,
     WorkspaceSnapshotMode,
 };
 
@@ -175,6 +176,69 @@ pub struct LocalIntentRecord {
     pub path: WorkspacePath,
     pub intent_json: Vec<u8>,
     pub updated_at_ms: i64,
+}
+
+/// Stable desired state captured from a filesystem observation.  It deliberately
+/// contains no server revision: revisions belong to the remote path state at
+/// reconciliation time, while this value remains the local postimage that can
+/// be replayed after a crash.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalDesiredEntry {
+    pub path: WorkspacePath,
+    pub kind: WorkspaceEntryKind,
+    pub content_hash: RequiredNullable<WorkspaceContentHash>,
+    pub metadata: WorkspaceFileMetadata,
+}
+
+/// Durable deferred local intent.  Rename rows are written under both paths so
+/// a watcher event touching either side remains visible until its dispatched
+/// operation is settled.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "intent", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LocalIntent {
+    Desired {
+        entry: LocalDesiredEntry,
+    },
+    Delete {
+        path: WorkspacePath,
+    },
+    Rename {
+        from: WorkspacePath,
+        to: WorkspacePath,
+        kind: WorkspaceEntryKind,
+        content_hash: RequiredNullable<WorkspaceContentHash>,
+        metadata: WorkspaceFileMetadata,
+    },
+}
+
+impl LocalIntent {
+    pub fn paths(&self) -> Vec<&WorkspacePath> {
+        match self {
+            Self::Desired { entry } => vec![&entry.path],
+            Self::Delete { path } => vec![path],
+            Self::Rename { from, to, .. } => vec![from, to],
+        }
+    }
+
+    pub fn desired_entry(&self) -> Option<LocalDesiredEntry> {
+        match self {
+            Self::Desired { entry } => Some(entry.clone()),
+            Self::Delete { .. } => None,
+            Self::Rename {
+                to,
+                kind,
+                content_hash,
+                metadata,
+                ..
+            } => Some(LocalDesiredEntry {
+                path: to.clone(),
+                kind: *kind,
+                content_hash: content_hash.clone(),
+                metadata: metadata.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

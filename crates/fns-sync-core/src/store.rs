@@ -249,6 +249,48 @@ impl SqliteState {
         self.pending_outbox(limit)
     }
 
+    /// Select outstanding mutations for transport replay.  A queued row is
+    /// promoted to dispatched in the same immediate transaction as selection;
+    /// an already-dispatched row is intentionally selected again so reopening
+    /// after a crash replays the exact immutable operation body.
+    pub fn pending_outbox_replay(&mut self, limit: usize) -> Result<Vec<OutboxRecord>, SyncError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let transaction = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT client_id, operation_id, workspace_id, body_json, body_digest, stage, created_at_ms FROM outbox WHERE client_id = ?1 AND stage IN ('queued','dispatched') ORDER BY created_at_ms, operation_id LIMIT ?2",
+            )
+            .map_err(storage_error)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut rows = statement
+            .query(params![self.client_id.to_string(), limit])
+            .map_err(storage_error)?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next().map_err(storage_error)? {
+            records.push(row_to_outbox(row).map_err(|_| corrupt("outbox", "body_json"))?);
+        }
+        drop(rows);
+        drop(statement);
+        for record in &mut records {
+            if record.stage == OutboxStage::Queued {
+                transaction
+                    .execute(
+                        "UPDATE outbox SET stage = 'dispatched' WHERE client_id = ?1 AND operation_id = ?2 AND stage = 'queued'",
+                        params![self.client_id.to_string(), record.operation_id.to_string()],
+                    )
+                    .map_err(storage_error)?;
+                record.stage = OutboxStage::Dispatched;
+            }
+        }
+        transaction.commit().map_err(storage_error)?;
+        Ok(records)
+    }
+
     pub fn set_outbox_stage(
         &mut self,
         operation_id: OperationId,
