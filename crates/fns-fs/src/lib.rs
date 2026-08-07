@@ -1,3 +1,4 @@
+mod atomic_write;
 mod coalesce;
 mod error;
 mod hash;
@@ -6,6 +7,10 @@ mod rules;
 mod scan;
 mod watcher;
 
+pub use atomic_write::{
+    ApplyCheckpoint, ApplyObservation, ApplyObserver, AtomicWorkspaceWriter, ExpectedEntry,
+    FsOperation,
+};
 pub use coalesce::{
     ApplyId, ApplyReceipt, COALESCER_PATH_CAPACITY, CoalescePush, DEBOUNCE_WINDOW, EntrySignature,
     EventCoalescer, FsChange, FsChangeKind, PriorEntryLookup, RENAME_WINDOW,
