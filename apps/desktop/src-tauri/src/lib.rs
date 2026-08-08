@@ -5,6 +5,7 @@
 
 mod project;
 mod ssh;
+mod terminal;
 
 use project::ProjectConfig;
 use serde::{Deserialize, Serialize};
@@ -61,12 +62,17 @@ pub struct OnboardingRequest {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(terminal::TerminalManager::new())
         .invoke_handler(tauri::generate_handler![
             greet,
             save_project,
             list_projects,
             delete_project,
             parse_ssh_hosts,
+            terminal::start_terminal,
+            terminal::write_terminal,
+            terminal::resize_terminal,
+            terminal::close_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

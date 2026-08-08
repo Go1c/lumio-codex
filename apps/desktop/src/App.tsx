@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import OnboardingWizard from "./components/OnboardingWizard";
 import ProjectList from "./components/ProjectList";
+import WorkspaceView from "./components/WorkspaceView";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Project {
@@ -9,10 +10,12 @@ interface Project {
   sshHostAlias: string;
   remoteRoot: string;
   localRoot: string;
+  tmuxSession: string;
 }
 
 export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showWizard, setShowWizard] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -49,11 +52,43 @@ export default function App() {
     );
   }
 
+  if (selectedProject) {
+    return (
+      <div className="app" style={{ flexDirection: "row" }}>
+        <div className="sidebar">
+          <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Projects</h2>
+          <ProjectList
+            projects={projects}
+            onSelect={(p) => setSelectedProject(p)}
+          />
+          <button
+            className="btn btn-secondary"
+            style={{ marginTop: "8px" }}
+            onClick={() => setSelectedProject(null)}
+          >
+            ← Back
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{ marginTop: "auto" }}
+            onClick={() => setShowWizard(true)}
+          >
+            + New Project
+          </button>
+        </div>
+        <WorkspaceView project={selectedProject} />
+      </div>
+    );
+  }
+
   return (
     <div className="app" style={{ flexDirection: "row" }}>
       <div className="sidebar">
         <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Projects</h2>
-        <ProjectList projects={projects} />
+        <ProjectList
+          projects={projects}
+          onSelect={(p) => setSelectedProject(p)}
+        />
         <button
           className="btn btn-primary"
           style={{ marginTop: "auto" }}
@@ -64,7 +99,7 @@ export default function App() {
       </div>
       <div className="main-content">
         <p style={{ padding: "40px", color: "#888" }}>
-          Select a project or create a new one to get started.
+          Select a project to open the terminal and file sync view.
         </p>
       </div>
     </div>
