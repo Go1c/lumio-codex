@@ -50,7 +50,7 @@ impl ProcessLock {
         let nonce = uuid::Uuid::new_v4();
 
         // Check for existing lock.
-        if let Ok(record) = Self::probe_linux(path)? {
+        if let Some(record) = Self::probe_linux(path)? {
             // Is it live?
             if is_live(&record, &boot_id) {
                 return Err(PlatformError::new(PlatformErrorCode::AlreadyRunning));
@@ -96,6 +96,7 @@ impl ProcessLock {
     /// Probe a lock file without acquiring. Returns `None` if the file does not exist.
     pub fn probe_linux(path: &Path) -> Result<Option<ProcessLockRecord>, PlatformError> {
         use std::fs;
+        use std::io::Read;
         let mut buf = Vec::new();
         let exists = match fs::File::open(path) {
             Ok(mut f) => {
