@@ -62,6 +62,7 @@ export default function OnboardingWizard({
     setSaving(true);
     setError("");
     try {
+      // Save project configuration.
       await invoke("save_project", {
         config: {
           id: crypto.randomUUID(),
@@ -79,6 +80,19 @@ export default function OnboardingWizard({
           },
         },
       });
+
+      // Create SSH tunnel to the server's FNS Server.
+      try {
+        const localPort = await invoke<number>("create_tunnel", {
+          sshAlias,
+          remotePort: 9000,
+        });
+        console.log(`SSH tunnel created on local port ${localPort}`);
+      } catch (tunnelErr) {
+        console.warn("SSH tunnel creation failed:", tunnelErr);
+        // Non-fatal — user can connect manually.
+      }
+
       onComplete();
     } catch (e) {
       setError(String(e));

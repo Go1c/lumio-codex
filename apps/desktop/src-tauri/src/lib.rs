@@ -6,6 +6,7 @@
 mod files;
 mod project;
 mod ssh;
+mod ssh_tunnel;
 mod terminal;
 
 use project::ProjectConfig;
@@ -64,6 +65,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(terminal::TerminalManager::new())
+        .manage(ssh_tunnel::TunnelState::new())
         .invoke_handler(tauri::generate_handler![
             greet,
             save_project,
@@ -77,6 +79,9 @@ pub fn run() {
             files::browse_files,
             files::read_file,
             files::compute_diff,
+            ssh_tunnel::create_tunnel,
+            ssh_tunnel::tunnel_endpoint,
+            ssh_tunnel::close_tunnel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
