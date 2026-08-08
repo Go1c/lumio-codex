@@ -8,7 +8,7 @@ use fns_fs::{
     ObservedEntry, RootedWorkspace, SyncRuleConfig, SyncRules,
 };
 use fns_protocol::{
-    RequiredNullable, WorkspaceAckRequest, WorkspaceConflictCreatedMessage,
+    OperationId, RequiredNullable, WorkspaceAckRequest, WorkspaceConflictCreatedMessage,
     WorkspaceConflictResolvedMessage, WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceMutation,
     WorkspaceMutationAcceptedMessage, WorkspaceMutationRejectReason,
     WorkspaceMutationRejectedMessage, WorkspacePath, WorkspacePathState,
@@ -103,6 +103,10 @@ pub struct SyncEngine {
     pub(crate) runtime: EngineRuntime,
     operation_ids: VecDeque<fns_protocol::OperationId>,
     timestamps: VecDeque<i64>,
+    /// Live events are kept in memory while their blobs are being downloaded.
+    /// They remain unacknowledged, so a reconnect replays them if the process
+    /// stops before the download completes.
+    pending_live_events: VecDeque<WorkspaceEventMessage>,
     closed: bool,
 }
 
@@ -179,6 +183,7 @@ impl SyncEngine {
             },
             operation_ids: config.operation_ids.into(),
             timestamps: config.timestamps.into(),
+            pending_live_events: VecDeque::new(),
             closed: false,
         };
         engine.recover_apply_journals()?;
@@ -203,6 +208,13 @@ impl SyncEngine {
 
     pub fn cursor(&self) -> Result<WorkspaceCursor, SyncError> {
         self.runtime.state.cursor()
+    }
+
+    /// Returns the mode of the stream currently being assembled, if any.
+    /// Transport uses this to hold live events that arrive after a snapshot
+    /// end but before the snapshot acknowledgment has been confirmed.
+    pub fn active_stream_mode(&self) -> Result<Option<WorkspaceSnapshotMode>, SyncError> {
+        Ok(self.runtime.state.stream_state()?.map(|state| state.mode))
     }
 
     pub fn workspace_root(&self) -> &Path {
@@ -421,7 +433,11 @@ impl SyncEngine {
                 continue;
             }
             let desired = self.desired_from_change(&change)?;
-            self.record_desired(desired)?;
+            if self.runtime.state.stream_state()?.is_some() {
+                self.defer_desired(desired)?;
+            } else {
+                self.record_desired(desired)?;
+            }
         }
         Ok(())
     }
@@ -433,6 +449,11 @@ impl SyncEngine {
         }
         let mut commands = self.resume_stream_commands(limit, true)?;
         if commands.len() == limit {
+            return Ok(commands);
+        }
+        commands.extend(self.resume_live_events()?);
+        if commands.len() >= limit {
+            commands.truncate(limit);
             return Ok(commands);
         }
         let remaining = limit - commands.len();
@@ -686,6 +707,33 @@ impl SyncEngine {
         self.mutation_rejected(rejected)
     }
 
+    /// Called after a blob upload completes successfully.
+    /// Flips the outbox entry from AwaitingBlob → Dispatched so the next
+    /// pending_commands cycle re-sends the exact mutation body. The transport
+    /// must call this only after the server has acknowledged BlobEnd.
+    pub fn blob_uploaded(&mut self, operation_id: OperationId) -> Result<(), SyncError> {
+        self.ensure_open()?;
+        let Some(record) = self.runtime.state.outbox_entry(operation_id)? else {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "mutation_not_outstanding",
+            });
+        };
+        match record.stage {
+            OutboxStage::AwaitingBlob => self
+                .runtime
+                .state
+                .set_outbox_stage(operation_id, OutboxStage::Dispatched),
+            // A duplicated BlobEnd response is harmless after the first
+            // completion; the durable mutation is already replayable.
+            OutboxStage::Dispatched => Ok(()),
+            OutboxStage::Queued | OutboxStage::BlockedConflict => {
+                Err(SyncError::ProtocolInvariant {
+                    reason: "blob_upload_not_awaiting",
+                })
+            }
+        }
+    }
+
     pub fn event(&mut self, event: WorkspaceEventMessage) -> Result<Vec<SyncCommand>, SyncError> {
         self.ensure_open()?;
         event.validate().map_err(|_| SyncError::ProtocolInvariant {
@@ -704,7 +752,7 @@ impl SyncEngine {
                         reason: "event_operation_body_mismatch",
                     });
                 }
-                return self.mutation_accepted(WorkspaceMutationAcceptedMessage {
+                let commands = self.mutation_accepted(WorkspaceMutationAcceptedMessage {
                     workspace_id: event.workspace_id,
                     client_id: event.origin_client_id,
                     operation_id: event.operation_id,
@@ -712,7 +760,9 @@ impl SyncEngine {
                     path_state: event.path_state,
                     old_path_state: event.old_path_state,
                     new_path_state: event.new_path_state,
-                });
+                })?;
+                self.mark_live_event_applied(event.revision)?;
+                return Ok(commands);
             }
             if let Some(receipt) = self
                 .runtime
@@ -725,22 +775,60 @@ impl SyncEngine {
                 {
                     return Err(SyncError::OperationChanged);
                 }
+                self.mark_live_event_applied(event.revision)?;
                 return Ok(Vec::new());
             }
             return Err(SyncError::ProtocolInvariant {
                 reason: "event_operation_not_outstanding",
             });
         }
+        let body = canonical_json(&event.mutation)?;
+        if let Some(receipt) = self
+            .runtime
+            .state
+            .applied_operation(event.origin_client_id, event.operation_id)?
+        {
+            if receipt.revision != event.revision
+                || receipt.body_digest != crate::body_digest(&body)
+            {
+                return Err(SyncError::OperationChanged);
+            }
+            self.mark_live_event_applied(event.revision)?;
+            return Ok(Vec::new());
+        }
+
+        if self
+            .pending_live_events
+            .iter()
+            .any(|pending| pending.operation_id == event.operation_id)
+        {
+            return self.resume_live_events();
+        }
+
+        self.pending_live_events.push_back(event);
+        self.resume_live_events()
+    }
+
+    fn mark_live_event_applied(
+        &mut self,
+        revision: fns_protocol::WorkspaceRevision,
+    ) -> Result<(), SyncError> {
+        let cursor = self.runtime.state.cursor()?;
+        if revision <= cursor.last_ack_revision {
+            return Ok(());
+        }
         self.runtime.state.transaction(|tx| {
-            if let Some(old) = &event.old_path_state {
-                tx.put_path_state(old)?;
+            if revision > cursor.last_applied_revision {
+                tx.set_last_applied_revision(revision)?;
             }
-            if let Some(new) = &event.new_path_state {
-                tx.put_path_state(new)?;
+            if cursor
+                .pending_ack_revision
+                .is_none_or(|pending| revision > pending)
+            {
+                tx.set_pending_ack(revision)?;
             }
-            tx.put_path_state(&event.path_state)
-        })?;
-        Ok(Vec::new())
+            Ok(())
+        })
     }
 
     pub fn on_event(
@@ -988,7 +1076,9 @@ impl SyncEngine {
             .system
             .content_cache
             .import(&hash, size, reader)?;
-        self.resume_stream_commands(usize::MAX, false)
+        let mut commands = self.resume_stream_commands(usize::MAX, false)?;
+        commands.extend(self.resume_live_events()?);
+        Ok(commands)
     }
 
     pub fn ack_confirmed(&mut self, message: WorkspaceAckRequest) -> Result<(), SyncError> {
@@ -1259,6 +1349,64 @@ impl SyncEngine {
         })
     }
 
+    fn defer_desired(&mut self, desired: DesiredOperation) -> Result<(), SyncError> {
+        let paths = desired.paths().into_iter().cloned().collect::<Vec<_>>();
+        let body = encode_intent(&desired.intent_for_path(&paths[0]))?;
+        let timestamp = self.next_timestamp();
+        self.runtime.state.transaction(|tx| {
+            for path in &paths {
+                tx.put_local_intent(path.as_str(), &body, timestamp)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn materialize_local_intents(&mut self) -> Result<(), SyncError> {
+        let intents = self.runtime.state.local_intents()?;
+        if intents.is_empty() {
+            return Ok(());
+        }
+        let states = self.path_state_map()?;
+        for record in intents {
+            let intent = decode_intent(&record.intent_json)?;
+            let desired = desired_from_intent(&intent);
+            if desired_matches_remote(&desired, &states) {
+                self.runtime.state.remove_local_intent(&record.path)?;
+                continue;
+            }
+            let touched = desired.paths();
+            let has_outbox = self.runtime.state.outbox()?.into_iter().any(|outbox| {
+                outbox
+                    .mutation()
+                    .map(|mutation| {
+                        mutation_paths(&mutation)
+                            .iter()
+                            .any(|path| touched.iter().any(|candidate| candidate == &path))
+                    })
+                    .unwrap_or(false)
+            });
+            if has_outbox {
+                continue;
+            }
+            let mutation = mutation_for_desired(
+                &desired,
+                self.runtime.state.workspace_id(),
+                self.runtime.state.client_id(),
+                self.next_operation_id()?,
+                &states,
+            );
+            let timestamp = self.next_timestamp();
+            self.runtime.state.transaction(|tx| {
+                tx.enqueue_mutation_at(&mutation, timestamp)?;
+                for path in &touched {
+                    tx.remove_local_intent(path)?;
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     fn deferred_operations(
         &self,
         touched: &[WorkspacePath],
@@ -1431,6 +1579,35 @@ impl SyncEngine {
         Ok(total == size && actual == *hash)
     }
 
+    /// Apply live remote events after their referenced blobs are available.
+    /// Live events do not have an active stream row after the initial snapshot
+    /// is acknowledged, so they need their own small in-memory queue and
+    /// commit path. The event remains unacknowledged until this completes.
+    fn resume_live_events(&mut self) -> Result<Vec<SyncCommand>, SyncError> {
+        let mut commands = Vec::new();
+        loop {
+            let Some(event) = self.pending_live_events.front().cloned() else {
+                break;
+            };
+            if let Some((hash, size)) = required_event_content(&event)
+                && !self.content_available(&hash, size)?
+            {
+                push_download(
+                    &mut commands,
+                    usize::MAX,
+                    self.runtime.state.workspace_id(),
+                    Some(event.operation_id),
+                    hash,
+                    size,
+                );
+                break;
+            }
+            self.pending_live_events.pop_front();
+            self.apply_live_event(event)?;
+        }
+        Ok(commands)
+    }
+
     fn resume_stream_commands(
         &mut self,
         limit: usize,
@@ -1585,6 +1762,76 @@ impl SyncEngine {
         Ok(commands)
     }
 
+    fn apply_live_event(&mut self, event: WorkspaceEventMessage) -> Result<(), SyncError> {
+        let mutation_body = canonical_json(&event.mutation)?;
+        let mutation_digest = crate::body_digest(&mutation_body);
+        let post_states = event_post_states(&event);
+        let previous = self.path_states_for_event(&event)?;
+        let observed = self.observed_for_event(&event)?;
+        let post_matches = self.event_post_matches(&post_states, &observed)?;
+        if post_matches {
+            return self.commit_live_event(&event, post_states, mutation_digest, false);
+        }
+        if !self.event_baseline_matches(&previous, &observed)? {
+            for (path, observed) in &observed {
+                let desired = if observed.is_some() {
+                    self.desired_from_current(path)?
+                } else {
+                    DesiredOperation::Delete { path: path.clone() }
+                };
+                let baseline = previous
+                    .iter()
+                    .filter_map(|(candidate, state)| (candidate == path).then_some(state.clone()))
+                    .flatten()
+                    .map(|state| (state.path.clone(), state))
+                    .collect::<BTreeMap<_, _>>();
+                self.queue_desired_with_states(desired, &baseline)?;
+            }
+            return self.commit_live_event(&event, post_states, mutation_digest, false);
+        }
+        let Some(operation) = self.operation_for_event(&event, &observed)? else {
+            return self.commit_live_event(&event, post_states, mutation_digest, false);
+        };
+        let receipt = self.apply_with_journal(
+            event.stream_id,
+            ApplyItemKind::Event,
+            event.revision.to_string(),
+            RemoteApplyOperation::from_event(&event),
+            previous.first().and_then(|(_, state)| state.clone()),
+            post_states.clone(),
+            operation,
+        )?;
+        self.commit_live_event(&event, post_states, mutation_digest, false)?;
+        self.runtime.system.writer.finalize(&receipt)?;
+        self.runtime.state.remove_apply_journal(receipt.apply_id)?;
+        Ok(())
+    }
+
+    fn commit_live_event(
+        &mut self,
+        event: &WorkspaceEventMessage,
+        post_states: Vec<WorkspacePathState>,
+        mutation_digest: [u8; 32],
+        remove_outbox: bool,
+    ) -> Result<(), SyncError> {
+        self.runtime.state.transaction(|tx| {
+            for state in &post_states {
+                tx.put_path_state(state)?;
+            }
+            tx.record_applied_operation(
+                event.origin_client_id,
+                event.operation_id,
+                event.revision,
+                mutation_digest,
+            )?;
+            if remove_outbox {
+                tx.remove_outbox(event.operation_id)?;
+            }
+            tx.set_last_applied_revision(event.revision)?;
+            tx.set_pending_ack(event.revision)
+        })
+    }
+
     fn finish_stream_if_ready(&mut self) -> Result<bool, SyncError> {
         let Some(active) = self.runtime.state.stream_state()? else {
             return Ok(false);
@@ -1638,6 +1885,7 @@ impl SyncEngine {
             }
             Ok(())
         })?;
+        self.materialize_local_intents()?;
         Ok(true)
     }
 
@@ -1903,9 +2151,6 @@ impl SyncEngine {
         self.runtime.state.transaction(|tx| {
             for state in &post_states {
                 tx.put_path_state(state)?;
-            }
-            if status == StreamItemStatus::Applied {
-                tx.set_last_applied_revision(entry.entry.path_revision)?;
             }
             tx.put_stream_entry(entry, status)?;
             Ok(())
@@ -2396,6 +2641,14 @@ fn required_content(
             .map(|hash| (hash, state.metadata.size)),
         WorkspaceEntryKind::Directory | WorkspaceEntryKind::Tombstone => None,
     }
+}
+
+fn required_event_content(
+    event: &WorkspaceEventMessage,
+) -> Option<(fns_protocol::WorkspaceContentHash, u64)> {
+    event_post_states(event)
+        .into_iter()
+        .find_map(|state| required_content(&state))
 }
 
 fn recovery_cleanup_name(apply_id: ApplyId, operation: &RemoteApplyOperation) -> Option<String> {

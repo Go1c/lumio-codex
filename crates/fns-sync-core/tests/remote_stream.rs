@@ -54,6 +54,22 @@ fn ack_is_emitted_only_after_every_remote_postimage_is_durable() {
 }
 
 #[test]
+fn live_remote_file_event_downloads_and_applies_without_active_stream() {
+    let mut fixture = support::EngineFixture::new();
+    let event = fixture.remote_update_event(0, 1, "remote.txt", b"server");
+
+    let commands = fixture.engine.event(event).unwrap();
+    assert!(commands.iter().any(support::is_download));
+    assert!(!fixture.path("remote.txt").exists());
+
+    fixture.provide_requested_blobs();
+
+    assert_eq!(fs::read(fixture.path("remote.txt")).unwrap(), b"server");
+    let commands = fixture.engine.pending_commands(16).unwrap();
+    assert_eq!(support::ack_revisions(&commands), vec![1]);
+}
+
+#[test]
 fn begin_identity_mode_and_count_are_validated() {
     let mut fixture = support::EngineFixture::new();
     let mut invalid = fixture.incremental_begin(0, 1, 1, 0);
@@ -461,6 +477,72 @@ fn snapshot_paths_are_utf8_byte_sorted() {
             .entry_index,
         0
     );
+}
+
+#[test]
+fn full_snapshot_path_revisions_need_not_be_sorted() {
+    let mut fixture = support::EngineFixture::new();
+    fixture
+        .engine
+        .snapshot_begin(fixture.snapshot_begin(5, 2, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_entry(fixture.snapshot_file_entry(0, 5, "a.txt", b"a"))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_entry(fixture.snapshot_file_entry(1, 2, "b.txt", b"b"))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.snapshot_end(5, 2, 0))
+        .unwrap();
+    fixture.provide_requested_blobs();
+
+    assert_eq!(
+        fixture.engine.cursor().unwrap().last_applied_revision.get(),
+        5
+    );
+    assert_eq!(
+        support::ack_revisions(&fixture.engine.pending_commands(16).unwrap()),
+        vec![5]
+    );
+}
+
+#[test]
+fn local_watcher_echo_during_snapshot_is_reconciled_as_remote_state() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.write("echo.txt", b"remote");
+    fixture
+        .engine
+        .snapshot_begin(fixture.snapshot_begin(1, 1, 0))
+        .unwrap();
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Create(support::workspace_path(
+            "echo.txt",
+        )))
+        .unwrap();
+    let modified_at_ms = std::fs::metadata(fixture.path("echo.txt"))
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let mut entry = fixture.snapshot_file_entry(0, 1, "echo.txt", b"remote");
+    entry.entry.metadata.modified_at_ms = modified_at_ms as i64;
+    entry.validate().unwrap();
+    fixture.engine.snapshot_entry(entry).unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.snapshot_end(1, 1, 0))
+        .unwrap();
+    fixture.provide_requested_blobs();
+
+    assert!(fixture.engine.outbox().unwrap().is_empty());
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
 }
 
 #[test]

@@ -213,3 +213,44 @@ pub fn read_file(path: String, base_dir: String) -> Result<String, String> {
 pub fn compute_diff(old_text: String, new_text: String) -> Result<DiffResult, String> {
     Ok(compute_text_diff(&old_text, &new_text))
 }
+
+/// Open a path in the system file manager (Finder on macOS).
+/// `path` is relative to `base_dir` if provided, otherwise treated as absolute.
+#[tauri::command]
+pub fn open_in_finder(path: String, base_dir: Option<String>) -> Result<(), String> {
+    let full = if let Some(base) = base_dir {
+        Path::new(&base).join(&path)
+    } else {
+        Path::new(&path).to_path_buf()
+    };
+
+    if !full.exists() {
+        return Err(format!("Path does not exist: {}", full.display()));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&full)
+            .spawn()
+            .map_err(|e| format!("Failed to open in Finder: {e}"))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&full)
+            .spawn()
+            .map_err(|e| format!("Failed to open file manager: {e}"))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&full)
+            .spawn()
+            .map_err(|e| format!("Failed to open Explorer: {e}"))?;
+    }
+
+    Ok(())
+}

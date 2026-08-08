@@ -136,6 +136,115 @@ pub async fn run(config: AgentConfig, token: fns_platform::SecretToken) -> Resul
     }
 }
 
+/// Run the agent daemon in embedded mode (e.g., inside a Tauri desktop app).
+///
+/// Unlike `run()`, this does NOT install a SIGINT/SIGTERM handler.
+/// The caller controls shutdown by cancelling the `external_shutdown` token.
+/// When the token is cancelled, the current session (if any) stops and the
+/// function returns `Ok(())`.
+pub async fn run_embedded(
+    config: AgentConfig,
+    token: fns_platform::SecretToken,
+    external_shutdown: tokio_util::sync::CancellationToken,
+) -> Result<(), AgentError> {
+    let workspace_id = config.workspace_id;
+    let state_dir = config.state_dir.clone();
+
+    // No singleton lock in embedded mode — the App enforces one sync per project.
+
+    write_status(&state_dir, AgentPhase::Starting, workspace_id);
+    write_status(&state_dir, AgentPhase::Recovering, workspace_id);
+
+    let engine_config = SyncEngineConfig::new(
+        workspace_id,
+        config.client_id,
+        &config.workspace_root,
+        &state_dir,
+    );
+    let engine =
+        SyncEngine::open(engine_config).map_err(|_| AgentError::new(AgentErrorCode::Core))?;
+
+    let (worker, handle) = EngineWorker::spawn(engine);
+    let _watcher = start_watcher(&config, handle.clone());
+
+    write_status(&state_dir, AgentPhase::Connecting, workspace_id);
+
+    let endpoint = WorkspaceEndpoint::parse(&config.endpoint)
+        .map_err(|_| AgentError::new(AgentErrorCode::InvalidConfiguration))?;
+
+    let mut schedule = ReconnectSchedule::new(ReconnectPolicy::default(), UuidJitter);
+
+    loop {
+        // Check for external shutdown before connecting.
+        if external_shutdown.is_cancelled() {
+            break;
+        }
+
+        let connect_result = tokio::select! {
+            _ = external_shutdown.cancelled() => break,
+            res = fns_transport::socket::connect(&endpoint, &token, "0.1.0") => res,
+        };
+
+        match connect_result {
+            Ok(stream) => {
+                write_status(&state_dir, AgentPhase::Subscribing, workspace_id);
+                let (session, mut writer) = fns_transport::session::Session::new(
+                    stream,
+                    handle.clone(),
+                    workspace_id,
+                    config.client_id,
+                    "0.1.0".into(),
+                );
+
+                // Use external shutdown token directly — no signal handler.
+                let result = session.run(&mut writer, external_shutdown.clone()).await;
+                match result {
+                    fns_transport::session::SessionResult::Closed => {
+                        if external_shutdown.is_cancelled() {
+                            break;
+                        }
+                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
+                    }
+                    fns_transport::session::SessionResult::Error(e) => {
+                        if !e.retryable() {
+                            write_status_error(&state_dir, workspace_id, e.code());
+                            let _ = handle.shutdown().await;
+                            let _ = worker.join();
+                            return Err(map_transport_error(e.code()));
+                        }
+                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
+                    }
+                }
+            }
+            Err(e) => {
+                if !e.retryable() {
+                    write_status_error(&state_dir, workspace_id, e.code());
+                    let _ = handle.shutdown().await;
+                    let _ = worker.join();
+                    return Err(map_transport_error(e.code()));
+                }
+            }
+        }
+
+        if external_shutdown.is_cancelled() {
+            break;
+        }
+
+        let delay = schedule.next_delay();
+        tokio::select! {
+            _ = external_shutdown.cancelled() => break,
+            _ = tokio::time::sleep(delay) => {}
+        }
+        write_status_reconnect(&state_dir, workspace_id, schedule.attempt());
+    }
+
+    // Clean shutdown.
+    let _ = handle.shutdown().await;
+    let _ = worker.join();
+    write_status_stopped(&state_dir, workspace_id);
+    Ok(())
+}
+
 fn map_transport_error(code: fns_transport::TransportErrorCode) -> AgentError {
     match code {
         fns_transport::TransportErrorCode::AuthenticationRejected => {
@@ -316,6 +425,26 @@ fn write_status_error(
         active_transfers: 0,
         reconnect_attempt: 0,
         last_error_code: Some(agent_code),
+        updated_at_ms: now_ms(),
+    };
+    let path = state_dir.join("runtime-status.json");
+    let _ = status.write_to(&path);
+}
+
+fn write_status_stopped(state_dir: &std::path::Path, workspace_id: fns_protocol::WorkspaceId) {
+    let status = AgentStatus {
+        schema_version: "fns-agent-status/1".into(),
+        running: false,
+        phase: AgentPhase::Stopped,
+        pid: None,
+        connected: false,
+        workspace_id,
+        last_ack_revision: fns_protocol::WorkspaceRevision::ZERO,
+        pending_commands: 0,
+        queued_watcher_batches: 0,
+        active_transfers: 0,
+        reconnect_attempt: 0,
+        last_error_code: None,
         updated_at_ms: now_ms(),
     };
     let path = state_dir.join("runtime-status.json");

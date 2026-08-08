@@ -101,6 +101,41 @@ impl TransferTable {
             .is_some_and(|need| need.content_hash == *content_hash && need.size == size)
     }
 
+    /// Whether an upload for this operation is already on the wire.
+    pub fn has_active_upload(&self, operation_id: &OperationId) -> bool {
+        self.active.values().any(|transfer| {
+            matches!(
+                transfer,
+                ActiveTransfer::Upload(upload) if upload.operation_id == *operation_id
+            )
+        })
+    }
+
+    /// Verify that a server download frame belongs to the reserved transfer.
+    pub fn matches_download(
+        &self,
+        transfer_id: &TransferId,
+        content_hash: &WorkspaceContentHash,
+        size: u64,
+    ) -> bool {
+        matches!(
+            self.active.get(transfer_id),
+            Some(ActiveTransfer::Download(download))
+                if download.content_hash == *content_hash && download.size == size
+        )
+    }
+
+    /// Whether a download with this content is already active.
+    pub fn has_active_download(&self, content_hash: &WorkspaceContentHash, size: u64) -> bool {
+        self.active.values().any(|transfer| {
+            matches!(
+                transfer,
+                ActiveTransfer::Download(download)
+                    if download.content_hash == *content_hash && download.size == size
+            )
+        })
+    }
+
     /// Register a server BlobNeed upload push.
     /// Returns true if both halves now match and a transfer can begin.
     pub fn add_server_need(
@@ -108,6 +143,22 @@ impl TransferTable {
         need: fns_protocol::WorkspaceBlobNeedUploadPush,
     ) -> Result<bool, TransportError> {
         let op_id = need.operation_id;
+        if let Some(existing) = self.pending_uploads.get(&op_id) {
+            if let Some(previous) = &existing.need
+                && (previous.workspace_id != need.workspace_id
+                    || previous.content_hash != need.content_hash
+                    || previous.size != need.size)
+            {
+                return Err(TransportError::new(TransportErrorCode::Protocol, false));
+            }
+            if let Some(intent) = &existing.intent
+                && (intent.workspace_id != need.workspace_id
+                    || intent.content_hash != need.content_hash
+                    || intent.size != need.size)
+            {
+                return Err(TransportError::new(TransportErrorCode::Protocol, false));
+            }
+        }
         let entry = self
             .pending_uploads
             .entry(op_id)
@@ -137,23 +188,30 @@ impl TransferTable {
 
     /// Try to start a new active transfer. Returns Err if at capacity.
     pub fn reserve_slot(&mut self) -> Result<TransferId, TransportError> {
+        let uuid = uuid::Uuid::new_v4();
+        let transfer_id = TransferId::parse(&uuid.to_string()).expect("valid uuid string");
+        self.reserve_transfer(transfer_id)?;
+        Ok(transfer_id)
+    }
+
+    /// Reserve a server-assigned transfer ID after the Begin push arrives.
+    pub fn reserve_transfer(&mut self, transfer_id: TransferId) -> Result<(), TransportError> {
         if self.active.len() >= self.max_active {
             return Err(TransportError::new(
                 TransportErrorCode::ResourceLimit,
                 false,
             ));
         }
-        if self.per_connection_ids.len() >= crate::MAX_TRANSFER_IDS_PER_CONNECTION {
+        if self.per_connection_ids.len() >= crate::MAX_TRANSFER_IDS_PER_CONNECTION
+            || self.per_connection_ids.contains(&transfer_id)
+        {
             return Err(TransportError::new(
                 TransportErrorCode::ResourceLimit,
                 false,
             ));
         }
-
-        let uuid = uuid::Uuid::new_v4();
-        let transfer_id = TransferId::parse(&uuid.to_string()).expect("valid uuid string");
         self.per_connection_ids.push(transfer_id);
-        Ok(transfer_id)
+        Ok(())
     }
 
     /// Insert an active upload transfer.
@@ -182,5 +240,73 @@ impl TransferTable {
     pub fn reset_connection(&mut self) {
         self.active.clear();
         self.per_connection_ids.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn workspace_id() -> WorkspaceId {
+        WorkspaceId::parse("10000000-0000-4000-8000-000000000001").unwrap()
+    }
+
+    fn operation_id() -> OperationId {
+        OperationId::parse("10000000-0000-4000-8000-000000000002").unwrap()
+    }
+
+    fn content_hash() -> WorkspaceContentHash {
+        WorkspaceContentHash::parse(
+            "blake3:abababababababababababababababababababababababababababababababab",
+        )
+        .unwrap()
+    }
+
+    fn upload_command() -> SyncCommand {
+        SyncCommand::UploadBlob {
+            workspace_id: workspace_id(),
+            operation_id: operation_id(),
+            content_hash: content_hash(),
+            size: 8,
+        }
+    }
+
+    fn upload_need() -> fns_protocol::WorkspaceBlobNeedUploadPush {
+        fns_protocol::WorkspaceBlobNeedUploadPush {
+            workspace_id: workspace_id(),
+            direction: fns_protocol::WorkspaceBlobDirection::Upload,
+            operation_id: operation_id(),
+            content_hash: content_hash(),
+            size: 8,
+        }
+    }
+
+    #[test]
+    fn engine_intent_and_server_need_pair_in_either_order() {
+        let intent = UploadIntent {
+            workspace_id: workspace_id(),
+            operation_id: operation_id(),
+            content_hash: content_hash(),
+            size: 8,
+        };
+
+        let mut engine_first = TransferTable::new(1);
+        engine_first.add_upload_intent(intent.clone(), upload_command());
+        assert!(!engine_first.has_matching_upload(&operation_id(), &content_hash(), 8));
+        assert!(engine_first.add_server_need(upload_need()).unwrap());
+
+        let mut need_first = TransferTable::new(1);
+        assert!(!need_first.add_server_need(upload_need()).unwrap());
+        need_first.add_upload_intent(intent, upload_command());
+        assert!(need_first.has_matching_upload(&operation_id(), &content_hash(), 8));
+    }
+
+    #[test]
+    fn conflicting_need_is_rejected_instead_of_looping() {
+        let mut table = TransferTable::new(1);
+        table.add_server_need(upload_need()).unwrap();
+        let mut conflicting = upload_need();
+        conflicting.size = 9;
+        assert!(table.add_server_need(conflicting).is_err());
     }
 }

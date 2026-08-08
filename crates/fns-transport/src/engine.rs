@@ -16,6 +16,9 @@ enum EngineCall {
     Cursor {
         tx: oneshot::Sender<Result<WorkspaceCursor, TransportError>>,
     },
+    ActiveStreamMode {
+        tx: oneshot::Sender<Result<Option<fns_sync_core::StreamMode>, TransportError>>,
+    },
     PendingCommands {
         limit: usize,
         tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
@@ -69,6 +72,10 @@ enum EngineCall {
         size: u64,
         data: Vec<u8>,
         tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
+    },
+    BlobUploaded {
+        operation_id: fns_protocol::OperationId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
     },
     Shutdown {
         tx: oneshot::Sender<Result<(), TransportError>>,
@@ -149,8 +156,14 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
         EngineCall::Cursor { tx } => {
             let _ = tx.send(map_err(engine.cursor()));
         }
+        EngineCall::ActiveStreamMode { tx } => {
+            let _ = tx.send(map_err(engine.active_stream_mode()));
+        }
         EngineCall::PendingCommands { limit, tx } => {
-            let _ = tx.send(map_err(engine.pending_commands(limit)));
+            let _ = tx.send(map_err_named(
+                engine.pending_commands(limit),
+                "pending_commands",
+            ));
         }
         EngineCall::RecordLocalChanges { changes, tx } => {
             let _ = tx.send(map_err(engine.record_local_changes(changes)));
@@ -162,10 +175,15 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
             let _ = tx.send(map_err(engine.snapshot_entry(message)));
         }
         EngineCall::SnapshotEnd { message, tx } => {
-            let _ = tx.send(map_err(engine.snapshot_end(message)));
+            let _ = tx.send(map_err_named(engine.snapshot_end(message), "snapshot_end"));
         }
         EngineCall::WorkspaceEvent { message, tx } => {
-            let _ = tx.send(map_err(engine.workspace_event(message)));
+            let result = match engine.active_stream_mode() {
+                Ok(Some(fns_sync_core::StreamMode::Incremental)) => engine.workspace_event(message),
+                Ok(Some(fns_sync_core::StreamMode::Snapshot)) | Ok(None) => engine.event(message),
+                Err(error) => Err(error),
+            };
+            let _ = tx.send(map_err_named(result, "workspace_event"));
         }
         EngineCall::MutationAccepted { message, tx } => {
             let _ = tx.send(map_err(engine.mutation_accepted(message)));
@@ -174,13 +192,22 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
             let _ = tx.send(map_err(engine.mutation_rejected(message)));
         }
         EngineCall::ConflictCreated { message, tx } => {
-            let _ = tx.send(map_err(engine.conflict_created(message)));
+            let _ = tx.send(map_err_named(
+                engine.conflict_created(message),
+                "conflict_created",
+            ));
         }
         EngineCall::ConflictResolved { message, tx } => {
-            let _ = tx.send(map_err(engine.conflict_resolved(message)));
+            let _ = tx.send(map_err_named(
+                engine.conflict_resolved(message),
+                "conflict_resolved",
+            ));
         }
         EngineCall::AckConfirmed { message, tx } => {
-            let _ = tx.send(map_err(engine.ack_confirmed(message)));
+            let _ = tx.send(map_err_named(
+                engine.ack_confirmed(message),
+                "ack_confirmed",
+            ));
         }
         EngineCall::OpenBlob { content_hash, tx } => {
             let _ = tx.send(map_err(engine.open_blob(&content_hash)));
@@ -192,7 +219,13 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
             tx,
         } => {
             let reader = std::io::Cursor::new(data);
-            let _ = tx.send(map_err(engine.blob_available(content_hash, size, reader)));
+            let _ = tx.send(map_err_named(
+                engine.blob_available(content_hash, size, reader),
+                "blob_available",
+            ));
+        }
+        EngineCall::BlobUploaded { operation_id, tx } => {
+            let _ = tx.send(map_err(engine.blob_uploaded(operation_id)));
         }
         EngineCall::Shutdown { tx } => {
             let _ = tx.send(map_err(engine.close()));
@@ -205,6 +238,18 @@ impl EngineHandle {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(EngineCall::Cursor { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn active_stream_mode(
+        &self,
+    ) -> Result<Option<fns_sync_core::StreamMode>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ActiveStreamMode { tx })
             .await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
@@ -399,8 +444,37 @@ impl EngineHandle {
         rx.await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
     }
+
+    /// Notify the engine that a blob upload completed successfully.
+    /// This flips the outbox entry from AwaitingBlob → Dispatched so the
+    /// mutation will be re-sent on the next pending_commands cycle.
+    pub async fn blob_uploaded(
+        &self,
+        operation_id: fns_protocol::OperationId,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::BlobUploaded { operation_id, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
 }
 
 fn map_err<T, E: std::fmt::Debug>(result: Result<T, E>) -> Result<T, TransportError> {
-    result.map_err(|_| TransportError::new(TransportErrorCode::Core, false))
+    result.map_err(|error| {
+        tracing::error!(error = ?error, "sync engine call failed");
+        TransportError::new(TransportErrorCode::Core, false)
+    })
+}
+
+fn map_err_named<T, E: std::fmt::Debug>(
+    result: Result<T, E>,
+    call: &'static str,
+) -> Result<T, TransportError> {
+    result.map_err(|error| {
+        tracing::error!(call, error = ?error, "sync engine call failed");
+        TransportError::new(TransportErrorCode::Core, false)
+    })
 }

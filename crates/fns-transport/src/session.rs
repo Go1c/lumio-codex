@@ -9,7 +9,7 @@ use crate::blob;
 use crate::engine::EngineHandle;
 use crate::error::{TransportError, TransportErrorCode};
 use crate::socket::{self, InboundMessage, SocketReader, SocketWriter};
-use crate::transfer::TransferTable;
+use crate::transfer::{ActiveTransfer, TransferTable, UploadIntent, UploadTransfer};
 
 use fns_protocol::{
     MessageBody, RequestId, WorkspaceAction, WorkspaceSnapshotBeginMessage, decode_binary_frame,
@@ -17,6 +17,7 @@ use fns_protocol::{
 };
 use fns_sync_core::SyncCommand;
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 /// Session phases.
@@ -53,11 +54,26 @@ pub struct Session {
     transfers: TransferTable,
     /// Pending download staging: transfer_id → collected bytes.
     download_staging: std::collections::HashMap<fns_protocol::TransferId, Vec<u8>>,
+    /// Download requests awaiting the server-assigned Begin transfer ID.
+    pending_downloads: Vec<(
+        fns_protocol::WorkspaceId,
+        Option<fns_protocol::OperationId>,
+        fns_protocol::WorkspaceContentHash,
+        u64,
+    )>,
+    /// Requests already sent on this connection; durable engine replay is
+    /// used after reconnect instead of sending duplicates while waiting.
+    inflight_mutations: HashSet<fns_protocol::OperationId>,
+    inflight_acks: HashSet<fns_protocol::WorkspaceRevision>,
+    /// Live events received while the engine is still completing a full
+    /// snapshot. They are replayed after the snapshot Ack is confirmed.
+    deferred_events: Vec<fns_protocol::WorkspaceEventMessage>,
 }
 
 /// Heartbeat interval and idle timeout.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+const MAX_SESSION_TRANSFERS: usize = 2;
 
 /// Generate a fresh RequestId from a random UUID v4.
 fn fresh_request_id() -> RequestId {
@@ -97,6 +113,10 @@ impl Session {
                 pending_outbound: Vec::new(),
                 transfers: TransferTable::new(2),
                 download_staging: std::collections::HashMap::new(),
+                pending_downloads: Vec::new(),
+                inflight_mutations: HashSet::new(),
+                inflight_acks: HashSet::new(),
+                deferred_events: Vec::new(),
             },
             writer,
         )
@@ -167,11 +187,37 @@ impl Session {
                         }
                         Some(Ok(InboundMessage::Binary(data))) => {
                             // Blob chunk from server (download direction).
-                            if let Ok((header, payload)) = decode_binary_frame(&data)
-                                && header.direction == fns_protocol::WorkspaceBlobDirection::Download
-                                    && let Some(staging) = self.download_staging.get_mut(&header.transfer_id) {
-                                        staging.extend_from_slice(payload);
-                                    }
+                            let (header, payload) = match decode_binary_frame(&data) {
+                                Ok(value) => value,
+                                Err(_) => {
+                                    return SessionResult::Error(TransportError::new(
+                                        TransportErrorCode::Protocol,
+                                        false,
+                                    ));
+                                }
+                            };
+                            if header.direction != fns_protocol::WorkspaceBlobDirection::Download
+                            {
+                                return SessionResult::Error(TransportError::new(
+                                    TransportErrorCode::Protocol,
+                                    false,
+                                ));
+                            }
+                            let Some(staging) = self.download_staging.get_mut(&header.transfer_id)
+                            else {
+                                return SessionResult::Error(TransportError::new(
+                                    TransportErrorCode::Protocol,
+                                    false,
+                                ));
+                            };
+                            let next_size = staging.len().saturating_add(payload.len());
+                            if next_size > fns_protocol::MAX_BLOB_BYTES as usize {
+                                return SessionResult::Error(TransportError::new(
+                                    TransportErrorCode::Protocol,
+                                    false,
+                                ));
+                            }
+                            staging.extend_from_slice(payload);
                         }
                         Some(Ok(InboundMessage::Pong(_))) => {
                             // Heartbeat pong — connection is alive.
@@ -207,6 +253,9 @@ impl Session {
     ) -> Result<(), TransportError> {
         match command {
             SyncCommand::Mutation(body) => {
+                if !self.inflight_mutations.insert(body.operation_id) {
+                    return Ok(());
+                }
                 let request_id = fresh_request_id();
                 let frame = encode_request(
                     WorkspaceAction::WorkspaceMutation,
@@ -217,6 +266,9 @@ impl Session {
                 writer.send_text(frame).await?;
             }
             SyncCommand::SendAck(body) => {
+                if !self.inflight_acks.insert(body.revision) {
+                    return Ok(());
+                }
                 let request_id = fresh_request_id();
                 let frame = encode_request(
                     WorkspaceAction::WorkspaceAck,
@@ -232,6 +284,32 @@ impl Session {
                 content_hash,
                 size,
             } => {
+                if self
+                    .pending_downloads
+                    .iter()
+                    .any(|(_, _, pending_hash, pending_size)| {
+                        pending_hash == &content_hash && *pending_size == size
+                    })
+                    || self.transfers.has_active_download(&content_hash, size)
+                {
+                    return Ok(());
+                }
+                // A request is already consuming a server transfer slot as
+                // soon as BlobNeed is sent, even though BlobBegin has not
+                // arrived yet. Keep queued downloads within our configured
+                // connection limit so an upload cannot be rejected merely
+                // because several downloads are waiting for their begins.
+                if self.transfers.active_count() + self.pending_downloads.len()
+                    >= MAX_SESSION_TRANSFERS
+                {
+                    return Ok(());
+                }
+                self.pending_downloads.push((
+                    workspace_id,
+                    operation_id,
+                    content_hash.clone(),
+                    size,
+                ));
                 // Send BlobNeed(download) request to server.
                 let request_id = fresh_request_id();
                 let need_body = fns_protocol::WorkspaceBlobNeedDownloadRequest {
@@ -241,7 +319,10 @@ impl Session {
                         .map(fns_protocol::RequiredNullable::Value)
                         .unwrap_or(fns_protocol::RequiredNullable::Null),
                     content_hash: content_hash.clone(),
-                    size: fns_protocol::RequiredNullable::Value(size),
+                    // The v2 request contract requires size to be null; the
+                    // server resolves the canonical size from its CAS and
+                    // returns it in BlobNeedDownloadResponse.
+                    size: fns_protocol::RequiredNullable::Null,
                 };
                 let frame = encode_request(
                     WorkspaceAction::WorkspaceBlobNeed,
@@ -257,11 +338,30 @@ impl Session {
                 content_hash,
                 size,
             } => {
-                // Check if server has expressed need for this blob.
-                // If so, perform the actual upload (Begin → chunks → End).
+                // The engine command and the server BlobNeed can arrive in
+                // either order. Register the engine half before attempting
+                // to pair it with a server need.
+                let retry = SyncCommand::UploadBlob {
+                    workspace_id,
+                    operation_id,
+                    content_hash: content_hash.clone(),
+                    size,
+                };
+                self.transfers.add_upload_intent(
+                    UploadIntent {
+                        workspace_id,
+                        operation_id,
+                        content_hash: content_hash.clone(),
+                        size,
+                    },
+                    retry,
+                );
                 if self
                     .transfers
                     .has_matching_upload(&operation_id, &content_hash, size)
+                    && !self.transfers.has_active_upload(&operation_id)
+                    && self.transfers.active_count() + self.pending_downloads.len()
+                        < MAX_SESSION_TRANSFERS
                 {
                     self.upload_blob(writer, workspace_id, operation_id, content_hash, size)
                         .await?;
@@ -354,8 +454,35 @@ impl Session {
     /// Handle an inbound text frame by routing it to the engine worker.
     /// Engine-returned commands are collected in pending_outbound for draining.
     async fn handle_text_frame(&mut self, data: Vec<u8>) -> Result<(), TransportError> {
-        let decoded = decode_server_text_frame(&data)
-            .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+        let decoded = decode_server_text_frame(&data).map_err(|_| {
+            tracing::warn!("workspace sync frame decode failed");
+            TransportError::new(TransportErrorCode::Protocol, false)
+        })?;
+        if let fns_protocol::DecodedEnvelope::Success { body, .. } = &decoded.envelope {
+            tracing::debug!(
+                action = %decoded.action,
+                body = ?body.kind(),
+                "workspace sync frame received"
+            );
+        } else if let fns_protocol::DecodedEnvelope::Failure { error, .. } = &decoded.envelope {
+            tracing::warn!(
+                action = %decoded.action,
+                error = %error.code.as_str(),
+                "workspace sync request rejected"
+            );
+        } else {
+            tracing::debug!(action = %decoded.action, "workspace sync frame received");
+        }
+        if matches!(
+            decoded.action,
+            WorkspaceAction::WorkspaceBlobBegin | WorkspaceAction::WorkspaceBlobEnd
+        ) && matches!(
+            &decoded.envelope,
+            fns_protocol::DecodedEnvelope::Failure { .. }
+        ) {
+            tracing::warn!(action = %decoded.action, "workspace blob transfer rejected");
+            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+        }
 
         match decoded.action {
             WorkspaceAction::WorkspaceSnapshotBegin => {
@@ -396,14 +523,39 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::Event(event) = body
                 {
-                    let cmds = self.engine_workspace_event(event).await?;
-                    self.pending_outbound.extend(cmds);
+                    let cursor = self.engine.cursor().await?;
+                    let active_stream = self.engine.active_stream_mode().await?;
+                    tracing::info!(
+                        operation_id = %event.operation_id,
+                        origin_client_id = %event.origin_client_id,
+                        local_client_id = %cursor.client_id,
+                        revision = %event.revision,
+                        pending_ack = ?cursor.pending_ack_revision,
+                        active_stream = ?active_stream,
+                        "workspace event received"
+                    );
+                    if active_stream == Some(fns_sync_core::StreamMode::Snapshot) {
+                        tracing::debug!(
+                            operation_id = %event.operation_id,
+                            "workspace event deferred until snapshot ack"
+                        );
+                        self.deferred_events.push(event);
+                    } else {
+                        let cmds = self.engine_workspace_event(event).await?;
+                        self.pending_outbound.extend(cmds);
+                    }
                 }
             }
             WorkspaceAction::WorkspaceMutationAccepted => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::MutationAccepted(msg) = body
                 {
+                    tracing::info!(
+                        operation_id = %msg.operation_id,
+                        revision = %msg.revision,
+                        "workspace mutation accepted"
+                    );
+                    self.inflight_mutations.remove(&msg.operation_id);
                     let cmds = self.engine_mutation_accepted(msg).await?;
                     self.pending_outbound.extend(cmds);
                 }
@@ -412,6 +564,12 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::MutationRejected(msg) = body
                 {
+                    tracing::info!(
+                        operation_id = %msg.operation_id,
+                        reason = ?msg.reason,
+                        "workspace mutation rejected"
+                    );
+                    self.inflight_mutations.remove(&msg.operation_id);
                     let cmds = self.engine_mutation_rejected(msg).await?;
                     self.pending_outbound.extend(cmds);
                 }
@@ -420,6 +578,7 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::ConflictCreated(msg) = body
                 {
+                    tracing::info!(conflict_id = %msg.conflict_id, "workspace conflict created");
                     let cmds = self.engine_conflict_created(msg).await?;
                     self.pending_outbound.extend(cmds);
                 }
@@ -428,15 +587,31 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::ConflictResolved(msg) = body
                 {
+                    tracing::info!(
+                        conflict_id = %msg.conflict_id,
+                        revision = %msg.revision,
+                        "workspace conflict resolved"
+                    );
                     let cmds = self.engine_conflict_resolved(msg).await?;
                     self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceAck => {
-                if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
+                if matches!(
+                    &decoded.envelope,
+                    fns_protocol::DecodedEnvelope::Failure { .. }
+                ) {
+                    self.inflight_acks.clear();
+                } else if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::Ack(msg) = body
                 {
+                    self.inflight_acks.remove(&msg.revision);
                     self.engine_ack_confirmed(msg).await?;
+                    let deferred = std::mem::take(&mut self.deferred_events);
+                    for event in deferred {
+                        let cmds = self.engine_workspace_event(event).await?;
+                        self.pending_outbound.extend(cmds);
+                    }
                 }
             }
             // Blob upload: server pushes BlobNeed(upload) when it needs our content.
@@ -444,9 +619,24 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope {
                     match body {
                         MessageBody::BlobNeedUploadPush(need) => {
-                            // Server needs us to upload this blob.
-                            // For now, attempt immediate upload if we have a matching intent.
-                            // The full pairing logic lives in drain_outbound.
+                            need.validate().map_err(|_| {
+                                TransportError::new(TransportErrorCode::Protocol, false)
+                            })?;
+                            if need.workspace_id != self.workspace_id {
+                                return Err(TransportError::new(
+                                    TransportErrorCode::Protocol,
+                                    false,
+                                ));
+                            }
+                            tracing::info!(
+                                operation_id = %need.operation_id,
+                                content_hash = %need.content_hash,
+                                size = need.size,
+                                "workspace blob upload requested"
+                            );
+                            // Server needs us to upload this blob. Keep the
+                            // command pending so it is paired with an engine
+                            // intent even when the push arrives first.
                             let need_clone = need.clone();
                             self.pending_outbound.push(SyncCommand::UploadBlob {
                                 workspace_id: need.workspace_id,
@@ -455,19 +645,39 @@ impl Session {
                                 size: need.size,
                             });
                             // Store the need for pairing.
-                            self.transfers.add_server_need(need_clone).ok();
+                            self.transfers.add_server_need(need_clone)?;
                         }
                         MessageBody::BlobNeedDownloadResponse(resp) => {
-                            // Server acknowledged our download request — begin push will follow.
-                            let transfer_id = self.transfers.reserve_slot()?;
-                            self.transfers
-                                .add_download(crate::transfer::DownloadTransfer {
-                                    transfer_id,
-                                    workspace_id: resp.workspace_id,
-                                    operation_id: resp.operation_id.into_option(),
-                                    content_hash: resp.content_hash,
-                                    size: resp.size,
-                                });
+                            resp.validate().map_err(|_| {
+                                TransportError::new(TransportErrorCode::Protocol, false)
+                            })?;
+                            if resp.workspace_id != self.workspace_id {
+                                return Err(TransportError::new(
+                                    TransportErrorCode::Protocol,
+                                    false,
+                                ));
+                            }
+                            // The server assigns the transfer ID in the following
+                            // BlobBegin push; retain only the request identity here.
+                            if let Some((workspace_id, operation_id, _, pending_size)) = self
+                                .pending_downloads
+                                .iter_mut()
+                                .find(|(_, _, pending_hash, _)| pending_hash == &resp.content_hash)
+                            {
+                                *workspace_id = resp.workspace_id;
+                                *operation_id = resp.operation_id.into_option();
+                                *pending_size = resp.size;
+                            } else if !self
+                                .transfers
+                                .has_active_download(&resp.content_hash, resp.size)
+                            {
+                                self.pending_downloads.push((
+                                    resp.workspace_id,
+                                    resp.operation_id.into_option(),
+                                    resp.content_hash,
+                                    resp.size,
+                                ));
+                            }
                         }
                         _ => {}
                     }
@@ -477,8 +687,39 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::BlobBegin(begin) = body
                 {
+                    begin
+                        .validate()
+                        .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                    if begin.workspace_id != self.workspace_id {
+                        return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                    }
                     // Download begin: prepare staging for incoming chunks.
                     if begin.direction == fns_protocol::WorkspaceBlobDirection::Download {
+                        let Some(index) = self.pending_downloads.iter().position(
+                            |(_, _, pending_hash, pending_size)| {
+                                pending_hash == &begin.content_hash && *pending_size == begin.size
+                            },
+                        ) else {
+                            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                        };
+                        let (workspace_id, operation_id, _, _) =
+                            self.pending_downloads.remove(index);
+                        self.transfers.reserve_transfer(begin.transfer_id)?;
+                        self.transfers
+                            .add_download(crate::transfer::DownloadTransfer {
+                                transfer_id: begin.transfer_id,
+                                workspace_id,
+                                operation_id,
+                                content_hash: begin.content_hash.clone(),
+                                size: begin.size,
+                            });
+                        if !self.transfers.matches_download(
+                            &begin.transfer_id,
+                            &begin.content_hash,
+                            begin.size,
+                        ) {
+                            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                        }
                         self.download_staging
                             .insert(begin.transfer_id, Vec::with_capacity(begin.size as usize));
                     }
@@ -487,18 +728,52 @@ impl Session {
             WorkspaceAction::WorkspaceBlobEnd => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::BlobEnd(end) = body
-                    && end.direction == fns_protocol::WorkspaceBlobDirection::Download
                 {
-                    // Download complete: verify and import into engine.
-                    if let Some(data) = self.download_staging.remove(&end.transfer_id)
-                        && data.len() as u64 == end.size
-                    {
-                        let cmds = self
-                            .engine
-                            .blob_available(end.content_hash.clone(), end.size, data)
-                            .await?;
-                        self.pending_outbound.extend(cmds);
+                    end.validate()
+                        .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                    if end.workspace_id != self.workspace_id {
+                        return Err(TransportError::new(TransportErrorCode::Protocol, false));
                     }
+
+                    if end.direction == fns_protocol::WorkspaceBlobDirection::Upload {
+                        let Some(ActiveTransfer::Upload(upload)) =
+                            self.transfers.remove(&end.transfer_id)
+                        else {
+                            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                        };
+                        if upload.workspace_id != end.workspace_id
+                            || upload.content_hash != end.content_hash
+                            || upload.size != end.size
+                        {
+                            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                        }
+                        tracing::info!(
+                            operation_id = %upload.operation_id,
+                            transfer_id = %upload.transfer_id,
+                            content_hash = %upload.content_hash,
+                            size = upload.size,
+                            "workspace blob upload accepted"
+                        );
+                        // BlobEnd success is the commit point. Only after it
+                        // arrives may the mutation referencing this blob be
+                        // sent again.
+                        self.engine.blob_uploaded(upload.operation_id).await?;
+                        let _ = self.transfers.take_pending_retry(&upload.operation_id);
+                        return Ok(());
+                    }
+
+                    // Download complete: verify and import into engine.
+                    let Some(data) = self.download_staging.remove(&end.transfer_id) else {
+                        return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                    };
+                    if data.len() as u64 != end.size {
+                        return Err(TransportError::new(TransportErrorCode::Protocol, false));
+                    }
+                    let cmds = self
+                        .engine
+                        .blob_available(end.content_hash.clone(), end.size, data)
+                        .await?;
+                    self.pending_outbound.extend(cmds);
                     self.transfers.remove(&end.transfer_id);
                 }
             }
@@ -546,6 +821,13 @@ impl Session {
 
         // Reserve a transfer slot.
         let transfer_id = self.transfers.reserve_slot()?;
+        self.transfers.add_upload(UploadTransfer {
+            transfer_id,
+            workspace_id,
+            operation_id,
+            content_hash: content_hash.clone(),
+            size,
+        });
 
         // Send BlobBegin.
         let begin_request_id = fresh_request_id();
@@ -578,10 +860,6 @@ impl Session {
             end_request_id,
         )?;
         writer.send_text(end_frame).await?;
-
-        // After BlobEnd success, remove the pending upload.
-        let _ = self.transfers.take_pending_retry(&operation_id);
-        self.transfers.remove(&transfer_id);
 
         Ok(())
     }

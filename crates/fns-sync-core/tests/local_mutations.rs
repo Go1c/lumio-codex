@@ -549,6 +549,47 @@ fn blob_required_emits_one_upload() {
 }
 
 #[test]
+fn completed_blob_replays_the_original_mutation() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.write("blob-retry.txt", b"blob");
+    fixture.engine.scan_and_record().unwrap();
+    let mutation = fixture.engine.pending_commands(1).unwrap()[0]
+        .mutation()
+        .unwrap();
+    fixture
+        .engine
+        .mutation_rejected(WorkspaceMutationRejectedMessage {
+            workspace_id: fixture.engine.state().workspace_id(),
+            client_id: fixture.engine.state().client_id(),
+            operation_id: mutation.operation_id,
+            reason: WorkspaceMutationRejectReason::BlobRequired,
+            current_path_state: RequiredNullable::Null,
+            conflict_id: RequiredNullable::Null,
+            required_hash: mutation.content_hash.clone(),
+        })
+        .unwrap();
+
+    assert!(matches!(
+        fixture.engine.pending_commands(1).unwrap().as_slice(),
+        [SyncCommand::UploadBlob { .. }]
+    ));
+
+    fixture.engine.blob_uploaded(mutation.operation_id).unwrap();
+    let replay = fixture.engine.pending_commands(1).unwrap();
+    assert_eq!(replay, vec![SyncCommand::Mutation(mutation.clone())]);
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(mutation.operation_id)
+            .unwrap()
+            .unwrap()
+            .stage,
+        OutboxStage::Dispatched
+    );
+}
+
+#[test]
 fn conflict_created_blocks_mutation() {
     let mut fixture = support::EngineFixture::new();
     fixture.write("conflict.txt", b"conflict");

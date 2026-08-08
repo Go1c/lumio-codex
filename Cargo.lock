@@ -1153,6 +1153,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
+ "tracing",
  "url",
  "uuid",
  "zeroize",
@@ -1164,6 +1165,9 @@ version = "0.1.0"
 dependencies = [
  "diffy",
  "directories",
+ "fns-agent",
+ "fns-platform",
+ "fns-protocol",
  "portable-pty",
  "serde",
  "serde_json",
@@ -1171,6 +1175,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-shell",
  "tokio",
+ "tokio-util",
  "uuid",
 ]
 
@@ -4128,6 +4133,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5d9cf598a6d7ce700a4e6a9199da127e6819a61e64b68609683cc9a01b5683a"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "test-sync"
+version = "0.1.0"
+dependencies = [
+ "fns-agent",
+ "fns-platform",
+ "fns-protocol",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

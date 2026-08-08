@@ -61,12 +61,10 @@ impl SshTunnel {
     }
 
     /// Check if the SSH process is still alive.
+    #[allow(dead_code)]
     pub fn is_alive(&mut self) -> bool {
         if let Some(child) = &mut self.child {
-            match child.try_wait() {
-                Ok(None) => true,
-                _ => false,
-            }
+            matches!(child.try_wait(), Ok(None))
         } else {
             false
         }
@@ -86,7 +84,7 @@ impl Drop for SshTunnel {
 
 /// State-managed SSH tunnel.
 pub struct TunnelState {
-    tunnel: std::sync::Mutex<Option<SshTunnel>>,
+    pub tunnel: std::sync::Mutex<Option<SshTunnel>>,
 }
 
 impl TunnelState {
@@ -138,8 +136,6 @@ mod tests {
 
     #[test]
     fn ssh_tunnel_struct_exists() {
-        // Type-level check: SshTunnel must implement Drop.
-        fn assert_drop<T: Drop>() {}
-        assert_drop::<SshTunnel>();
+        assert!(std::mem::needs_drop::<SshTunnel>());
     }
 }

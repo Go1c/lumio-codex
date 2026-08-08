@@ -26,7 +26,11 @@ portable-pty = "0.8"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 uuid.workspace = true
+fns-agent = { path = "../../../bins/fns-agent" }
+fns-platform = { path = "../../../crates/fns-platform" }
+fns-protocol = { path = "../../../crates/fns-protocol" }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
