@@ -5,12 +5,14 @@
 
 #![allow(dead_code)]
 
+use crate::blob;
 use crate::engine::EngineHandle;
 use crate::error::{TransportError, TransportErrorCode};
 use crate::socket::{self, InboundMessage, SocketReader, SocketWriter};
+use crate::transfer::TransferTable;
 
 use fns_protocol::{
-    MessageBody, RequestId, WorkspaceAction, WorkspaceSnapshotBeginMessage,
+    MessageBody, RequestId, WorkspaceAction, WorkspaceSnapshotBeginMessage, decode_binary_frame,
     decode_server_text_frame, encode_request,
 };
 use fns_sync_core::SyncCommand;
@@ -47,6 +49,10 @@ pub struct Session {
     pkg_version: String,
     /// Commands collected from engine responses, waiting to be drained and sent.
     pending_outbound: Vec<SyncCommand>,
+    /// Active transfer table for blob upload/download coordination.
+    transfers: TransferTable,
+    /// Pending download staging: transfer_id → collected bytes.
+    download_staging: std::collections::HashMap<fns_protocol::TransferId, Vec<u8>>,
 }
 
 /// Heartbeat interval and idle timeout.
@@ -89,6 +95,8 @@ impl Session {
                 client_id,
                 pkg_version,
                 pending_outbound: Vec::new(),
+                transfers: TransferTable::new(2),
+                download_staging: std::collections::HashMap::new(),
             },
             writer,
         )
@@ -157,8 +165,13 @@ impl Session {
                                 Err(e) => return SessionResult::Error(e),
                             }
                         }
-                        Some(Ok(InboundMessage::Binary(_))) => {
-                            // Binary frames are blob chunks — transfer module handles these.
+                        Some(Ok(InboundMessage::Binary(data))) => {
+                            // Blob chunk from server (download direction).
+                            if let Ok((header, payload)) = decode_binary_frame(&data)
+                                && header.direction == fns_protocol::WorkspaceBlobDirection::Download
+                                    && let Some(staging) = self.download_staging.get_mut(&header.transfer_id) {
+                                        staging.extend_from_slice(payload);
+                                    }
                         }
                         Some(Ok(InboundMessage::Pong(_))) => {
                             // Heartbeat pong — connection is alive.
@@ -188,7 +201,7 @@ impl Session {
 
     /// Encode a single SyncCommand to a wire frame and send it.
     async fn send_command(
-        &self,
+        &mut self,
         writer: &mut SocketWriter,
         command: SyncCommand,
     ) -> Result<(), TransportError> {
@@ -213,9 +226,46 @@ impl Session {
                 .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
                 writer.send_text(frame).await?;
             }
-            SyncCommand::DownloadBlob { .. } | SyncCommand::UploadBlob { .. } => {
-                // Blob transfers require transfer-table coordination (Task 5/6 deeper integration).
-                // For now these are skipped — they'll be handled when transfer wire is wired.
+            SyncCommand::DownloadBlob {
+                workspace_id,
+                operation_id,
+                content_hash,
+                size,
+            } => {
+                // Send BlobNeed(download) request to server.
+                let request_id = fresh_request_id();
+                let need_body = fns_protocol::WorkspaceBlobNeedDownloadRequest {
+                    workspace_id,
+                    direction: fns_protocol::WorkspaceBlobDirection::Download,
+                    operation_id: operation_id
+                        .map(fns_protocol::RequiredNullable::Value)
+                        .unwrap_or(fns_protocol::RequiredNullable::Null),
+                    content_hash: content_hash.clone(),
+                    size: fns_protocol::RequiredNullable::Value(size),
+                };
+                let frame = encode_request(
+                    WorkspaceAction::WorkspaceBlobNeed,
+                    request_id,
+                    MessageBody::BlobNeedDownloadRequest(need_body),
+                )
+                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                writer.send_text(frame).await?;
+            }
+            SyncCommand::UploadBlob {
+                workspace_id,
+                operation_id,
+                content_hash,
+                size,
+            } => {
+                // Check if server has expressed need for this blob.
+                // If so, perform the actual upload (Begin → chunks → End).
+                if self
+                    .transfers
+                    .has_matching_upload(&operation_id, &content_hash, size)
+                {
+                    self.upload_blob(writer, workspace_id, operation_id, content_hash, size)
+                        .await?;
+                }
             }
         }
         Ok(())
@@ -389,11 +439,68 @@ impl Session {
                     self.engine_ack_confirmed(msg).await?;
                 }
             }
-            // Blob-related actions are handled by the transfer module (Task 5/6).
-            WorkspaceAction::WorkspaceBlobNeed
-            | WorkspaceAction::WorkspaceBlobBegin
-            | WorkspaceAction::WorkspaceBlobEnd => {
-                // TODO: Route to transfer module.
+            // Blob upload: server pushes BlobNeed(upload) when it needs our content.
+            WorkspaceAction::WorkspaceBlobNeed => {
+                if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope {
+                    match body {
+                        MessageBody::BlobNeedUploadPush(need) => {
+                            // Server needs us to upload this blob.
+                            // For now, attempt immediate upload if we have a matching intent.
+                            // The full pairing logic lives in drain_outbound.
+                            let need_clone = need.clone();
+                            self.pending_outbound.push(SyncCommand::UploadBlob {
+                                workspace_id: need.workspace_id,
+                                operation_id: need.operation_id,
+                                content_hash: need.content_hash,
+                                size: need.size,
+                            });
+                            // Store the need for pairing.
+                            self.transfers.add_server_need(need_clone).ok();
+                        }
+                        MessageBody::BlobNeedDownloadResponse(resp) => {
+                            // Server acknowledged our download request — begin push will follow.
+                            let transfer_id = self.transfers.reserve_slot()?;
+                            self.transfers
+                                .add_download(crate::transfer::DownloadTransfer {
+                                    transfer_id,
+                                    workspace_id: resp.workspace_id,
+                                    operation_id: resp.operation_id.into_option(),
+                                    content_hash: resp.content_hash,
+                                    size: resp.size,
+                                });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            WorkspaceAction::WorkspaceBlobBegin => {
+                if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
+                    && let MessageBody::BlobBegin(begin) = body
+                {
+                    // Download begin: prepare staging for incoming chunks.
+                    if begin.direction == fns_protocol::WorkspaceBlobDirection::Download {
+                        self.download_staging
+                            .insert(begin.transfer_id, Vec::with_capacity(begin.size as usize));
+                    }
+                }
+            }
+            WorkspaceAction::WorkspaceBlobEnd => {
+                if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
+                    && let MessageBody::BlobEnd(end) = body
+                    && end.direction == fns_protocol::WorkspaceBlobDirection::Download
+                {
+                    // Download complete: verify and import into engine.
+                    if let Some(data) = self.download_staging.remove(&end.transfer_id)
+                        && data.len() as u64 == end.size
+                    {
+                        let cmds = self
+                            .engine
+                            .blob_available(end.content_hash.clone(), end.size, data)
+                            .await?;
+                        self.pending_outbound.extend(cmds);
+                    }
+                    self.transfers.remove(&end.transfer_id);
+                }
             }
             // Client-only actions should never come from the server.
             WorkspaceAction::WorkspaceHello | WorkspaceAction::WorkspaceSubscribe => {
@@ -407,6 +514,75 @@ impl Session {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Upload a blob to the server: Begin → binary chunks → End.
+    async fn upload_blob(
+        &mut self,
+        writer: &mut SocketWriter,
+        workspace_id: fns_protocol::WorkspaceId,
+        operation_id: fns_protocol::OperationId,
+        content_hash: fns_protocol::WorkspaceContentHash,
+        size: u64,
+    ) -> Result<(), TransportError> {
+        // Read blob content from engine's content cache.
+        let file = self.engine.open_blob(&content_hash).await?;
+        let content = tokio::task::spawn_blocking(move || {
+            use std::io::Read;
+            let mut buf = Vec::with_capacity(size as usize);
+            let mut file = file;
+            file.read_to_end(&mut buf)
+                .map_err(|_| TransportError::new(TransportErrorCode::Filesystem, false))?;
+            Ok::<Vec<u8>, TransportError>(buf)
+        })
+        .await
+        .map_err(|_| TransportError::new(TransportErrorCode::Filesystem, false))??;
+
+        // Verify size.
+        if content.len() as u64 != size {
+            return Err(TransportError::new(TransportErrorCode::Protocol, false));
+        }
+
+        // Reserve a transfer slot.
+        let transfer_id = self.transfers.reserve_slot()?;
+
+        // Send BlobBegin.
+        let begin_request_id = fresh_request_id();
+        let begin_frame = blob::encode_blob_begin_upload(
+            workspace_id,
+            transfer_id,
+            &content_hash,
+            size,
+            begin_request_id,
+        )?;
+        writer.send_text(begin_frame).await?;
+
+        // Send binary chunks.
+        if content.is_empty() {
+            // Zero-byte blob: no binary frames, Begin/End only.
+        } else {
+            let frames = blob::chunk_blob_for_upload(transfer_id, &content)?;
+            for (_, frame_bytes) in frames {
+                writer.send_binary(frame_bytes).await?;
+            }
+        }
+
+        // Send BlobEnd.
+        let end_request_id = fresh_request_id();
+        let end_frame = blob::encode_blob_end_upload(
+            workspace_id,
+            transfer_id,
+            &content_hash,
+            size,
+            end_request_id,
+        )?;
+        writer.send_text(end_frame).await?;
+
+        // After BlobEnd success, remove the pending upload.
+        let _ = self.transfers.take_pending_retry(&operation_id);
+        self.transfers.remove(&transfer_id);
+
         Ok(())
     }
 

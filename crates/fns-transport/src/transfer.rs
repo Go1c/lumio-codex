@@ -88,6 +88,19 @@ impl TransferTable {
             .intent = Some(intent);
     }
 
+    /// Check if there is a matching server need for the given operation/hash/size.
+    pub fn has_matching_upload(
+        &self,
+        operation_id: &OperationId,
+        content_hash: &WorkspaceContentHash,
+        size: u64,
+    ) -> bool {
+        self.pending_uploads
+            .get(operation_id)
+            .and_then(|p| p.need.as_ref())
+            .is_some_and(|need| need.content_hash == *content_hash && need.size == size)
+    }
+
     /// Register a server BlobNeed upload push.
     /// Returns true if both halves now match and a transfer can begin.
     pub fn add_server_need(

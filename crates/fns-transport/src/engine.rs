@@ -60,6 +60,16 @@ enum EngineCall {
         message: fns_protocol::WorkspaceAckRequest,
         tx: oneshot::Sender<Result<(), TransportError>>,
     },
+    OpenBlob {
+        content_hash: fns_protocol::WorkspaceContentHash,
+        tx: oneshot::Sender<Result<std::fs::File, TransportError>>,
+    },
+    BlobAvailable {
+        content_hash: fns_protocol::WorkspaceContentHash,
+        size: u64,
+        data: Vec<u8>,
+        tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
+    },
     Shutdown {
         tx: oneshot::Sender<Result<(), TransportError>>,
     },
@@ -171,6 +181,18 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
         }
         EngineCall::AckConfirmed { message, tx } => {
             let _ = tx.send(map_err(engine.ack_confirmed(message)));
+        }
+        EngineCall::OpenBlob { content_hash, tx } => {
+            let _ = tx.send(map_err(engine.open_blob(&content_hash)));
+        }
+        EngineCall::BlobAvailable {
+            content_hash,
+            size,
+            data,
+            tx,
+        } => {
+            let reader = std::io::Cursor::new(data);
+            let _ = tx.send(map_err(engine.blob_available(content_hash, size, reader)));
         }
         EngineCall::Shutdown { tx } => {
             let _ = tx.send(map_err(engine.close()));
@@ -336,6 +358,42 @@ impl EngineHandle {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(EngineCall::AckConfirmed { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn open_blob(
+        &self,
+        content_hash: &fns_protocol::WorkspaceContentHash,
+    ) -> Result<std::fs::File, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::OpenBlob {
+                content_hash: content_hash.clone(),
+                tx,
+            })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn blob_available(
+        &self,
+        content_hash: fns_protocol::WorkspaceContentHash,
+        size: u64,
+        data: Vec<u8>,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::BlobAvailable {
+                content_hash,
+                size,
+                data,
+                tx,
+            })
             .await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
