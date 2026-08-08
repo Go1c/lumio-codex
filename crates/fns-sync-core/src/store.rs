@@ -797,6 +797,18 @@ impl SqliteState {
             .collect::<Result<Vec<_>, _>>()
     }
 
+    pub fn replace_authoritative_conflicts(
+        &mut self,
+        stream_id: StreamId,
+    ) -> Result<(), SyncError> {
+        let transaction = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        replace_authoritative_conflicts_tx(&transaction, self.workspace_id, stream_id)?;
+        transaction.commit().map_err(storage_error)
+    }
+
     pub fn put_apply_journal(&mut self, record: &ApplyJournalRecord) -> Result<(), SyncError> {
         if record.workspace_id != self.workspace_id {
             return Err(SyncError::ProtocolInvariant {
@@ -2028,6 +2040,11 @@ pub(crate) fn put_stream_revision_item_tx(
         .optional()
         .map_err(storage_error)?;
     if let Some(existing) = existing {
+        if existing.event_index != event_index {
+            return Err(SyncError::StreamInvariant {
+                reason: "stream_revision_order",
+            });
+        }
         if existing.body_digest != body_digest
             || existing.item_kind != item_kind
             || existing.event_index != event_index
@@ -2218,6 +2235,118 @@ pub(crate) fn put_stream_conflict_tx(
         created_json,
         status,
     })
+}
+
+pub(crate) fn replace_authoritative_conflicts_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    workspace_id: WorkspaceId,
+    stream_id: StreamId,
+) -> Result<(), SyncError> {
+    let staged = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT workspace_id, stream_id, conflict_id, conflict_revision, created_json, status FROM stream_conflicts WHERE workspace_id = ?1 AND stream_id = ?2 ORDER BY conflict_id",
+            )
+            .map_err(storage_error)?;
+        statement
+            .query_map(
+                params![workspace_id.to_string(), stream_id.to_string()],
+                row_to_stream_conflict,
+            )
+            .map_err(storage_error)?
+            .map(|row| row.map_err(storage_error))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let existing = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT conflict_id, resolution_json, resolution_digest FROM conflicts WHERE workspace_id = ?1",
+            )
+            .map_err(storage_error)?;
+        statement
+            .query_map(params![workspace_id.to_string()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<Vec<u8>>>(1)?,
+                    row.get::<_, Option<Vec<u8>>>(2)?,
+                ))
+            })
+            .map_err(storage_error)?
+            .map(|row| row.map_err(storage_error))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    for (conflict_id, resolution_json, resolution_digest) in existing {
+        let staged_conflict = staged
+            .iter()
+            .find(|conflict| conflict.conflict_id.to_string() == conflict_id);
+        match staged_conflict {
+            Some(conflict) => {
+                let has_resolution = resolution_json.is_some();
+                let status = if has_resolution {
+                    ConflictStatus::RefreshRequired
+                } else {
+                    ConflictStatus::Manual
+                };
+                transaction
+                    .execute(
+                        "INSERT INTO conflicts (conflict_id, workspace_id, conflict_revision, created_json, status, candidate_hash, resolution_json, resolution_digest) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7) ON CONFLICT(conflict_id) DO UPDATE SET workspace_id = excluded.workspace_id, conflict_revision = excluded.conflict_revision, created_json = excluded.created_json, status = excluded.status, candidate_hash = NULL, resolution_json = excluded.resolution_json, resolution_digest = excluded.resolution_digest",
+                        params![
+                            conflict_id,
+                            workspace_id.to_string(),
+                            conflict_revision_string(&conflict.conflict_revision)?,
+                            conflict.created_json,
+                            status.as_str(),
+                            resolution_json,
+                            resolution_digest,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+            }
+            None if resolution_json.is_some() => {
+                transaction
+                    .execute(
+                        "UPDATE conflicts SET status = 'refresh_required' WHERE workspace_id = ?1 AND conflict_id = ?2",
+                        params![workspace_id.to_string(), conflict_id],
+                    )
+                    .map_err(storage_error)?;
+            }
+            None => {
+                transaction
+                    .execute(
+                        "DELETE FROM conflicts WHERE workspace_id = ?1 AND conflict_id = ?2",
+                        params![workspace_id.to_string(), conflict_id],
+                    )
+                    .map_err(storage_error)?;
+            }
+        }
+    }
+
+    for conflict in staged {
+        let exists: Option<String> = transaction
+            .query_row(
+                "SELECT conflict_id FROM conflicts WHERE workspace_id = ?1 AND conflict_id = ?2",
+                params![workspace_id.to_string(), conflict.conflict_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(storage_error)?;
+        if exists.is_none() {
+            transaction
+                .execute(
+                    "INSERT INTO conflicts (conflict_id, workspace_id, conflict_revision, created_json, status, candidate_hash, resolution_json, resolution_digest) VALUES (?1, ?2, ?3, ?4, 'manual', NULL, NULL, NULL)",
+                    params![
+                        conflict.conflict_id.to_string(),
+                        workspace_id.to_string(),
+                        conflict_revision_string(&conflict.conflict_revision)?,
+                        conflict.created_json,
+                    ],
+                )
+                .map_err(storage_error)?;
+        }
+    }
+    Ok(())
 }
 
 fn mode_string(mode: WorkspaceSnapshotMode) -> &'static str {

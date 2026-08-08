@@ -1,19 +1,28 @@
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf, absolute};
 
 use fns_fs::{
-    ContentCache, FsChange, HashCache, ObservedEntry, RootedWorkspace, SyncRuleConfig, SyncRules,
+    ApplyId, AtomicWorkspaceWriter, ContentCache, ExpectedEntry, FsChange, FsOperation, HashCache,
+    ObservedEntry, RootedWorkspace, SyncRuleConfig, SyncRules,
 };
 use fns_protocol::{
-    RequiredNullable, WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceMutation,
+    RequiredNullable, WorkspaceAckRequest, WorkspaceConflictCreatedMessage,
+    WorkspaceConflictResolvedMessage, WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceMutation,
     WorkspaceMutationAcceptedMessage, WorkspaceMutationRejectReason,
     WorkspaceMutationRejectedMessage, WorkspacePath, WorkspacePathState,
+    WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage, WorkspaceSnapshotEntryMessage,
+    WorkspaceSnapshotMode,
 };
 
 use crate::effect::SyncCommand;
 use crate::error::SyncError;
-use crate::model::{LocalDesiredEntry, OutboxBody, OutboxStage};
+use crate::model::{
+    ApplyItemKind, ApplyJournalRecord, ApplyStage, LocalDesiredEntry, OutboxBody, OutboxStage,
+    RemoteApplyOperation, StreamConflictStatus, StreamItemStatus, StreamRevisionItemKind,
+    WorkspaceCursor,
+};
 use crate::reconcile::{
     DesiredOperation, decode_intent, desired_from_intent, desired_from_mutation, encode_intent,
     mutation_for_desired, mutation_matches_desired, zero_metadata,
@@ -81,6 +90,7 @@ impl SyncEngineConfig {
 pub struct SystemRuntime {
     pub(crate) workspace: RootedWorkspace,
     pub(crate) content_cache: ContentCache,
+    pub(crate) writer: AtomicWorkspaceWriter,
     pub(crate) rules: SyncRules,
 }
 
@@ -147,17 +157,22 @@ impl SyncEngine {
             });
         }
         let content_cache = ContentCache::open(&state_root)?;
+        let writer = AtomicWorkspaceWriter::new(
+            RootedWorkspace::open(workspace.canonical_root())?,
+            ContentCache::open(&state_root)?,
+        );
         let state = SqliteState::open(
             state_root.join("state.sqlite"),
             config.workspace_id,
             config.client_id,
         )?;
         let rules = SyncRules::compile(SyncRuleConfig::default()).map_err(SyncError::Filesystem)?;
-        Ok(Self {
+        let mut engine = Self {
             runtime: EngineRuntime {
                 system: SystemRuntime {
                     workspace,
                     content_cache,
+                    writer,
                     rules,
                 },
                 state,
@@ -165,7 +180,9 @@ impl SyncEngine {
             operation_ids: config.operation_ids.into(),
             timestamps: config.timestamps.into(),
             closed: false,
-        })
+        };
+        engine.recover_apply_journals()?;
+        Ok(engine)
     }
 
     pub fn new(config: SyncEngineConfig) -> Result<Self, SyncError> {
@@ -182,6 +199,10 @@ impl SyncEngine {
 
     pub fn runtime(&self) -> &EngineRuntime {
         &self.runtime
+    }
+
+    pub fn cursor(&self) -> Result<WorkspaceCursor, SyncError> {
+        self.runtime.state.cursor()
     }
 
     pub fn workspace_root(&self) -> &Path {
@@ -410,8 +431,12 @@ impl SyncEngine {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let records = self.runtime.state.pending_outbox_replay(limit)?;
-        let mut commands = Vec::new();
+        let mut commands = self.resume_stream_commands(limit, true)?;
+        if commands.len() == limit {
+            return Ok(commands);
+        }
+        let remaining = limit - commands.len();
+        let records = self.runtime.state.pending_outbox_replay(remaining)?;
         for record in records {
             let mutation = record.mutation().map_err(|_| SyncError::CorruptState {
                 table: "outbox",
@@ -447,6 +472,15 @@ impl SyncEngine {
                     break;
                 }
             }
+        }
+        if commands.len() < limit
+            && let Some(revision) = self.runtime.state.cursor()?.pending_ack_revision
+        {
+            commands.push(SyncCommand::SendAck(WorkspaceAckRequest {
+                workspace_id: self.runtime.state.workspace_id(),
+                client_id: self.runtime.state.client_id(),
+                revision,
+            }));
         }
         Ok(commands)
     }
@@ -716,6 +750,277 @@ impl SyncEngine {
         self.event(event)
     }
 
+    pub fn snapshot_begin(
+        &mut self,
+        message: WorkspaceSnapshotBeginMessage,
+    ) -> Result<(), SyncError> {
+        self.ensure_open()?;
+        message.validate().map_err(|_| SyncError::StreamInvariant {
+            reason: "invalid_begin",
+        })?;
+        if message.workspace_id != self.runtime.state.workspace_id() {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "stream_workspace_mismatch",
+            });
+        }
+        self.runtime.state.begin_stream(&message)?;
+        Ok(())
+    }
+
+    pub fn snapshot_entry(
+        &mut self,
+        message: WorkspaceSnapshotEntryMessage,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        message.validate().map_err(|_| SyncError::StreamInvariant {
+            reason: "invalid_stream_entry",
+        })?;
+        if message.workspace_id != self.runtime.state.workspace_id() {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "stream_workspace_mismatch",
+            });
+        }
+        let status = self.status_for_state(&message.entry)?;
+        let needs_download = status == StreamItemStatus::WaitingBlob;
+        self.runtime.state.put_stream_entry(&message, status)?;
+        let mut commands = self.resume_stream_commands(usize::MAX, false)?;
+        if needs_download && let Some((hash, size)) = required_content(&message.entry) {
+            push_download(
+                &mut commands,
+                usize::MAX,
+                self.runtime.state.workspace_id(),
+                None,
+                hash,
+                size,
+            );
+        }
+        Ok(commands)
+    }
+
+    pub fn workspace_event(
+        &mut self,
+        message: WorkspaceEventMessage,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        message
+            .validate()
+            .map_err(|_| SyncError::ProtocolInvariant {
+                reason: "invalid_workspace_event",
+            })?;
+        if message.workspace_id != self.runtime.state.workspace_id() {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "event_workspace_mismatch",
+            });
+        }
+        let body = canonical_json(&message)?;
+        let body_digest = crate::body_digest(&canonical_json(&message.mutation)?);
+        if let Some(existing) = self
+            .runtime
+            .state
+            .stream_revision_item(message.stream_id, message.revision)?
+        {
+            if existing.event_index != Some(message.index) {
+                return Err(SyncError::StreamInvariant {
+                    reason: "stream_revision_order",
+                });
+            }
+            if existing.body_digest != crate::body_digest(&body) {
+                return Err(SyncError::OperationChanged);
+            }
+            if existing.status == StreamItemStatus::Applied
+                || existing.status == StreamItemStatus::Preserved
+            {
+                return Ok(Vec::new());
+            }
+        }
+        if let Some(receipt) = self
+            .runtime
+            .state
+            .applied_operation(message.origin_client_id, message.operation_id)?
+            && (receipt.revision != message.revision || receipt.body_digest != body_digest)
+        {
+            return Err(SyncError::OperationChanged);
+        }
+        let diverged = self.event_is_diverged(&message)?;
+        let status = if diverged {
+            StreamItemStatus::Ready
+        } else {
+            self.status_for_state(&message.path_state)?
+        };
+        let needs_download = status == StreamItemStatus::WaitingBlob;
+        self.runtime.state.put_stream_event(&message, status)?;
+        let mut commands = self.resume_stream_commands(usize::MAX, false)?;
+        if needs_download && let Some((hash, size)) = required_content(&message.path_state) {
+            push_download(
+                &mut commands,
+                usize::MAX,
+                self.runtime.state.workspace_id(),
+                Some(message.operation_id),
+                hash,
+                size,
+            );
+        }
+        Ok(commands)
+    }
+
+    pub fn conflict_created(
+        &mut self,
+        message: WorkspaceConflictCreatedMessage,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        if message.workspace_id != self.runtime.state.workspace_id() {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "stream_workspace_mismatch",
+            });
+        }
+        let stream_id = self
+            .runtime
+            .state
+            .stream_state()?
+            .ok_or(SyncError::StreamInvariant {
+                reason: "no_active_stream",
+            })?
+            .stream_id;
+        self.runtime.state.put_stream_conflict(
+            &message,
+            StreamConflictStatus::Received,
+            stream_id,
+        )?;
+        self.resume_stream_commands(usize::MAX, false)
+    }
+
+    pub fn conflict_resolved(
+        &mut self,
+        message: WorkspaceConflictResolvedMessage,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        message
+            .validate()
+            .map_err(|_| SyncError::ProtocolInvariant {
+                reason: "invalid_stream_conflict_resolution",
+            })?;
+        if message.workspace_id != self.runtime.state.workspace_id() {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "stream_workspace_mismatch",
+            });
+        }
+        let stream_id = self
+            .runtime
+            .state
+            .stream_state()?
+            .ok_or(SyncError::StreamInvariant {
+                reason: "no_active_stream",
+            })?
+            .stream_id;
+        if let Some(existing) = self
+            .runtime
+            .state
+            .stream_revision_item(stream_id, message.revision)?
+        {
+            let body = canonical_json(&message)?;
+            if existing.body_digest != crate::body_digest(&body) {
+                return Err(SyncError::OperationChanged);
+            }
+            if existing.status == StreamItemStatus::Applied
+                || existing.status == StreamItemStatus::Preserved
+            {
+                return Ok(Vec::new());
+            }
+        }
+        let status = self.status_for_state(&message.path_state)?;
+        let needs_download = status == StreamItemStatus::WaitingBlob;
+        self.runtime
+            .state
+            .put_stream_conflict_resolved(&message, None, status)?;
+        let mut commands = self.resume_stream_commands(usize::MAX, false)?;
+        if needs_download && let Some((hash, size)) = required_content(&message.path_state) {
+            push_download(
+                &mut commands,
+                usize::MAX,
+                self.runtime.state.workspace_id(),
+                Some(message.operation_id),
+                hash,
+                size,
+            );
+        }
+        Ok(commands)
+    }
+
+    pub fn snapshot_end(
+        &mut self,
+        message: WorkspaceSnapshotEndMessage,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        let active = self
+            .runtime
+            .state
+            .stream_state()?
+            .ok_or(SyncError::StreamInvariant {
+                reason: "no_active_stream",
+            })?;
+        let begin = WorkspaceSnapshotBeginMessage {
+            workspace_id: active.workspace_id,
+            stream_id: active.stream_id,
+            mode: active.mode,
+            from_revision: active.from_revision,
+            final_revision: active.final_revision,
+            entry_count: active.expected_entry_count,
+            event_count: active.expected_event_count,
+            conflict_count: active.expected_conflict_count,
+        };
+        message
+            .validate_against(&begin)
+            .map_err(|_| SyncError::StreamInvariant {
+                reason: "end_mismatch",
+            })?;
+        self.runtime.state.set_stream_end_received(true)?;
+        self.resume_stream_commands(usize::MAX, false)
+    }
+
+    pub fn blob_available<R: Read>(
+        &mut self,
+        hash: fns_protocol::WorkspaceContentHash,
+        size: u64,
+        reader: R,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        self.runtime
+            .system
+            .content_cache
+            .import(&hash, size, reader)?;
+        self.resume_stream_commands(usize::MAX, false)
+    }
+
+    pub fn ack_confirmed(&mut self, message: WorkspaceAckRequest) -> Result<(), SyncError> {
+        self.ensure_open()?;
+        message
+            .validate()
+            .map_err(|_| SyncError::ProtocolInvariant {
+                reason: "invalid_ack",
+            })?;
+        self.validate_identity(message.workspace_id, message.client_id)?;
+        let cursor = self.runtime.state.cursor()?;
+        let Some(pending) = cursor.pending_ack_revision else {
+            if message.revision == cursor.last_ack_revision {
+                return Ok(());
+            }
+            return Err(SyncError::ProtocolInvariant {
+                reason: "ack_not_pending",
+            });
+        };
+        if message.revision != pending || message.revision > cursor.last_applied_revision {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "ack_mismatch",
+            });
+        }
+        self.runtime.state.transaction(|tx| {
+            tx.set_last_ack_revision(message.revision)?;
+            tx.clear_pending_ack()?;
+            tx.clear_stream()?;
+            Ok(())
+        })
+    }
+
     pub fn close(&mut self) -> Result<(), SyncError> {
         if self.closed {
             return Ok(());
@@ -724,6 +1029,53 @@ impl SyncEngine {
         // the fixture can then safely discard this engine during reopen.
         self.runtime.state.close()?;
         self.closed = true;
+        Ok(())
+    }
+
+    fn recover_apply_journals(&mut self) -> Result<(), SyncError> {
+        for record in self.runtime.state.apply_journals()? {
+            if record.workspace_id != self.runtime.state.workspace_id() {
+                return Err(SyncError::CorruptState {
+                    table: "apply_journal",
+                    field: "workspace_id",
+                });
+            }
+            if record.stage == ApplyStage::Prepared {
+                self.runtime.state.remove_apply_journal(record.apply_id)?;
+                continue;
+            }
+            let operation: RemoteApplyOperation = serde_json::from_slice(&record.operation_json)
+                .map_err(|_| SyncError::CorruptState {
+                    table: "apply_journal",
+                    field: "operation_json",
+                })?;
+            let post_states: Vec<WorkspacePathState> =
+                serde_json::from_slice(&record.postimage_json).map_err(|_| {
+                    SyncError::CorruptState {
+                        table: "apply_journal",
+                        field: "postimage_json",
+                    }
+                })?;
+            let postimage = post_states.iter().try_fold(true, |matches, state| {
+                if !matches {
+                    return Ok(false);
+                }
+                let observed = self.runtime.system.workspace.inspect(&state.path)?;
+                self.observed_matches_post(state, observed.as_ref())
+            })?;
+            if !postimage {
+                continue;
+            }
+            let receipt = fns_fs::ApplyReceipt {
+                apply_id: record.apply_id,
+                touched: post_states.iter().map(|state| state.path.clone()).collect(),
+                postimages: Vec::new(),
+                postimage_hashes: Vec::new(),
+                cleanup_name: recovery_cleanup_name(record.apply_id, &operation),
+            };
+            self.runtime.system.writer.finalize(&receipt)?;
+            self.runtime.state.remove_apply_journal(record.apply_id)?;
+        }
         Ok(())
     }
 
@@ -1029,6 +1381,930 @@ impl SyncEngine {
         Ok(next)
     }
 
+    fn status_for_state(&self, state: &WorkspacePathState) -> Result<StreamItemStatus, SyncError> {
+        let Some((hash, size)) = required_content(state) else {
+            return Ok(StreamItemStatus::Ready);
+        };
+        if self.content_available(&hash, size)? {
+            Ok(StreamItemStatus::Ready)
+        } else {
+            Ok(StreamItemStatus::WaitingBlob)
+        }
+    }
+
+    fn content_available(
+        &self,
+        hash: &fns_protocol::WorkspaceContentHash,
+        size: u64,
+    ) -> Result<bool, SyncError> {
+        let Ok(file) = self.runtime.system.content_cache.open_blob(hash) else {
+            return Ok(false);
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut hasher = blake3::Hasher::new();
+        let mut total = 0_u64;
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let count = reader.read(&mut buffer).map_err(|_| {
+                SyncError::Filesystem(fns_fs::FsError::Io {
+                    operation: "read content cache",
+                })
+            })?;
+            if count == 0 {
+                break;
+            }
+            total = total
+                .checked_add(count as u64)
+                .ok_or(SyncError::ProtocolInvariant {
+                    reason: "content_size_overflow",
+                })?;
+            hasher.update(&buffer[..count]);
+        }
+        let actual = fns_protocol::WorkspaceContentHash::parse(&format!(
+            "blake3:{}",
+            hasher.finalize().to_hex()
+        ))
+        .map_err(|_| SyncError::CorruptState {
+            table: "content_cache",
+            field: "content_hash",
+        })?;
+        Ok(total == size && actual == *hash)
+    }
+
+    fn resume_stream_commands(
+        &mut self,
+        limit: usize,
+        reissue_waiting: bool,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        let mut commands = Vec::new();
+        loop {
+            let Some(active) = self.runtime.state.stream_state()? else {
+                break;
+            };
+            let mut blocked = false;
+            let mut progressed = false;
+            match active.mode {
+                WorkspaceSnapshotMode::Snapshot => {
+                    let entries = self.runtime.state.stream_entries(active.stream_id)?;
+                    for record in entries {
+                        if matches!(
+                            record.status,
+                            StreamItemStatus::Applied | StreamItemStatus::Preserved
+                        ) {
+                            continue;
+                        }
+                        let entry: WorkspaceSnapshotEntryMessage =
+                            serde_json::from_slice(&record.body_json).map_err(|_| {
+                                SyncError::CorruptState {
+                                    table: "stream_entries",
+                                    field: "body_json",
+                                }
+                            })?;
+                        if let Some((hash, size)) = required_content(&entry.entry)
+                            && !self.content_available(&hash, size)?
+                        {
+                            self.runtime
+                                .state
+                                .put_stream_entry(&entry, StreamItemStatus::WaitingBlob)?;
+                            if reissue_waiting {
+                                push_download(
+                                    &mut commands,
+                                    limit,
+                                    self.runtime.state.workspace_id(),
+                                    None,
+                                    hash,
+                                    size,
+                                );
+                            }
+                            blocked = true;
+                            break;
+                        }
+                        if record.status != StreamItemStatus::Ready {
+                            self.runtime
+                                .state
+                                .put_stream_entry(&entry, StreamItemStatus::Ready)?;
+                        }
+                        self.apply_snapshot_entry(entry)?;
+                        progressed = true;
+                    }
+                }
+                WorkspaceSnapshotMode::Incremental => {
+                    let items = self.runtime.state.stream_revision_items(active.stream_id)?;
+                    for record in items {
+                        if matches!(
+                            record.status,
+                            StreamItemStatus::Applied | StreamItemStatus::Preserved
+                        ) {
+                            continue;
+                        }
+                        match record.item_kind {
+                            StreamRevisionItemKind::Event => {
+                                let event: WorkspaceEventMessage =
+                                    serde_json::from_slice(&record.body_json).map_err(|_| {
+                                        SyncError::CorruptState {
+                                            table: "stream_revision_items",
+                                            field: "body_json",
+                                        }
+                                    })?;
+                                if record.status != StreamItemStatus::Ready {
+                                    if let Some((hash, size)) = required_content(&event.path_state)
+                                        && !self.content_available(&hash, size)?
+                                    {
+                                        self.runtime.state.put_stream_event(
+                                            &event,
+                                            StreamItemStatus::WaitingBlob,
+                                        )?;
+                                        if reissue_waiting {
+                                            push_download(
+                                                &mut commands,
+                                                limit,
+                                                self.runtime.state.workspace_id(),
+                                                Some(event.operation_id),
+                                                hash,
+                                                size,
+                                            );
+                                        }
+                                        blocked = true;
+                                        break;
+                                    }
+                                    self.runtime
+                                        .state
+                                        .put_stream_event(&event, StreamItemStatus::Ready)?;
+                                }
+                                self.apply_event(event)?;
+                                progressed = true;
+                            }
+                            StreamRevisionItemKind::ConflictResolved => {
+                                let message: WorkspaceConflictResolvedMessage =
+                                    serde_json::from_slice(&record.body_json).map_err(|_| {
+                                        SyncError::CorruptState {
+                                            table: "stream_revision_items",
+                                            field: "body_json",
+                                        }
+                                    })?;
+                                if let Some((hash, size)) = required_content(&message.path_state)
+                                    && !self.content_available(&hash, size)?
+                                {
+                                    self.runtime.state.put_stream_conflict_resolved(
+                                        &message,
+                                        None,
+                                        StreamItemStatus::WaitingBlob,
+                                    )?;
+                                    if reissue_waiting {
+                                        push_download(
+                                            &mut commands,
+                                            limit,
+                                            self.runtime.state.workspace_id(),
+                                            Some(message.operation_id),
+                                            hash,
+                                            size,
+                                        );
+                                    }
+                                    blocked = true;
+                                    break;
+                                }
+                                if record.status != StreamItemStatus::Ready {
+                                    self.runtime.state.put_stream_conflict_resolved(
+                                        &message,
+                                        None,
+                                        StreamItemStatus::Ready,
+                                    )?;
+                                }
+                                self.apply_conflict_resolved(message)?;
+                                progressed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = self.finish_stream_if_ready()?;
+            if blocked || !progressed || commands.len() >= limit {
+                break;
+            }
+        }
+        Ok(commands)
+    }
+
+    fn finish_stream_if_ready(&mut self) -> Result<bool, SyncError> {
+        let Some(active) = self.runtime.state.stream_state()? else {
+            return Ok(false);
+        };
+        if !active.end_received {
+            return Ok(false);
+        }
+        let entries = self.runtime.state.stream_entries(active.stream_id)?;
+        let revisions = self.runtime.state.stream_revision_items(active.stream_id)?;
+        let conflicts = self.runtime.state.stream_conflicts(active.stream_id)?;
+        let items_ready = match active.mode {
+            WorkspaceSnapshotMode::Snapshot => {
+                entries.len() == active.expected_entry_count as usize
+                    && revisions.is_empty()
+                    && entries.iter().all(|entry| {
+                        matches!(
+                            entry.status,
+                            StreamItemStatus::Applied | StreamItemStatus::Preserved
+                        )
+                    })
+            }
+            WorkspaceSnapshotMode::Incremental => {
+                revisions.len() == active.expected_event_count as usize
+                    && entries.is_empty()
+                    && revisions.iter().all(|item| {
+                        matches!(
+                            item.status,
+                            StreamItemStatus::Applied | StreamItemStatus::Preserved
+                        )
+                    })
+            }
+        };
+        if !items_ready || conflicts.len() != active.expected_conflict_count as usize {
+            return Ok(false);
+        }
+        if !self.runtime.state.apply_journals()?.is_empty() {
+            return Ok(false);
+        }
+        if active.mode == WorkspaceSnapshotMode::Snapshot {
+            self.reconcile_full_snapshot(active.stream_id)?;
+        }
+        let cursor = self.runtime.state.cursor()?;
+        let needs_ack = active.final_revision > cursor.last_ack_revision;
+        self.runtime.state.transaction(|tx| {
+            tx.replace_authoritative_conflicts(active.stream_id)?;
+            tx.set_last_applied_revision(active.final_revision)?;
+            if needs_ack {
+                tx.set_pending_ack(active.final_revision)?;
+            } else {
+                tx.clear_stream()?;
+            }
+            Ok(())
+        })?;
+        Ok(true)
+    }
+
+    fn reconcile_full_snapshot(
+        &mut self,
+        stream_id: fns_protocol::StreamId,
+    ) -> Result<(), SyncError> {
+        let entries = self.runtime.state.stream_entries(stream_id)?;
+        let incoming = entries
+            .iter()
+            .map(|entry| {
+                serde_json::from_slice::<WorkspaceSnapshotEntryMessage>(&entry.body_json)
+                    .map(|message| message.entry.path)
+                    .map_err(|_| SyncError::CorruptState {
+                        table: "stream_entries",
+                        field: "body_json",
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let incoming = incoming.into_iter().collect::<HashSet<_>>();
+        let remote_states = self
+            .runtime
+            .state
+            .path_states()?
+            .into_iter()
+            .map(|record| (record.path, record.state))
+            .collect::<BTreeMap<_, _>>();
+        for (path, state) in &remote_states {
+            if incoming.contains(path) {
+                continue;
+            }
+            self.runtime.state.remove_path_state(path)?;
+            if self.runtime.system.workspace.inspect(path)?.is_some() {
+                let desired = self.desired_from_current(path)?;
+                self.queue_desired_with_states(desired, &BTreeMap::new())?;
+            }
+            let _ = state;
+        }
+        let scan = self
+            .runtime
+            .system
+            .workspace
+            .scan(&self.runtime.system.rules)?;
+        if !scan.issues.is_empty() {
+            return Err(SyncError::ScanIncomplete);
+        }
+        for observed in scan.entries {
+            if incoming.contains(&observed.path) {
+                continue;
+            }
+            let desired = DesiredOperation::Upsert {
+                entry: self.desired_entry_from_observed(&observed)?,
+            };
+            self.queue_desired_with_states(desired, &BTreeMap::new())?;
+        }
+        Ok(())
+    }
+
+    fn apply_snapshot_entry(
+        &mut self,
+        entry: WorkspaceSnapshotEntryMessage,
+    ) -> Result<(), SyncError> {
+        let post = entry.entry.clone();
+        let previous = self
+            .runtime
+            .state
+            .path_state(post.path.as_str())?
+            .map(|record| record.state);
+        let observed = self.runtime.system.workspace.inspect(&post.path)?;
+        let post_matches = self.observed_matches_post(&post, observed.as_ref())?;
+        let baseline_matches =
+            baseline_matches_observed(previous.as_ref(), observed.as_ref(), self)?;
+        if post_matches {
+            return self.commit_entry(&entry, StreamItemStatus::Applied, vec![post]);
+        }
+        if !baseline_matches && observed.is_some() {
+            let desired = self.desired_from_current(&post.path)?;
+            self.queue_desired_with_states(desired, &BTreeMap::new())?;
+            return self.commit_entry(&entry, StreamItemStatus::Preserved, vec![post]);
+        }
+        if !baseline_matches && observed.is_none() && previous.is_some() {
+            let desired = DesiredOperation::Delete {
+                path: post.path.clone(),
+            };
+            self.queue_desired_with_states(desired, &BTreeMap::new())?;
+            return self.commit_entry(&entry, StreamItemStatus::Preserved, vec![post]);
+        }
+        let Some(operation) = self.operation_for_state(&post, observed.as_ref())? else {
+            return self.commit_entry(&entry, StreamItemStatus::Applied, vec![post]);
+        };
+        let receipt = self.apply_with_journal(
+            entry.stream_id,
+            ApplyItemKind::Entry,
+            post.path.as_str().to_owned(),
+            RemoteApplyOperation::from_state(&post),
+            previous,
+            vec![post.clone()],
+            operation,
+        )?;
+        self.commit_entry(&entry, StreamItemStatus::Applied, vec![post])?;
+        self.runtime.system.writer.finalize(&receipt)?;
+        self.runtime.state.remove_apply_journal(receipt.apply_id)?;
+        Ok(())
+    }
+
+    fn apply_event(&mut self, event: WorkspaceEventMessage) -> Result<(), SyncError> {
+        let mutation_body = canonical_json(&event.mutation)?;
+        let mutation_digest = crate::body_digest(&mutation_body);
+        let outbox = self.runtime.state.outbox_entry(event.operation_id)?;
+        if event.origin_client_id == self.runtime.state.client_id() {
+            if let Some(record) = &outbox
+                && record.body_json != mutation_body
+            {
+                return Err(SyncError::ProtocolInvariant {
+                    reason: "event_operation_body_mismatch",
+                });
+            }
+            if outbox.is_none()
+                && self
+                    .runtime
+                    .state
+                    .applied_operation(event.origin_client_id, event.operation_id)?
+                    .is_none()
+            {
+                return Err(SyncError::ProtocolInvariant {
+                    reason: "event_operation_not_outstanding",
+                });
+            }
+            let post_states = event_post_states(&event);
+            return self.commit_event(
+                &event,
+                StreamItemStatus::Applied,
+                post_states,
+                Some(event.operation_id),
+                Some(mutation_digest),
+                outbox.is_some(),
+            );
+        }
+        if let Some(receipt) = self
+            .runtime
+            .state
+            .applied_operation(event.origin_client_id, event.operation_id)?
+        {
+            if receipt.revision != event.revision || receipt.body_digest != mutation_digest {
+                return Err(SyncError::OperationChanged);
+            }
+            return self.commit_event(
+                &event,
+                StreamItemStatus::Applied,
+                event_post_states(&event),
+                None,
+                None,
+                false,
+            );
+        }
+        let post_states = event_post_states(&event);
+        let previous = self.path_states_for_event(&event)?;
+        let observed = self.observed_for_event(&event)?;
+        let post_matches = self.event_post_matches(&post_states, &observed)?;
+        let baseline_matches = self.event_baseline_matches(&previous, &observed)?;
+        if post_matches {
+            return self.commit_event(
+                &event,
+                StreamItemStatus::Applied,
+                post_states,
+                Some(event.operation_id),
+                Some(mutation_digest),
+                false,
+            );
+        }
+        if !baseline_matches {
+            self.preserve_event(&event, &previous, &observed, post_states, mutation_digest)?;
+            return Ok(());
+        }
+        let Some(operation) = self.operation_for_event(&event, &observed)? else {
+            return self.commit_event(
+                &event,
+                StreamItemStatus::Applied,
+                post_states,
+                Some(event.operation_id),
+                Some(mutation_digest),
+                false,
+            );
+        };
+        let receipt = self.apply_with_journal(
+            event.stream_id,
+            ApplyItemKind::Event,
+            event.revision.to_string(),
+            RemoteApplyOperation::from_event(&event),
+            previous.first().and_then(|(_, state)| state.clone()),
+            post_states.clone(),
+            operation,
+        )?;
+        self.commit_event(
+            &event,
+            StreamItemStatus::Applied,
+            post_states,
+            Some(event.operation_id),
+            Some(mutation_digest),
+            false,
+        )?;
+        self.runtime.system.writer.finalize(&receipt)?;
+        self.runtime.state.remove_apply_journal(receipt.apply_id)?;
+        Ok(())
+    }
+
+    fn apply_conflict_resolved(
+        &mut self,
+        message: WorkspaceConflictResolvedMessage,
+    ) -> Result<(), SyncError> {
+        let path = message.path_state.path.clone();
+        let previous = self
+            .runtime
+            .state
+            .path_state(path.as_str())?
+            .map(|record| record.state);
+        let observed = self.runtime.system.workspace.inspect(&path)?;
+        if self.observed_matches_post(&message.path_state, observed.as_ref())? {
+            return self.commit_conflict_resolved(&message, StreamItemStatus::Applied);
+        }
+        if !baseline_matches_observed(previous.as_ref(), observed.as_ref(), self)? {
+            let desired = self.desired_from_current(&path)?;
+            let baseline = previous
+                .clone()
+                .map(|state| BTreeMap::from([(path.clone(), state)]))
+                .unwrap_or_default();
+            self.queue_desired_with_states(desired, &baseline)?;
+            return self.commit_conflict_resolved(&message, StreamItemStatus::Preserved);
+        }
+        let Some(operation) = self.operation_for_state(&message.path_state, observed.as_ref())?
+        else {
+            return self.commit_conflict_resolved(&message, StreamItemStatus::Applied);
+        };
+        let stream_id = self
+            .runtime
+            .state
+            .stream_state()?
+            .ok_or(SyncError::StreamInvariant {
+                reason: "no_active_stream",
+            })?
+            .stream_id;
+        let receipt = self.apply_with_journal(
+            stream_id,
+            ApplyItemKind::ConflictResolved,
+            message.revision.to_string(),
+            RemoteApplyOperation::from_state(&message.path_state),
+            previous,
+            vec![message.path_state.clone()],
+            operation,
+        )?;
+        self.commit_conflict_resolved(&message, StreamItemStatus::Applied)?;
+        self.runtime.system.writer.finalize(&receipt)?;
+        self.runtime.state.remove_apply_journal(receipt.apply_id)?;
+        Ok(())
+    }
+
+    fn commit_entry(
+        &mut self,
+        entry: &WorkspaceSnapshotEntryMessage,
+        status: StreamItemStatus,
+        post_states: Vec<WorkspacePathState>,
+    ) -> Result<(), SyncError> {
+        self.runtime.state.transaction(|tx| {
+            for state in &post_states {
+                tx.put_path_state(state)?;
+            }
+            if status == StreamItemStatus::Applied {
+                tx.set_last_applied_revision(entry.entry.path_revision)?;
+            }
+            tx.put_stream_entry(entry, status)?;
+            Ok(())
+        })
+    }
+
+    fn commit_event(
+        &mut self,
+        event: &WorkspaceEventMessage,
+        status: StreamItemStatus,
+        post_states: Vec<WorkspacePathState>,
+        operation_id: Option<fns_protocol::OperationId>,
+        operation_digest: Option<[u8; 32]>,
+        remove_outbox: bool,
+    ) -> Result<(), SyncError> {
+        self.runtime.state.transaction(|tx| {
+            for state in &post_states {
+                tx.put_path_state(state)?;
+            }
+            if let (Some(operation_id), Some(operation_digest)) = (operation_id, operation_digest) {
+                tx.record_applied_operation(
+                    event.origin_client_id,
+                    operation_id,
+                    event.revision,
+                    operation_digest,
+                )?;
+            }
+            if remove_outbox {
+                tx.remove_outbox(event.operation_id)?;
+            }
+            if status == StreamItemStatus::Applied {
+                tx.set_last_applied_revision(event.revision)?;
+            }
+            tx.put_stream_event(event, status)?;
+            Ok(())
+        })
+    }
+
+    fn commit_conflict_resolved(
+        &mut self,
+        message: &WorkspaceConflictResolvedMessage,
+        status: StreamItemStatus,
+    ) -> Result<(), SyncError> {
+        self.runtime.state.transaction(|tx| {
+            tx.put_path_state(&message.path_state)?;
+            tx.record_applied_operation(
+                message.resolved_by_client_id,
+                message.operation_id,
+                message.revision,
+                crate::body_digest(&canonical_json(message)?),
+            )?;
+            if status == StreamItemStatus::Applied {
+                tx.set_last_applied_revision(message.revision)?;
+            }
+            tx.put_stream_conflict_resolved(message, status)?;
+            Ok(())
+        })
+    }
+
+    fn preserve_event(
+        &mut self,
+        event: &WorkspaceEventMessage,
+        previous: &[(WorkspacePath, Option<WorkspacePathState>)],
+        observed: &[(WorkspacePath, Option<ObservedEntry>)],
+        post_states: Vec<WorkspacePathState>,
+        mutation_digest: [u8; 32],
+    ) -> Result<(), SyncError> {
+        for (path, observed) in observed {
+            let desired = if observed.is_some() {
+                self.desired_from_current(path)?
+            } else {
+                DesiredOperation::Delete { path: path.clone() }
+            };
+            let baseline = previous
+                .iter()
+                .filter_map(|(candidate, state)| (candidate == path).then_some(state.clone()))
+                .flatten()
+                .map(|state| (state.path.clone(), state))
+                .collect::<BTreeMap<_, _>>();
+            self.queue_desired_with_states(desired, &baseline)?;
+        }
+        self.commit_event(
+            event,
+            StreamItemStatus::Preserved,
+            post_states,
+            Some(event.operation_id),
+            Some(mutation_digest),
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_with_journal(
+        &mut self,
+        stream_id: fns_protocol::StreamId,
+        item_kind: ApplyItemKind,
+        item_key: String,
+        operation_spec: RemoteApplyOperation,
+        previous: Option<WorkspacePathState>,
+        post_states: Vec<WorkspacePathState>,
+        operation: FsOperation,
+    ) -> Result<fns_fs::ApplyReceipt, SyncError> {
+        let apply_id = ApplyId(uuid::Uuid::new_v4());
+        let record = ApplyJournalRecord {
+            apply_id,
+            workspace_id: self.runtime.state.workspace_id(),
+            stream_id,
+            item_kind,
+            item_key,
+            operation_json: canonical_json(&operation_spec)?,
+            preimage_json: canonical_json(&previous)?,
+            postimage_json: canonical_json(&post_states)?,
+            stage: ApplyStage::Prepared,
+        };
+        self.runtime.state.put_apply_journal(&record)?;
+        self.runtime
+            .state
+            .set_apply_stage(apply_id, ApplyStage::FilesystemStarted)?;
+        self.runtime
+            .system
+            .writer
+            .apply(apply_id, &operation)
+            .map_err(SyncError::Filesystem)
+    }
+
+    fn operation_for_state(
+        &mut self,
+        post: &WorkspacePathState,
+        observed: Option<&ObservedEntry>,
+    ) -> Result<Option<FsOperation>, SyncError> {
+        let expected = self.expected_from_observed(observed)?;
+        Ok(match post.kind {
+            WorkspaceEntryKind::File => Some(FsOperation::UpsertFile {
+                path: post.path.clone(),
+                content_hash: post.content_hash.clone().into_option().ok_or(
+                    SyncError::ProtocolInvariant {
+                        reason: "file_content_hash_missing",
+                    },
+                )?,
+                metadata: post.metadata.clone(),
+                expected,
+            }),
+            WorkspaceEntryKind::Directory => Some(FsOperation::Mkdir {
+                path: post.path.clone(),
+                metadata: post.metadata.clone(),
+                expected,
+            }),
+            WorkspaceEntryKind::Symlink => Some(FsOperation::UpsertSymlink {
+                path: post.path.clone(),
+                content_hash: post.content_hash.clone().into_option().ok_or(
+                    SyncError::ProtocolInvariant {
+                        reason: "symlink_content_hash_missing",
+                    },
+                )?,
+                metadata: post.metadata.clone(),
+                expected,
+            }),
+            WorkspaceEntryKind::Tombstone => {
+                if matches!(expected, ExpectedEntry::Missing) {
+                    None
+                } else {
+                    Some(FsOperation::Delete {
+                        path: post.path.clone(),
+                        expected,
+                    })
+                }
+            }
+        })
+    }
+
+    fn operation_for_event(
+        &mut self,
+        event: &WorkspaceEventMessage,
+        observed: &[(WorkspacePath, Option<ObservedEntry>)],
+    ) -> Result<Option<FsOperation>, SyncError> {
+        if event.mutation.kind != fns_protocol::WorkspaceMutationKind::Rename {
+            return self.operation_for_state(
+                &event.path_state,
+                observed.first().and_then(|(_, value)| value.as_ref()),
+            );
+        }
+        let new_path = event
+            .mutation
+            .new_path
+            .clone()
+            .ok_or(SyncError::ProtocolInvariant {
+                reason: "rename_target_missing",
+            })?;
+        let source_observed = observed
+            .iter()
+            .find(|(path, _)| *path == event.mutation.path)
+            .and_then(|(_, value)| value.as_ref());
+        let target_observed = observed
+            .iter()
+            .find(|(path, _)| *path == new_path)
+            .and_then(|(_, value)| value.as_ref());
+        let Some(source_observed) = source_observed else {
+            return Ok(None);
+        };
+        let source_expected = self.expected_from_observed(Some(source_observed))?;
+        let target_expected = self.expected_from_observed(target_observed)?;
+        let target_state = event
+            .new_path_state
+            .as_ref()
+            .ok_or(SyncError::ProtocolInvariant {
+                reason: "rename_target_state_missing",
+            })?;
+        Ok(Some(FsOperation::Rename {
+            path: event.mutation.path.clone(),
+            new_path,
+            content_hash: target_state.content_hash.clone().into_option(),
+            metadata: target_state.metadata.clone(),
+            source_expected,
+            target_expected,
+        }))
+    }
+
+    fn observed_matches_post(
+        &mut self,
+        state: &WorkspacePathState,
+        observed: Option<&ObservedEntry>,
+    ) -> Result<bool, SyncError> {
+        let Some(observed) = observed else {
+            return Ok(state.kind == WorkspaceEntryKind::Tombstone);
+        };
+        if observed.kind != state.kind || state.kind == WorkspaceEntryKind::Tombstone {
+            return Ok(false);
+        }
+        let hash = self.observed_content_hash(observed)?;
+        Ok(state.content_hash.as_ref().into_option() == hash.as_ref()
+            && (state.kind == WorkspaceEntryKind::Directory
+                || observed.metadata.size == state.metadata.size))
+    }
+
+    fn path_states_for_event(
+        &self,
+        event: &WorkspaceEventMessage,
+    ) -> Result<Vec<(WorkspacePath, Option<WorkspacePathState>)>, SyncError> {
+        let mut paths = vec![event.mutation.path.clone()];
+        if let Some(path) = &event.mutation.new_path {
+            paths.push(path.clone());
+        }
+        paths
+            .into_iter()
+            .map(|path| {
+                let state = self
+                    .runtime
+                    .state
+                    .path_state(path.as_str())?
+                    .map(|record| record.state);
+                Ok((path, state))
+            })
+            .collect()
+    }
+
+    fn observed_for_event(
+        &self,
+        event: &WorkspaceEventMessage,
+    ) -> Result<Vec<(WorkspacePath, Option<ObservedEntry>)>, SyncError> {
+        let mut paths = vec![event.mutation.path.clone()];
+        if let Some(path) = &event.mutation.new_path {
+            paths.push(path.clone());
+        }
+        paths
+            .into_iter()
+            .map(|path| {
+                let observed = self.runtime.system.workspace.inspect(&path)?;
+                Ok((path, observed))
+            })
+            .collect()
+    }
+
+    fn event_is_diverged(&mut self, event: &WorkspaceEventMessage) -> Result<bool, SyncError> {
+        let previous = self.path_states_for_event(event)?;
+        let observed = self.observed_for_event(event)?;
+        if self.event_post_matches(&event_post_states(event), &observed)? {
+            return Ok(false);
+        }
+        Ok(!self.event_baseline_matches(&previous, &observed)?)
+    }
+
+    fn event_post_matches(
+        &mut self,
+        states: &[WorkspacePathState],
+        observed: &[(WorkspacePath, Option<ObservedEntry>)],
+    ) -> Result<bool, SyncError> {
+        for state in states {
+            let current = observed
+                .iter()
+                .find(|(path, _)| *path == state.path)
+                .and_then(|(_, value)| value.as_ref());
+            if !self.observed_matches_post(state, current)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn event_baseline_matches(
+        &mut self,
+        previous: &[(WorkspacePath, Option<WorkspacePathState>)],
+        observed: &[(WorkspacePath, Option<ObservedEntry>)],
+    ) -> Result<bool, SyncError> {
+        for (path, state) in previous {
+            let current = observed
+                .iter()
+                .find(|(candidate, _)| candidate == path)
+                .and_then(|(_, value)| value.as_ref());
+            if !baseline_matches_observed(state.as_ref(), current, self)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn observed_content_hash(
+        &mut self,
+        observed: &ObservedEntry,
+    ) -> Result<Option<fns_protocol::WorkspaceContentHash>, SyncError> {
+        if observed.kind == WorkspaceEntryKind::Directory {
+            return Ok(None);
+        }
+        Ok(self
+            .desired_entry_from_observed(observed)?
+            .content_hash
+            .into_option())
+    }
+
+    fn expected_from_observed(
+        &mut self,
+        observed: Option<&ObservedEntry>,
+    ) -> Result<ExpectedEntry, SyncError> {
+        let Some(observed) = observed else {
+            return Ok(ExpectedEntry::Missing);
+        };
+        Ok(ExpectedEntry::Present {
+            kind: observed.kind,
+            content_hash: self.observed_content_hash(observed)?,
+            fingerprint: observed.fingerprint.clone(),
+        })
+    }
+
+    fn desired_from_current(
+        &mut self,
+        path: &WorkspacePath,
+    ) -> Result<DesiredOperation, SyncError> {
+        let Some(observed) = self.runtime.system.workspace.inspect(path)? else {
+            return Ok(DesiredOperation::Delete { path: path.clone() });
+        };
+        Ok(DesiredOperation::Upsert {
+            entry: self.desired_entry_from_observed(&observed)?,
+        })
+    }
+
+    fn queue_desired_with_states(
+        &mut self,
+        desired: DesiredOperation,
+        states: &BTreeMap<WorkspacePath, WorkspacePathState>,
+    ) -> Result<(), SyncError> {
+        let touched = desired.paths().into_iter().cloned().collect::<Vec<_>>();
+        let existing = self.runtime.state.outbox()?.into_iter().find_map(|record| {
+            let mutation = record.mutation().ok()?;
+            mutation_paths(&mutation)
+                .iter()
+                .any(|path| touched.iter().any(|candidate| candidate == path))
+                .then_some((record, mutation))
+        });
+        if let Some((record, mutation)) = existing {
+            if record.stage == OutboxStage::Queued && mutation_matches_desired(&mutation, &desired)
+            {
+                return Ok(());
+            }
+            let intent = desired.intent_for_path(&touched[0]);
+            let body = encode_intent(&intent)?;
+            let timestamps = touched
+                .iter()
+                .map(|_| self.next_timestamp())
+                .collect::<Vec<_>>();
+            return self.runtime.state.transaction(|tx| {
+                for (path, timestamp) in touched.iter().zip(timestamps) {
+                    tx.put_local_intent(path.as_str(), &body, timestamp)?;
+                }
+                Ok(())
+            });
+        }
+        let mutation = mutation_for_desired(
+            &desired,
+            self.runtime.state.workspace_id(),
+            self.runtime.state.client_id(),
+            self.next_operation_id()?,
+            states,
+        );
+        let timestamp = self.next_timestamp();
+        self.runtime.state.transaction(|tx| {
+            tx.enqueue_mutation_at(&mutation, timestamp)?;
+            Ok(())
+        })
+    }
+
     fn ensure_open(&self) -> Result<(), SyncError> {
         if self.closed {
             return Err(SyncError::ProtocolInvariant {
@@ -1076,6 +2352,125 @@ impl SyncEngine {
             .pop_front()
             .unwrap_or_else(crate::ids::now_ms)
     }
+}
+
+impl RemoteApplyOperation {
+    fn from_state(state: &WorkspacePathState) -> Self {
+        if state.kind == WorkspaceEntryKind::Tombstone {
+            Self::Delete {
+                state: state.clone(),
+            }
+        } else {
+            Self::Upsert {
+                state: state.clone(),
+            }
+        }
+    }
+
+    fn from_event(event: &WorkspaceEventMessage) -> Self {
+        if event.mutation.kind == fns_protocol::WorkspaceMutationKind::Rename {
+            Self::Rename {
+                old_state: event
+                    .old_path_state
+                    .clone()
+                    .expect("validated rename old state"),
+                new_state: event
+                    .new_path_state
+                    .clone()
+                    .expect("validated rename new state"),
+            }
+        } else {
+            Self::from_state(&event.path_state)
+        }
+    }
+}
+
+fn required_content(
+    state: &WorkspacePathState,
+) -> Option<(fns_protocol::WorkspaceContentHash, u64)> {
+    match state.kind {
+        WorkspaceEntryKind::File | WorkspaceEntryKind::Symlink => state
+            .content_hash
+            .clone()
+            .into_option()
+            .map(|hash| (hash, state.metadata.size)),
+        WorkspaceEntryKind::Directory | WorkspaceEntryKind::Tombstone => None,
+    }
+}
+
+fn recovery_cleanup_name(apply_id: ApplyId, operation: &RemoteApplyOperation) -> Option<String> {
+    let (path, prefix) = match operation {
+        RemoteApplyOperation::Upsert { .. } => return None,
+        RemoteApplyOperation::Delete { state } => (&state.path, ".fns-delete-"),
+        RemoteApplyOperation::Rename { new_state, .. } => (&new_state.path, ".fns-delete-"),
+    };
+    let name = format!("{prefix}{}", apply_id.0);
+    Some(
+        path.as_str()
+            .rsplit_once('/')
+            .map_or_else(|| name.clone(), |(parent, _)| format!("{parent}/{name}")),
+    )
+}
+
+fn push_download(
+    commands: &mut Vec<SyncCommand>,
+    limit: usize,
+    workspace_id: fns_protocol::WorkspaceId,
+    operation_id: Option<fns_protocol::OperationId>,
+    content_hash: fns_protocol::WorkspaceContentHash,
+    size: u64,
+) {
+    if commands.len() >= limit
+        || commands.iter().any(|command| {
+            matches!(command, SyncCommand::DownloadBlob { content_hash: existing, .. } if *existing == content_hash)
+        })
+    {
+        return;
+    }
+    commands.push(SyncCommand::DownloadBlob {
+        workspace_id,
+        operation_id,
+        content_hash,
+        size,
+    });
+}
+
+fn event_post_states(event: &WorkspaceEventMessage) -> Vec<WorkspacePathState> {
+    if event.mutation.kind == fns_protocol::WorkspaceMutationKind::Rename {
+        vec![
+            event
+                .old_path_state
+                .clone()
+                .expect("validated rename old state"),
+            event
+                .new_path_state
+                .clone()
+                .expect("validated rename new state"),
+        ]
+    } else {
+        vec![event.path_state.clone()]
+    }
+}
+
+fn baseline_matches_observed(
+    baseline: Option<&WorkspacePathState>,
+    observed: Option<&ObservedEntry>,
+    engine: &mut SyncEngine,
+) -> Result<bool, SyncError> {
+    let Some(baseline) = baseline else {
+        return Ok(observed.is_none());
+    };
+    if baseline.kind == WorkspaceEntryKind::Tombstone || baseline.tombstone {
+        return Ok(observed.is_none());
+    }
+    let Some(observed) = observed else {
+        return Ok(false);
+    };
+    if observed.kind != baseline.kind || observed.metadata != baseline.metadata {
+        return Ok(false);
+    }
+    let hash = engine.observed_content_hash(observed)?;
+    Ok(baseline.content_hash.as_ref().into_option() == hash.as_ref())
 }
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {

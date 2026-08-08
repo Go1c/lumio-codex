@@ -302,6 +302,25 @@ pub struct ApplyJournalRecord {
     pub stage: ApplyStage,
 }
 
+/// Canonical remote postimage persisted in an apply-journal row before any
+/// filesystem mutation begins.  The journal stores this wire-independent
+/// description so a resumed engine can prove which path state the operation
+/// was meant to materialize.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RemoteApplyOperation {
+    Upsert {
+        state: fns_protocol::WorkspacePathState,
+    },
+    Delete {
+        state: fns_protocol::WorkspacePathState,
+    },
+    Rename {
+        old_state: fns_protocol::WorkspacePathState,
+        new_state: fns_protocol::WorkspacePathState,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppliedOperationRecord {
     pub origin_client_id: ClientId,

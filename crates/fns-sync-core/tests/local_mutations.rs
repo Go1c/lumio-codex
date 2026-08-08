@@ -138,7 +138,9 @@ fn change_after_dispatch_becomes_deferred_intent() {
     assert_eq!(fixture.engine.state().local_intents().unwrap().len(), 1);
     let dispatched_body = match &dispatched[0] {
         SyncCommand::Mutation(mutation) => fixture.engine.canonical_body(mutation).unwrap(),
-        SyncCommand::UploadBlob { .. } => panic!("expected mutation"),
+        SyncCommand::UploadBlob { .. }
+        | SyncCommand::DownloadBlob { .. }
+        | SyncCommand::SendAck(_) => panic!("expected mutation"),
     };
     assert_eq!(outbox[0].body(), dispatched_body.as_slice());
 }

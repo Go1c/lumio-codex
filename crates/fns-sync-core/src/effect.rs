@@ -1,4 +1,6 @@
-use fns_protocol::{OperationId, WorkspaceContentHash, WorkspaceId, WorkspaceMutation};
+use fns_protocol::{
+    OperationId, WorkspaceAckRequest, WorkspaceContentHash, WorkspaceId, WorkspaceMutation,
+};
 
 use crate::{SyncError, canonical_json};
 
@@ -16,31 +18,45 @@ pub enum SyncCommand {
         content_hash: WorkspaceContentHash,
         size: u64,
     },
+    DownloadBlob {
+        workspace_id: WorkspaceId,
+        operation_id: Option<OperationId>,
+        content_hash: WorkspaceContentHash,
+        size: u64,
+    },
+    SendAck(WorkspaceAckRequest),
 }
 
 impl SyncCommand {
-    pub const fn operation_id(&self) -> OperationId {
+    pub fn operation_id(&self) -> Option<OperationId> {
         match self {
-            Self::Mutation(mutation) => mutation.operation_id,
-            Self::UploadBlob { operation_id, .. } => *operation_id,
+            Self::Mutation(mutation) => Some(mutation.operation_id),
+            Self::UploadBlob { operation_id, .. } => Some(*operation_id),
+            Self::DownloadBlob { operation_id, .. } => *operation_id,
+            Self::SendAck(_) => None,
         }
     }
 
     pub fn mutation(&self) -> Result<WorkspaceMutation, SyncError> {
         match self {
             Self::Mutation(mutation) => Ok(mutation.clone()),
-            Self::UploadBlob { .. } => Err(SyncError::ProtocolInvariant {
-                reason: "command_not_mutation",
-            }),
+            Self::UploadBlob { .. } | Self::DownloadBlob { .. } | Self::SendAck(_) => {
+                Err(SyncError::ProtocolInvariant {
+                    reason: "command_not_mutation",
+                })
+            }
         }
     }
 
     pub fn body_bytes(&self) -> Result<Vec<u8>, SyncError> {
         match self {
             Self::Mutation(mutation) => canonical_json(mutation),
-            Self::UploadBlob { .. } => Err(SyncError::ProtocolInvariant {
-                reason: "command_not_mutation",
-            }),
+            Self::SendAck(message) => canonical_json(message),
+            Self::UploadBlob { .. } | Self::DownloadBlob { .. } => {
+                Err(SyncError::ProtocolInvariant {
+                    reason: "command_not_mutation",
+                })
+            }
         }
     }
 

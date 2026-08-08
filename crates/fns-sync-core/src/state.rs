@@ -556,6 +556,17 @@ impl StateTransaction<'_> {
         )
     }
 
+    pub fn replace_authoritative_conflicts(
+        &mut self,
+        stream_id: fns_protocol::StreamId,
+    ) -> Result<(), SyncError> {
+        crate::store::replace_authoritative_conflicts_tx(
+            &self.transaction,
+            self.workspace_id(),
+            stream_id,
+        )
+    }
+
     pub fn put_apply_journal(&mut self, record: &ApplyJournalRecord) -> Result<(), SyncError> {
         crate::store::put_apply_journal_tx(&self.transaction, self.workspace_id(), record)
     }
