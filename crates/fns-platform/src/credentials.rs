@@ -109,6 +109,15 @@ impl SecretToken {
     pub fn with_exposed<R>(&self, use_secret: impl FnOnce(&[u8]) -> R) -> R {
         use_secret(&self.bytes)
     }
+
+    /// Construct a SecretToken from raw bytes for testing only.
+    /// This bypasses Linux file permission checks and must never be used in production.
+    #[doc(hidden)]
+    pub fn from_bytes_for_test(bytes: &[u8]) -> Self {
+        Self {
+            bytes: Zeroizing::new(bytes.to_vec()),
+        }
+    }
 }
 
 impl fmt::Debug for SecretToken {

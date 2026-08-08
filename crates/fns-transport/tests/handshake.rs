@@ -1,4 +1,59 @@
-use fns_transport::WorkspaceEndpoint;
+mod support;
+
+use fns_transport::{TransportErrorCode, WorkspaceEndpoint, socket};
+
+#[tokio::test]
+async fn bearer_and_client_metadata_are_sent_before_upgrade() {
+    let server =
+        support::fake_server::FakeWorkspaceServer::require_bearer("sentinel.jwt".into()).await;
+    let endpoint = WorkspaceEndpoint::parse(server.endpoint()).unwrap();
+    let token = support::secret_token("sentinel.jwt");
+
+    let stream = socket::connect(&endpoint, &token, "0.1.0").await.unwrap();
+    // Drop the stream to close the connection.
+    drop(stream);
+
+    // Give the server time to process and store observation.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let obs = server.observation();
+    assert_eq!(obs.path, Some("/api/user/workspace-sync/v2".into()));
+    assert!(obs.authorization_matched);
+    assert_eq!(obs.client.as_deref(), Some("fns-agent"));
+    assert_eq!(obs.client_name.as_deref(), Some("fns-agent"));
+    assert_eq!(obs.client_version.as_deref(), Some("0.1.0"));
+    assert_eq!(obs.user_agent.as_deref(), Some("fns-agent/0.1.0"));
+}
+
+#[tokio::test]
+async fn http_401_is_fatal_before_upgrade() {
+    let server =
+        support::fake_server::FakeWorkspaceServer::reject_upgrade(http::StatusCode::UNAUTHORIZED)
+            .await;
+    let endpoint = WorkspaceEndpoint::parse(server.endpoint()).unwrap();
+    let token = support::secret_token("sentinel.jwt");
+
+    let error = socket::connect(&endpoint, &token, "0.1.0")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), TransportErrorCode::AuthenticationRejected);
+    assert!(!error.retryable());
+}
+
+#[tokio::test]
+async fn http_403_is_fatal_before_upgrade() {
+    let server =
+        support::fake_server::FakeWorkspaceServer::reject_upgrade(http::StatusCode::FORBIDDEN)
+            .await;
+    let endpoint = WorkspaceEndpoint::parse(server.endpoint()).unwrap();
+    let token = support::secret_token("sentinel.jwt");
+
+    let error = socket::connect(&endpoint, &token, "0.1.0")
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), TransportErrorCode::Forbidden);
+    assert!(!error.retryable());
+}
 
 #[test]
 fn endpoint_is_exact_explicit_and_loopback_only() {
