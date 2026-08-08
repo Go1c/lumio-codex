@@ -7,3 +7,24 @@ license.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+blake3.workspace = true
+bytes.workspace = true
+fns-fs = { path = "../fns-fs" }
+fns-platform = { path = "../fns-platform" }
+fns-protocol = { path = "../fns-protocol" }
+fns-sync-core = { path = "../fns-sync-core" }
+futures-util.workspace = true
+http.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tokio-util.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
