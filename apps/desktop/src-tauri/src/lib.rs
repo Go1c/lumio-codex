@@ -3,6 +3,7 @@
 //! Provides project configuration, SSH host parsing, and deployment orchestration
 //! commands for the macOS desktop application.
 
+mod files;
 mod project;
 mod ssh;
 mod terminal;
@@ -73,6 +74,9 @@ pub fn run() {
             terminal::write_terminal,
             terminal::resize_terminal,
             terminal::close_terminal,
+            files::browse_files,
+            files::read_file,
+            files::compute_diff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

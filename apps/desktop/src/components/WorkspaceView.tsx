@@ -1,5 +1,6 @@
 import { useState } from "react";
 import TerminalPane from "./Terminal";
+import FileTree from "./FileTree";
 
 interface Project {
   id: string;
@@ -10,8 +11,16 @@ interface Project {
   tmuxSession: string;
 }
 
+type Tab = "terminal" | "files" | "conflicts";
+
 export default function WorkspaceView({ project }: { project: Project }) {
-  const [activeTab, setActiveTab] = useState<"terminal" | "files">("terminal");
+  const [activeTab, setActiveTab] = useState<Tab>("terminal");
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "terminal", label: "Terminal" },
+    { key: "files", label: "Files" },
+    { key: "conflicts", label: "Conflicts" },
+  ];
 
   return (
     <div className="main-content">
@@ -22,20 +31,16 @@ export default function WorkspaceView({ project }: { project: Project }) {
           background: "#fff",
         }}
       >
-        <button
-          className={`btn ${activeTab === "terminal" ? "btn-primary" : "btn-secondary"}`}
-          style={{ borderRadius: 0, marginRight: "4px" }}
-          onClick={() => setActiveTab("terminal")}
-        >
-          Terminal
-        </button>
-        <button
-          className={`btn ${activeTab === "files" ? "btn-primary" : "btn-secondary"}`}
-          style={{ borderRadius: 0 }}
-          onClick={() => setActiveTab("files")}
-        >
-          Files
-        </button>
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            className={`btn ${activeTab === tab.key ? "btn-primary" : "btn-secondary"}`}
+            style={{ borderRadius: 0, marginRight: "4px" }}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
       <div style={{ flex: 1, overflow: "hidden" }}>
         {activeTab === "terminal" && (
@@ -46,9 +51,10 @@ export default function WorkspaceView({ project }: { project: Project }) {
             tmuxSession={project.tmuxSession || `fns-${project.name}`}
           />
         )}
-        {activeTab === "files" && (
+        {activeTab === "files" && <FileTree localRoot={project.localRoot} />}
+        {activeTab === "conflicts" && (
           <div style={{ padding: "40px", color: "#888" }}>
-            File browser will be available in a future update.
+            No sync conflicts.
           </div>
         )}
       </div>

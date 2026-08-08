@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 /// Terminal session state.
 pub struct TerminalSession {
@@ -80,9 +80,12 @@ impl TerminalManager {
 
         let mut cmd = CommandBuilder::new("ssh");
         cmd.arg("-tt");
-        cmd.arg("-o").arg("BatchMode=yes");
-        cmd.arg("-o").arg("ServerAliveInterval=30");
-        cmd.arg("-o").arg("ServerAliveCountMax=3");
+        cmd.arg("-o");
+        cmd.arg("BatchMode=yes");
+        cmd.arg("-o");
+        cmd.arg("ServerAliveInterval=30");
+        cmd.arg("-o");
+        cmd.arg("ServerAliveCountMax=3");
         cmd.arg(ssh_alias);
         cmd.arg(remote_cmd);
         cmd.env("TERM", "xterm-256color");
@@ -105,6 +108,7 @@ impl TerminalManager {
 
         // Spawn a thread to read PTY output and emit Tauri events.
         let event_name = format!("terminal-output-{project_id}");
+        let closed_event = format!("terminal-closed-{project_id}");
         let app_clone = app.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -118,7 +122,7 @@ impl TerminalManager {
                     Err(_) => break,
                 }
             }
-            let _ = app_clone.emit(&format!("terminal-closed-{project_id}"), ());
+            let _ = app_clone.emit(&closed_event, ());
         });
 
         let session = TerminalSession {
