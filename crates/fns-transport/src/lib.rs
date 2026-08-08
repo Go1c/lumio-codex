@@ -5,6 +5,7 @@
 //! scheduling, and an engine worker that serializes calls into fns-sync-core.
 
 pub mod config;
+pub mod dispatch;
 pub mod engine;
 pub mod error;
 pub mod reconnect;
