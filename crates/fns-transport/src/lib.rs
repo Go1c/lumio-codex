@@ -8,6 +8,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 pub mod reconnect;
+pub mod session;
 pub mod socket;
 
 pub use config::{

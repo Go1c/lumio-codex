@@ -224,6 +224,123 @@ impl EngineHandle {
         rx.await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
     }
+
+    pub async fn snapshot_begin(
+        &self,
+        message: fns_protocol::WorkspaceSnapshotBeginMessage,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::SnapshotBegin { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn snapshot_entry(
+        &self,
+        message: fns_protocol::WorkspaceSnapshotEntryMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::SnapshotEntry { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn snapshot_end(
+        &self,
+        message: fns_protocol::WorkspaceSnapshotEndMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::SnapshotEnd { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn workspace_event(
+        &self,
+        message: fns_protocol::WorkspaceEventMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::WorkspaceEvent { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn mutation_accepted(
+        &self,
+        message: fns_protocol::WorkspaceMutationAcceptedMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::MutationAccepted { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn mutation_rejected(
+        &self,
+        message: fns_protocol::WorkspaceMutationRejectedMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::MutationRejected { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn conflict_created(
+        &self,
+        message: fns_protocol::WorkspaceConflictCreatedMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ConflictCreated { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn conflict_resolved(
+        &self,
+        message: fns_protocol::WorkspaceConflictResolvedMessage,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ConflictResolved { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn ack_confirmed(
+        &self,
+        message: fns_protocol::WorkspaceAckRequest,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::AckConfirmed { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
 }
 
 fn map_err<T, E: std::fmt::Debug>(result: Result<T, E>) -> Result<T, TransportError> {
