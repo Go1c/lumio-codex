@@ -40,9 +40,7 @@ pub fn read_file_tree(root: &Path, max_depth: usize) -> Result<FileTreeNode, std
             return Ok(Vec::new());
         }
 
-        let mut entries: Vec<_> = std::fs::read_dir(path)?
-            .filter_map(|e| e.ok())
-            .collect();
+        let mut entries: Vec<_> = std::fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
 
         let mut nodes = Vec::new();
@@ -104,7 +102,9 @@ pub fn read_file_tree(root: &Path, max_depth: usize) -> Result<FileTreeNode, std
 fn is_excluded(name: &str) -> bool {
     matches!(
         name,
-        ".git" | ".hg" | ".svn"
+        ".git"
+            | ".hg"
+            | ".svn"
             | "node_modules"
             | ".venv"
             | "venv"

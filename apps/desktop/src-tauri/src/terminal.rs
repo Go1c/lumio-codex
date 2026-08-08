@@ -4,8 +4,8 @@
 //! connecting to the project's tmux session. xterm.js renders the terminal in the
 //! frontend; Tauri events bridge PTY output to the frontend.
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use serde::{Deserialize, Serialize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -44,6 +44,7 @@ impl TerminalManager {
     }
 
     /// Start a new terminal session for a project.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         &self,
         project_id: &str,
@@ -247,10 +248,19 @@ mod tests {
 
     #[test]
     fn sanitize_replaces_special_chars() {
-        assert_eq!(TerminalManager::sanitize_session_name("my-project"), "my-project");
-        assert_eq!(TerminalManager::sanitize_session_name("proj_123"), "proj_123");
+        assert_eq!(
+            TerminalManager::sanitize_session_name("my-project"),
+            "my-project"
+        );
+        assert_eq!(
+            TerminalManager::sanitize_session_name("proj_123"),
+            "proj_123"
+        );
         assert_eq!(TerminalManager::sanitize_session_name("a;b&c"), "a-b-c");
-        assert_eq!(TerminalManager::sanitize_session_name("$(rm -rf /)"), "----rm--rf---");
+        assert_eq!(
+            TerminalManager::sanitize_session_name("$(rm -rf /)"),
+            "----rm--rf---"
+        );
     }
 
     #[test]

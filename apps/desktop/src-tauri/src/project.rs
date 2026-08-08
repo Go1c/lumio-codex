@@ -81,7 +81,7 @@ impl ProjectConfig {
     fn load_raw() -> Result<HashMap<String, ProjectConfig>, std::io::Error> {
         let path = Self::projects_file()?;
         match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| std::io::Error::other(e)),
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(std::io::Error::other),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
             Err(e) => Err(e),
         }
@@ -89,8 +89,7 @@ impl ProjectConfig {
 
     fn save_raw(projects: &HashMap<String, ProjectConfig>) -> Result<(), std::io::Error> {
         let path = Self::projects_file()?;
-        let bytes = serde_json::to_vec_pretty(projects)
-            .map_err(|e| std::io::Error::other(e))?;
+        let bytes = serde_json::to_vec_pretty(projects).map_err(std::io::Error::other)?;
         std::fs::write(&path, bytes)
     }
 }
