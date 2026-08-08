@@ -13,6 +13,7 @@ use fns_protocol::{
     MessageBody, RequestId, WorkspaceAction, WorkspaceSnapshotBeginMessage,
     decode_server_text_frame, encode_request,
 };
+use fns_sync_core::SyncCommand;
 
 use std::time::Duration;
 
@@ -44,6 +45,8 @@ pub struct Session {
     workspace_id: fns_protocol::WorkspaceId,
     client_id: fns_protocol::ClientId,
     pkg_version: String,
+    /// Commands collected from engine responses, waiting to be drained and sent.
+    pending_outbound: Vec<SyncCommand>,
 }
 
 /// Heartbeat interval and idle timeout.
@@ -85,12 +88,14 @@ impl Session {
                 workspace_id,
                 client_id,
                 pkg_version,
+                pending_outbound: Vec::new(),
             },
             writer,
         )
     }
 
-    /// Run the session: send Hello, Subscribe, then process the read loop.
+    /// Run the session: send Hello, Subscribe, then process the read loop
+    /// with periodic outbound drain and heartbeat.
     pub async fn run(
         mut self,
         writer: &mut SocketWriter,
@@ -101,26 +106,44 @@ impl Session {
             return SessionResult::Error(e);
         }
 
-        // Phase 2: Send Subscribe and await the first Begin (or failure).
+        // Phase 2: Send Subscribe.
         if let Err(e) = self.send_subscribe(writer).await {
             return SessionResult::Error(e);
         }
 
-        // Phase 3: Read loop — process inbound frames until close or error.
+        // Phase 3: Main loop — read inbound, drain outbound, heartbeat.
+        let mut drain_ticker = tokio::time::interval(Duration::from_millis(200));
+        drain_ticker.tick().await; // skip first immediate tick
+        let mut heartbeat_ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+        heartbeat_ticker.tick().await;
+
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
                     let _ = writer.close().await;
                     return SessionResult::Closed;
                 }
-                // In a full implementation, a heartbeat timer would send pings.
-                // For now, we rely on server-initiated pings.
+                // Outbound drain: collect pending commands from engine and send them.
+                _ = drain_ticker.tick() => {
+                    if let Err(e) = self.drain_outbound(writer).await {
+                        return SessionResult::Error(e);
+                    }
+                }
+                // Heartbeat: send periodic ping.
+                _ = heartbeat_ticker.tick() => {
+                    if writer.send_pong(vec![0]).await.is_err() {
+                        return SessionResult::Error(TransportError::new(
+                            TransportErrorCode::Network,
+                            true,
+                        ));
+                    }
+                }
+                // Inbound: read frames from server.
                 msg = self.reader.next() => {
                     match msg {
                         None => return SessionResult::Closed,
                         Some(Ok(InboundMessage::Close)) => return SessionResult::Closed,
                         Some(Ok(InboundMessage::Ping(data))) => {
-                            // Respond with pong.
                             if writer.send_pong(data).await.is_err() {
                                 return SessionResult::Error(TransportError::new(
                                     TransportErrorCode::Network,
@@ -129,23 +152,73 @@ impl Session {
                             }
                         }
                         Some(Ok(InboundMessage::Text(data))) => {
-                            match self.handle_text_frame(data, writer).await {
+                            match self.handle_text_frame(data).await {
                                 Ok(()) => {}
                                 Err(e) => return SessionResult::Error(e),
                             }
                         }
                         Some(Ok(InboundMessage::Binary(_))) => {
-                            // Binary frames are blob chunks — handled by transfer module (Task 5/6).
-                            // For now, they are unexpected outside a transfer context.
+                            // Binary frames are blob chunks — transfer module handles these.
                         }
                         Some(Ok(InboundMessage::Pong(_))) => {
-                            // Heartbeat pong — no action needed.
+                            // Heartbeat pong — connection is alive.
                         }
                         Some(Err(e)) => return SessionResult::Error(e),
                     }
                 }
             }
         }
+    }
+
+    /// Drain pending outbound commands: pull from engine, encode, and send.
+    async fn drain_outbound(&mut self, writer: &mut SocketWriter) -> Result<(), TransportError> {
+        // First, drain any commands collected from inbound processing.
+        while let Some(command) = self.pending_outbound.pop() {
+            self.send_command(writer, command).await?;
+        }
+
+        // Then, poll the engine for new pending commands.
+        let commands = self.engine.pending_commands(64).await?;
+        for command in commands {
+            self.send_command(writer, command).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Encode a single SyncCommand to a wire frame and send it.
+    async fn send_command(
+        &self,
+        writer: &mut SocketWriter,
+        command: SyncCommand,
+    ) -> Result<(), TransportError> {
+        match command {
+            SyncCommand::Mutation(body) => {
+                let request_id = fresh_request_id();
+                let frame = encode_request(
+                    WorkspaceAction::WorkspaceMutation,
+                    request_id,
+                    MessageBody::Mutation(body),
+                )
+                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                writer.send_text(frame).await?;
+            }
+            SyncCommand::SendAck(body) => {
+                let request_id = fresh_request_id();
+                let frame = encode_request(
+                    WorkspaceAction::WorkspaceAck,
+                    request_id,
+                    MessageBody::Ack(body),
+                )
+                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                writer.send_text(frame).await?;
+            }
+            SyncCommand::DownloadBlob { .. } | SyncCommand::UploadBlob { .. } => {
+                // Blob transfers require transfer-table coordination (Task 5/6 deeper integration).
+                // For now these are skipped — they'll be handled when transfer wire is wired.
+            }
+        }
+        Ok(())
     }
 
     /// Send Hello request and await the correlated response.
@@ -229,11 +302,8 @@ impl Session {
     }
 
     /// Handle an inbound text frame by routing it to the engine worker.
-    async fn handle_text_frame(
-        &mut self,
-        data: Vec<u8>,
-        _writer: &mut SocketWriter,
-    ) -> Result<(), TransportError> {
+    /// Engine-returned commands are collected in pending_outbound for draining.
+    async fn handle_text_frame(&mut self, data: Vec<u8>) -> Result<(), TransportError> {
         let decoded = decode_server_text_frame(&data)
             .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
 
@@ -259,52 +329,57 @@ impl Session {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::SnapshotEntry(entry) = body
                 {
-                    let _ = self.engine_pending_from_snapshot_entry(entry).await?;
+                    let cmds = self.engine_pending_from_snapshot_entry(entry).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceSnapshotEnd => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::SnapshotEnd(end) = body
                 {
-                    let commands = self.engine_snapshot_end(end).await?;
+                    let cmds = self.engine_snapshot_end(end).await?;
                     self.phase = SessionPhase::Online;
-                    // In a full implementation, commands would be encoded and sent.
-                    let _ = commands;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceEvent => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::Event(event) = body
                 {
-                    let _ = self.engine_workspace_event(event).await?;
+                    let cmds = self.engine_workspace_event(event).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceMutationAccepted => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::MutationAccepted(msg) = body
                 {
-                    let _ = self.engine_mutation_accepted(msg).await?;
+                    let cmds = self.engine_mutation_accepted(msg).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceMutationRejected => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::MutationRejected(msg) = body
                 {
-                    let _ = self.engine_mutation_rejected(msg).await?;
+                    let cmds = self.engine_mutation_rejected(msg).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceConflictCreated => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::ConflictCreated(msg) = body
                 {
-                    let _ = self.engine_conflict_created(msg).await?;
+                    let cmds = self.engine_conflict_created(msg).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceConflictResolved => {
                 if let fns_protocol::DecodedEnvelope::Success { body, .. } = decoded.envelope
                     && let MessageBody::ConflictResolved(msg) = body
                 {
-                    let _ = self.engine_conflict_resolved(msg).await?;
+                    let cmds = self.engine_conflict_resolved(msg).await?;
+                    self.pending_outbound.extend(cmds);
                 }
             }
             WorkspaceAction::WorkspaceAck => {

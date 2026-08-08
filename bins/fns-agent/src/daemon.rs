@@ -154,21 +154,86 @@ fn map_transport_error(code: fns_transport::TransportErrorCode) -> AgentError {
 
 fn start_watcher(
     config: &AgentConfig,
-    _handle: fns_transport::EngineHandle,
+    handle: fns_transport::EngineHandle,
 ) -> Option<fns_fs::PlatformWatcher> {
-    // Conservative watcher: started after recovery.
-    // Full event coalescing and bridge is implemented in later refinement.
     let rules = fns_fs::SyncRuleConfig {
         includes: config.sync.includes.clone(),
         excludes: config.sync.excludes.clone(),
         protect_secrets: config.sync.protect_secrets,
     };
-    let _rules = fns_fs::SyncRules::compile(rules).ok()?;
+    let rules = fns_fs::SyncRules::compile(rules).ok()?;
 
     let root = fns_fs::RootedWorkspace::open(&config.workspace_root).ok()?;
-    fns_fs::start_platform_watcher(&root, 4096)
-        .ok()
-        .map(|(watcher, _receiver)| watcher)
+    let (watcher, receiver) = fns_fs::start_platform_watcher(&root, 4096).ok()?;
+
+    // Spawn a thread to consume watch events and feed them into the engine.
+    // The bridge uses crossbeam receiver (sync blocking) on a dedicated thread,
+    // batching FsChange events and sending them to the engine via the async handle.
+    let debounce = Duration::from_millis(200);
+    std::thread::Builder::new()
+        .name("fns-watch-bridge".into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            rt.block_on(async move {
+                let mut coalescer = fns_fs::EventCoalescer::with_rules(
+                    debounce,
+                    Duration::from_millis(500),
+                    8192,
+                    rules,
+                );
+                loop {
+                    match receiver.recv() {
+                        Ok(fns_fs::WatchMessage::Event(event)) => {
+                            let _ = coalescer.push(event);
+                            // Try to flush ready events.
+                            let now = std::time::Instant::now();
+                            match coalescer.flush_ready(now, &ConservativePrior) {
+                                Ok(changes) if !changes.is_empty() => {
+                                    if handle.record_local_changes(changes).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(_) => {
+                                    // Coalescer error — force rescan.
+                                    let _ = handle
+                                        .record_local_changes(vec![
+                                            fns_fs::FsChange::RescanRequired,
+                                        ])
+                                        .await;
+                                }
+                            }
+                        }
+                        Ok(fns_fs::WatchMessage::Gap(_)) => {
+                            // Watch gap — discard coalescer and force rescan.
+                            let _ = handle
+                                .record_local_changes(vec![fns_fs::FsChange::RescanRequired])
+                                .await;
+                        }
+                        Err(_) => break, // Watcher disconnected.
+                    }
+                }
+            });
+        })
+        .ok()?;
+
+    Some(watcher)
+}
+
+/// Conservative prior lookup that always returns None (no engine state query).
+/// The engine deduplicates echo events internally.
+struct ConservativePrior;
+
+impl fns_fs::PriorEntryLookup for ConservativePrior {
+    fn signature(&self, _path: &fns_protocol::WorkspacePath) -> Option<fns_fs::EntrySignature> {
+        None
+    }
 }
 
 fn now_ms() -> i64 {
