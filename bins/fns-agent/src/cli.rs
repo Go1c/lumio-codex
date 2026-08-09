@@ -31,4 +31,6 @@ pub enum Command {
         #[arg(long, required = true)]
         json: bool,
     },
+    #[command(name = "__worker", hide = true)]
+    Worker,
 }

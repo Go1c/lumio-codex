@@ -26,17 +26,79 @@ pub enum NativeFileId {
 pub struct FileFingerprint {
     pub file_id: NativeFileId,
     pub size: u64,
+    #[serde(with = "serde_i128_string")]
     pub modified_at_ns: i128,
+    #[serde(with = "serde_i128_string")]
     pub changed_at_ns: i128,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+mod serde_i128_string {
+    use serde::de::{Error, Visitor};
+
+    pub fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i128, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct I128Visitor;
+
+        impl Visitor<'_> for I128Visitor {
+            type Value = i128;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a signed 128-bit integer or decimal string")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(i128::from(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(i128::from(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                value.parse().map_err(Error::custom)
+            }
+        }
+
+        deserializer.deserialize_any(I128Visitor)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ObservedEntry {
     pub path: WorkspacePath,
     pub kind: WorkspaceEntryKind,
     pub metadata: WorkspaceFileMetadata,
     pub fingerprint: FileFingerprint,
     pub symlink_target: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DirectorySnapshotEntry {
+    pub relative_path: WorkspacePath,
+    pub kind: WorkspaceEntryKind,
+    pub content_hash: Option<WorkspaceContentHash>,
+    pub metadata: WorkspaceFileMetadata,
+    pub fingerprint: FileFingerprint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DirectorySnapshot {
+    pub digest: WorkspaceContentHash,
+    pub entries: Vec<DirectorySnapshotEntry>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -128,6 +190,25 @@ impl RootedWorkspace {
             &name,
             metadata,
         )?))
+    }
+
+    pub fn directory_digest(&self, path: &WorkspacePath) -> Result<WorkspaceContentHash, FsError> {
+        Ok(self.directory_snapshot(path)?.digest)
+    }
+
+    pub fn directory_snapshot(&self, path: &WorkspacePath) -> Result<DirectorySnapshot, FsError> {
+        if self
+            .inspect(path)?
+            .is_none_or(|observed| observed.kind != WorkspaceEntryKind::Directory)
+        {
+            return Err(FsError::ContentMismatch);
+        }
+        let mut hasher = blake3::Hasher::new();
+        let mut entries = Vec::new();
+        self.hash_directory_descendants(path, "", &mut hasher, &mut entries)?;
+        let digest = WorkspaceContentHash::parse(&format!("blake3:{}", hasher.finalize().to_hex()))
+            .map_err(|_| FsError::ContentMismatch)?;
+        Ok(DirectorySnapshot { digest, entries })
     }
 
     pub fn scan(&self, rules: &SyncRules) -> Result<WorkspaceScan, FsError> {
@@ -262,6 +343,93 @@ impl RootedWorkspace {
             }
             WorkspaceEntryKind::Tombstone => Err(FsError::ContentMismatch),
         }
+    }
+
+    fn hash_directory_descendants(
+        &self,
+        directory: &WorkspacePath,
+        relative_prefix: &str,
+        hasher: &mut blake3::Hasher,
+        entries: &mut Vec<DirectorySnapshotEntry>,
+    ) -> Result<(), FsError> {
+        let names = self.normalized_directory_names(directory)?;
+        for name in &names {
+            let child = WorkspacePath::parse(&format!("{}/{name}", directory.as_str())).map_err(
+                |error| FsError::InvalidPath {
+                    reason: error.reason,
+                },
+            )?;
+            let relative = if relative_prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{relative_prefix}/{name}")
+            };
+            let before = self.inspect(&child)?.ok_or(FsError::ContentMismatch)?;
+            let content_hash = self.content_hash(&child, &before)?;
+
+            hash_tree_field(hasher, relative.as_bytes());
+            hasher.update(&[match before.kind {
+                WorkspaceEntryKind::File => 1,
+                WorkspaceEntryKind::Directory => 2,
+                WorkspaceEntryKind::Symlink => 3,
+                WorkspaceEntryKind::Tombstone => return Err(FsError::ContentMismatch),
+            }]);
+            hasher.update(&before.metadata.size.to_le_bytes());
+            hasher.update(&before.metadata.modified_at_ms.to_le_bytes());
+            hasher.update(&[u8::from(before.metadata.executable)]);
+            hash_tree_field(
+                hasher,
+                content_hash
+                    .as_ref()
+                    .map_or(&[], |hash| hash.as_str().as_bytes()),
+            );
+            entries.push(DirectorySnapshotEntry {
+                relative_path: WorkspacePath::parse(&relative).map_err(|error| {
+                    FsError::InvalidPath {
+                        reason: error.reason,
+                    }
+                })?,
+                kind: before.kind,
+                content_hash: content_hash.clone(),
+                metadata: before.metadata.clone(),
+                fingerprint: before.fingerprint.clone(),
+            });
+
+            if before.kind == WorkspaceEntryKind::Directory {
+                self.hash_directory_descendants(&child, &relative, hasher, entries)?;
+            }
+            if self.inspect(&child)?.as_ref() != Some(&before) {
+                return Err(FsError::ContentMismatch);
+            }
+        }
+        if self.normalized_directory_names(directory)? != names {
+            return Err(FsError::ContentMismatch);
+        }
+        Ok(())
+    }
+
+    fn normalized_directory_names(
+        &self,
+        directory: &WorkspacePath,
+    ) -> Result<Vec<String>, FsError> {
+        let mut names = self
+            .read_dir_names(Some(directory))?
+            .into_iter()
+            .map(|name| {
+                name.to_str()
+                    .map(|name| name.nfc().collect::<String>())
+                    .ok_or(FsError::InvalidPath {
+                        reason: "non_utf8_name".to_owned(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        names.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        if names.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(FsError::PathCollision {
+                path: directory.clone(),
+            });
+        }
+        Ok(names)
     }
 
     fn resolve_cap_entry(
@@ -465,6 +633,11 @@ impl RootedWorkspace {
             symlink_target,
         })
     }
+}
+
+fn hash_tree_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
 }
 
 fn detect_case_sensitivity(root: &cap_std::fs::Dir) -> CaseSensitivity {

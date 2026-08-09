@@ -1070,6 +1070,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -1096,6 +1097,9 @@ dependencies = [
 name = "fns-platform"
 version = "0.1.0"
 dependencies = [
+ "rustix",
+ "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "tempfile",
@@ -1146,6 +1150,7 @@ dependencies = [
  "fns-sync-core",
  "futures-util",
  "http",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -1163,20 +1168,31 @@ dependencies = [
 name = "fns-workspace-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "diffy",
  "directories",
  "fns-agent",
  "fns-platform",
  "fns-protocol",
+ "fns-sync-core",
+ "fns-transport",
+ "futures-util",
+ "httparse",
  "portable-pty",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-shell",
+ "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "tokio-util",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -3214,6 +3230,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3278,6 +3300,29 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "security-framework"
+version = "3.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7f4bc775c73d9a02cde8bf7b2ec4c9d12743edf609006c7facc23998404cd1d"
+dependencies = [
+ "bitflags 2.13.1",
+ "core-foundation",
+ "core-foundation-sys",
+ "libc",
+ "security-framework-sys",
+]
+
+[[package]]
+name = "security-framework-sys"
+version = "2.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ce2691df843ecc5d231c0b14ece2acc3efb62c0a398c7e1d875f3983ce020e3"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
 
 [[package]]
 name = "selectors"
@@ -3433,6 +3478,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -4139,14 +4197,26 @@ dependencies = [
 name = "test-sync"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "clap",
  "fns-agent",
  "fns-platform",
  "fns-protocol",
+ "fns-transport",
+ "hex",
+ "libc",
+ "rusqlite",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4659,6 +4729,12 @@ name = "unicode-segmentation"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "url"
@@ -5653,6 +5729,9 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zerotrie"

@@ -117,3 +117,113 @@ fn opening_content_cache_cleans_only_stale_temp_files() {
     assert!(!temp_path.exists());
     assert!(state_dir.path().join("tmp").join("keep.txt").exists());
 }
+
+#[test]
+fn staged_import_is_invisible_until_sealed_import_is_committed() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let bytes = b"streamed blob content";
+    let expected = fns_protocol::WorkspaceContentHash::parse(&format!(
+        "blake3:{}",
+        blake3::hash(bytes).to_hex()
+    ))
+    .unwrap();
+
+    let mut staged = content
+        .begin_staged_import(expected.clone(), bytes.len() as u64)
+        .unwrap();
+    staged.write_chunk(&bytes[..7]).unwrap();
+    staged.write_chunk(&bytes[7..]).unwrap();
+    let sealed = staged.seal().unwrap();
+
+    assert!(content.open_blob(&expected).is_err());
+    assert_eq!(
+        fs::read_dir(state_dir.path().join("tmp"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(".fns-tmp-"))
+            .count(),
+        2,
+        "a sealed import must retain only its staging file and lock"
+    );
+
+    let descriptor = sealed.commit().unwrap();
+    assert_eq!(descriptor.content_hash, expected);
+    assert_eq!(descriptor.size, bytes.len() as u64);
+    let mut cached = content.open_blob(&descriptor.content_hash).unwrap();
+    let mut actual = Vec::new();
+    cached.read_to_end(&mut actual).unwrap();
+    assert_eq!(actual, bytes);
+    assert!(
+        fs::read_dir(state_dir.path().join("tmp"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn abandoned_and_invalid_staged_imports_remove_their_files() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let expected = fns_protocol::WorkspaceContentHash::parse(&format!(
+        "blake3:{}",
+        blake3::hash(b"expected").to_hex()
+    ))
+    .unwrap();
+
+    {
+        let mut abandoned = content.begin_staged_import(expected.clone(), 8).unwrap();
+        abandoned.write_chunk(b"partial").unwrap();
+    }
+    assert!(
+        fs::read_dir(state_dir.path().join("tmp"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+
+    let mut invalid = content.begin_staged_import(expected.clone(), 8).unwrap();
+    invalid.write_chunk(b"changed!").unwrap();
+    assert!(matches!(
+        invalid.seal(),
+        Err(fns_fs::FsError::ContentMismatch)
+    ));
+    assert!(content.open_blob(&expected).is_err());
+    assert!(
+        fs::read_dir(state_dir.path().join("tmp"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
+#[test]
+fn opening_content_cache_reclaims_crashed_staged_import() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let temp_dir = state_dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).unwrap();
+    fs::write(temp_dir.join(".fns-tmp-crashed"), b"partial").unwrap();
+    fs::write(temp_dir.join(".fns-tmp-crashed.lock"), b"").unwrap();
+
+    let _content = ContentCache::open(state_dir.path()).unwrap();
+
+    assert!(!temp_dir.join(".fns-tmp-crashed").exists());
+    assert!(!temp_dir.join(".fns-tmp-crashed.lock").exists());
+}
+
+#[test]
+fn opening_content_cache_reclaims_interrupted_create_and_orphan_lock() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let temp_dir = state_dir.path().join("tmp");
+    fs::create_dir_all(&temp_dir).unwrap();
+    fs::write(temp_dir.join(".fns-tmp-interrupted.staging"), b"partial").unwrap();
+    fs::write(temp_dir.join(".fns-tmp-interrupted.lock"), b"").unwrap();
+    fs::write(temp_dir.join(".fns-tmp-lock-only.lock"), b"").unwrap();
+
+    let _content = ContentCache::open(state_dir.path()).unwrap();
+
+    assert!(!temp_dir.join(".fns-tmp-interrupted.staging").exists());
+    assert!(!temp_dir.join(".fns-tmp-interrupted.lock").exists());
+    assert!(!temp_dir.join(".fns-tmp-lock-only.lock").exists());
+}

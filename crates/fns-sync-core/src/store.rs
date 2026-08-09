@@ -2,8 +2,9 @@ use fns_fs::{ApplyId, FileFingerprint, HashCache, HashCacheError};
 use fns_protocol::{
     ClientId, ConflictId, OperationId, StreamId, WorkspaceConflictCreatedMessage,
     WorkspaceConflictResolvedMessage, WorkspaceConflictResolvedRequest, WorkspaceContentHash,
-    WorkspaceEventMessage, WorkspaceId, WorkspaceMutation, WorkspacePath, WorkspaceRevision,
-    WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEntryMessage, WorkspaceSnapshotMode,
+    WorkspaceEventMessage, WorkspaceId, WorkspaceMutation, WorkspaceMutationAcceptedMessage,
+    WorkspacePath, WorkspaceRevision, WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEntryMessage,
+    WorkspaceSnapshotMode,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Serialize, de::DeserializeOwned};
@@ -11,12 +12,35 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::error::{SyncError, corrupt, storage_error};
 use crate::ids::now_ms;
 use crate::model::{
-    AppliedOperationRecord, ApplyItemKind, ApplyJournalRecord, ApplyStage, ConflictRecord,
-    ConflictStatus, LocalIntentRecord, OutboxBody, OutboxRecord, OutboxStage, PathStateRecord,
-    StreamConflictRecord, StreamConflictStatus, StreamEntryRecord, StreamItemStatus,
-    StreamRevisionItemKind, StreamRevisionItemRecord, StreamStateRecord,
+    AppliedOperationReceiptKind, AppliedOperationRecord, ApplyItemKind, ApplyJournalRecord,
+    ApplyNamespace, ApplyStage, ConflictRecord, ConflictStatus, LocalIntentRecord, OutboxRecord,
+    OutboxStage, PathStateRecord, StreamConflictRecord, StreamConflictStatus, StreamEntryRecord,
+    StreamItemStatus, StreamRevisionItemKind, StreamRevisionItemRecord, StreamStateRecord,
 };
 use crate::state::SqliteState;
+
+pub(crate) struct BoundedPage<T> {
+    pub(crate) items: Vec<T>,
+    pub(crate) deferred_by_byte_budget: bool,
+}
+
+pub(crate) struct StreamTableSummary {
+    pub(crate) entry_count: u64,
+    pub(crate) pending_entry_count: u64,
+    pub(crate) revision_count: u64,
+    pub(crate) pending_revision_count: u64,
+    pub(crate) conflict_count: u64,
+}
+
+pub(crate) struct AppliedOperationWrite<'a> {
+    pub(crate) origin_client_id: ClientId,
+    pub(crate) operation_id: OperationId,
+    pub(crate) revision: WorkspaceRevision,
+    pub(crate) body_digest: [u8; 32],
+    pub(crate) receipt_kind: AppliedOperationReceiptKind,
+    pub(crate) mutation_json: Option<&'a [u8]>,
+    pub(crate) legacy_body_digest: Option<[u8; 32]>,
+}
 
 pub fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, SyncError> {
     serde_json::to_vec(value).map_err(|_| SyncError::InvalidConfiguration {
@@ -26,6 +50,27 @@ pub fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, SyncError> {
 
 pub fn body_digest(body: &[u8]) -> [u8; 32] {
     *blake3::hash(body).as_bytes()
+}
+
+pub fn apply_journal_immutable_digest(record: &ApplyJournalRecord) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for field in [
+        record.apply_id.0.to_string().as_bytes(),
+        record.workspace_id.to_string().as_bytes(),
+        record.stream_id.to_string().as_bytes(),
+        record.item_kind.as_str().as_bytes(),
+        record.item_key.as_bytes(),
+        record.apply_namespace.as_str().as_bytes(),
+        record.operation_json.as_slice(),
+        record.filesystem_operation_json.as_slice(),
+        record.commit_json.as_slice(),
+        record.preimage_json.as_slice(),
+        record.postimage_json.as_slice(),
+    ] {
+        hasher.update(&(field.len() as u64).to_le_bytes());
+        hasher.update(field);
+    }
+    *hasher.finalize().as_bytes()
 }
 
 pub fn digest<T: Serialize>(value: &T) -> Result<[u8; 32], SyncError> {
@@ -178,6 +223,29 @@ impl SqliteState {
         self.outbox()
     }
 
+    /// Count durable work that must settle before this client is quiescent.
+    ///
+    /// This is intentionally read-only: status reporting must never dispatch an
+    /// outbox row or advance stream state merely by observing it.
+    pub fn pending_work_count(&self) -> Result<u64, SyncError> {
+        let count = self
+            .conn
+            .query_row(
+                "SELECT \
+                    (SELECT COUNT(*) FROM outbox WHERE client_id = ?1 AND stage != 'blocked_conflict') + \
+                    (SELECT COUNT(*) FROM local_intents WHERE workspace_id = ?2) + \
+                    (SELECT COUNT(*) FROM stream_state WHERE workspace_id = ?2) + \
+                    (SELECT COUNT(*) FROM stream_entries WHERE workspace_id = ?2 AND status NOT IN ('applied','preserved')) + \
+                    (SELECT COUNT(*) FROM stream_revision_items WHERE workspace_id = ?2 AND status NOT IN ('applied','preserved')) + \
+                    (SELECT COUNT(*) FROM apply_journal WHERE workspace_id = ?2) + \
+                    (SELECT COUNT(*) FROM workspace_cursor WHERE workspace_id = ?2 AND pending_ack_revision IS NOT NULL)",
+                params![self.client_id.to_string(), self.workspace_id.to_string()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(storage_error)?;
+        bounded_count(count, "runtime_pending_work")
+    }
+
     pub fn outbox_entry(
         &self,
         operation_id: OperationId,
@@ -249,7 +317,7 @@ impl SqliteState {
         self.pending_outbox(limit)
     }
 
-    /// Select outstanding mutations for transport replay.  A queued row is
+    /// Select outstanding operations for transport replay. A queued row is
     /// promoted to dispatched in the same immediate transaction as selection;
     /// an already-dispatched row is intentionally selected again so reopening
     /// after a crash replays the exact immutable operation body.
@@ -272,14 +340,9 @@ impl SqliteState {
         let mut records = Vec::new();
         while let Some(row) = rows.next().map_err(storage_error)? {
             let record = row_to_outbox(row).map_err(|_| corrupt("outbox", "body_json"))?;
-            if !matches!(
-                record
-                    .decoded_body()
-                    .map_err(|_| corrupt("outbox", "body_json"))?,
-                OutboxBody::Mutation(_)
-            ) {
-                continue;
-            }
+            record
+                .decoded_body()
+                .map_err(|_| corrupt("outbox", "body_json"))?;
             records.push(record);
             if records.len() == limit {
                 break;
@@ -328,6 +391,24 @@ impl SqliteState {
             )
             .map_err(storage_error)?;
         Ok(())
+    }
+
+    /// Make every durable blob-waiting operation replayable for a new
+    /// connection in one immediate transaction. The immutable body and digest
+    /// are never rewritten.
+    pub fn replay_awaiting_blob_mutations(&mut self) -> Result<usize, SyncError> {
+        let transaction = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE outbox SET stage = 'dispatched' WHERE client_id = ?1 AND stage = 'awaiting_blob'",
+                params![self.client_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        transaction.commit().map_err(storage_error)?;
+        Ok(changed)
     }
 
     pub fn remove_outbox(&mut self, operation_id: OperationId) -> Result<(), SyncError> {
@@ -418,18 +499,58 @@ impl SqliteState {
             .optional()
             .map_err(storage_error)?;
         if let Some(existing) = existing {
-            if existing.stream_id != begin.stream_id {
+            if existing.stream_id == begin.stream_id {
+                if !stream_begin_matches(&existing, begin) {
+                    return Err(SyncError::StreamInvariant {
+                        reason: "stream_begin_changed",
+                    });
+                }
+                transaction.commit().map_err(storage_error)?;
+                return Ok(existing);
+            }
+
+            let last_ack_revision = transaction
+                .query_row(
+                    "SELECT last_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
+                    params![self.workspace_id.to_string()],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(storage_error)?;
+            let last_ack_revision = WorkspaceRevision::parse(&last_ack_revision)
+                .map_err(|_| corrupt("workspace_cursor", "last_ack_revision"))?;
+            if begin.from_revision != last_ack_revision {
                 return Err(SyncError::StreamInvariant {
-                    reason: "active_stream_exists",
+                    reason: "stream_begin_not_at_ack",
                 });
             }
-            if !stream_begin_matches(&existing, begin) {
+            let apply_in_progress = transaction
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM apply_journal WHERE workspace_id = ?1)",
+                    params![self.workspace_id.to_string()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(storage_error)?;
+            if apply_in_progress {
                 return Err(SyncError::StreamInvariant {
-                    reason: "stream_begin_changed",
+                    reason: "stream_apply_in_progress",
                 });
             }
-            transaction.commit().map_err(storage_error)?;
-            return Ok(existing);
+            for table in [
+                "stream_entries",
+                "stream_revision_items",
+                "stream_conflicts",
+            ] {
+                let query = format!("DELETE FROM {table} WHERE workspace_id = ?1");
+                transaction
+                    .execute(&query, params![self.workspace_id.to_string()])
+                    .map_err(storage_error)?;
+            }
+            transaction
+                .execute(
+                    "DELETE FROM stream_state WHERE workspace_id = ?1",
+                    params![self.workspace_id.to_string()],
+                )
+                .map_err(storage_error)?;
         }
         let state = stream_state_from_begin(begin);
         transaction
@@ -553,6 +674,65 @@ impl SqliteState {
             .map_err(storage_error)?;
         rows.map(|row| row.map_err(storage_error))
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub(crate) fn pending_stream_entries_page(
+        &self,
+        stream_id: StreamId,
+        max_items: usize,
+        max_serialized_bytes: usize,
+        allow_oversized_first_item: bool,
+    ) -> Result<BoundedPage<StreamEntryRecord>, SyncError> {
+        if max_items == 0 {
+            return Ok(BoundedPage {
+                items: Vec::new(),
+                deferred_by_byte_budget: false,
+            });
+        }
+        let sql_limit = i64::try_from(max_items).map_err(|_| SyncError::InvalidConfiguration {
+            reason: "page_item_limit_too_large",
+        })?;
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT workspace_id, stream_id, entry_index, body_json, body_digest, status, length(body_json) FROM stream_entries WHERE workspace_id = ?1 AND stream_id = ?2 AND status NOT IN ('applied','preserved') ORDER BY entry_index LIMIT ?3",
+            )
+            .map_err(storage_error)?;
+        let mut rows = statement
+            .query(params![
+                self.workspace_id.to_string(),
+                stream_id.to_string(),
+                sql_limit
+            ])
+            .map_err(storage_error)?;
+        let mut items = Vec::new();
+        let mut serialized_bytes = 0_usize;
+        while let Some(row) = rows.next().map_err(storage_error)? {
+            let body_bytes = bounded_body_len(row, 6, "stream_entries")?;
+            let next_bytes = serialized_bytes.checked_add(body_bytes);
+            let exceeds_byte_budget = next_bytes
+                .map(|next| next > max_serialized_bytes)
+                .unwrap_or(true);
+            if exceeds_byte_budget && (!items.is_empty() || !allow_oversized_first_item) {
+                return Ok(BoundedPage {
+                    items,
+                    deferred_by_byte_budget: true,
+                });
+            }
+            items.push(
+                row_to_stream_entry(row).map_err(|_| corrupt("stream_entries", "body_json"))?,
+            );
+            serialized_bytes = next_bytes.ok_or(SyncError::ResourceLimit {
+                resource: "stream_page_bytes",
+            })?;
+            if serialized_bytes > max_serialized_bytes {
+                break;
+            }
+        }
+        Ok(BoundedPage {
+            items,
+            deferred_by_byte_budget: false,
+        })
     }
 
     pub fn advance_stream_index(&mut self, next_index: u32) -> Result<(), SyncError> {
@@ -691,6 +871,125 @@ impl SqliteState {
         Ok(items)
     }
 
+    pub(crate) fn pending_stream_revision_items_page(
+        &self,
+        stream_id: StreamId,
+        max_items: usize,
+        max_serialized_bytes: usize,
+        allow_oversized_first_item: bool,
+    ) -> Result<BoundedPage<StreamRevisionItemRecord>, SyncError> {
+        if max_items == 0 {
+            return Ok(BoundedPage {
+                items: Vec::new(),
+                deferred_by_byte_budget: false,
+            });
+        }
+        let sql_limit = i64::try_from(max_items).map_err(|_| SyncError::InvalidConfiguration {
+            reason: "page_item_limit_too_large",
+        })?;
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT workspace_id, stream_id, revision, item_kind, body_json, body_digest, event_index, status, length(body_json) FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2 AND status NOT IN ('applied','preserved') ORDER BY length(revision), revision LIMIT ?3",
+            )
+            .map_err(storage_error)?;
+        let mut rows = statement
+            .query(params![
+                self.workspace_id.to_string(),
+                stream_id.to_string(),
+                sql_limit
+            ])
+            .map_err(storage_error)?;
+        let mut items = Vec::new();
+        let mut serialized_bytes = 0_usize;
+        while let Some(row) = rows.next().map_err(storage_error)? {
+            let body_bytes = bounded_body_len(row, 8, "stream_revision_items")?;
+            let next_bytes = serialized_bytes.checked_add(body_bytes);
+            let exceeds_byte_budget = next_bytes
+                .map(|next| next > max_serialized_bytes)
+                .unwrap_or(true);
+            if exceeds_byte_budget && (!items.is_empty() || !allow_oversized_first_item) {
+                return Ok(BoundedPage {
+                    items,
+                    deferred_by_byte_budget: true,
+                });
+            }
+            items.push(
+                row_to_stream_revision_item(row)
+                    .map_err(|_| corrupt("stream_revision_items", "body_json"))?,
+            );
+            serialized_bytes = next_bytes.ok_or(SyncError::ResourceLimit {
+                resource: "stream_page_bytes",
+            })?;
+            if serialized_bytes > max_serialized_bytes {
+                break;
+            }
+        }
+        Ok(BoundedPage {
+            items,
+            deferred_by_byte_budget: false,
+        })
+    }
+
+    pub(crate) fn stream_table_summary(
+        &self,
+        stream_id: StreamId,
+    ) -> Result<StreamTableSummary, SyncError> {
+        let workspace_id = self.workspace_id.to_string();
+        let stream_id = stream_id.to_string();
+        let counts = self
+            .conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM stream_entries WHERE workspace_id = ?1 AND stream_id = ?2), (SELECT COUNT(*) FROM stream_entries WHERE workspace_id = ?1 AND stream_id = ?2 AND status NOT IN ('applied','preserved')), (SELECT COUNT(*) FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2), (SELECT COUNT(*) FROM stream_revision_items WHERE workspace_id = ?1 AND stream_id = ?2 AND status NOT IN ('applied','preserved')), (SELECT COUNT(*) FROM stream_conflicts WHERE workspace_id = ?1 AND stream_id = ?2)",
+                params![workspace_id, stream_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .map_err(storage_error)?;
+        Ok(StreamTableSummary {
+            entry_count: bounded_count(counts.0, "stream_entries")?,
+            pending_entry_count: bounded_count(counts.1, "stream_entries")?,
+            revision_count: bounded_count(counts.2, "stream_revision_items")?,
+            pending_revision_count: bounded_count(counts.3, "stream_revision_items")?,
+            conflict_count: bounded_count(counts.4, "stream_conflicts")?,
+        })
+    }
+
+    pub(crate) fn snapshot_stream_contains_path(
+        &self,
+        stream_id: StreamId,
+        path: &WorkspacePath,
+    ) -> Result<bool, SyncError> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM stream_entries WHERE workspace_id = ?1 AND stream_id = ?2 AND json_extract(CAST(body_json AS TEXT), '$.entry.path') = ?3)",
+                params![
+                    self.workspace_id.to_string(),
+                    stream_id.to_string(),
+                    path.as_str()
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(storage_error)
+    }
+
+    pub(crate) fn has_apply_journals(&self) -> Result<bool, SyncError> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM apply_journal WHERE workspace_id = ?1)",
+                params![self.workspace_id.to_string()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(storage_error)
+    }
+
     pub fn put_stream_conflict(
         &mut self,
         message: &WorkspaceConflictCreatedMessage,
@@ -732,6 +1031,13 @@ impl SqliteState {
         if let Some(existing) = existing {
             if existing.created_json != created_json {
                 return Err(SyncError::OperationChanged);
+            }
+            if matches!(
+                existing.status,
+                StreamConflictStatus::Replaced | StreamConflictStatus::Pruned
+            ) {
+                transaction.commit().map_err(storage_error)?;
+                return Ok(existing);
             }
             if !stream_conflict_status_transition_allowed(existing.status, status) {
                 return Err(SyncError::StreamInvariant {
@@ -833,7 +1139,7 @@ impl SqliteState {
     ) -> Result<Option<ApplyJournalRecord>, SyncError> {
         self.conn
             .query_row(
-                "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, operation_json, preimage_json, postimage_json, stage FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
+                "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, apply_namespace, operation_body_digest, operation_json, filesystem_operation_json, commit_json, preimage_json, postimage_json, filesystem_receipt_json, stage FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
                 params![apply_id.0.to_string(), self.workspace_id.to_string()],
                 row_to_apply_journal,
             )
@@ -845,7 +1151,7 @@ impl SqliteState {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, operation_json, preimage_json, postimage_json, stage FROM apply_journal WHERE workspace_id = ?1 ORDER BY apply_id",
+                "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, apply_namespace, operation_body_digest, operation_json, filesystem_operation_json, commit_json, preimage_json, postimage_json, filesystem_receipt_json, stage FROM apply_journal WHERE workspace_id = ?1 ORDER BY apply_id",
             )
             .map_err(storage_error)?;
         let rows = statement
@@ -868,6 +1174,19 @@ impl SqliteState {
         transaction.commit().map_err(storage_error)
     }
 
+    pub fn set_apply_filesystem_applied(
+        &mut self,
+        apply_id: ApplyId,
+        receipt_json: &[u8],
+    ) -> Result<(), SyncError> {
+        let transaction = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        set_apply_filesystem_applied_tx(&transaction, self.workspace_id, apply_id, receipt_json)?;
+        transaction.commit().map_err(storage_error)
+    }
+
     pub fn remove_apply_journal(&mut self, apply_id: ApplyId) -> Result<(), SyncError> {
         self.conn
             .execute(
@@ -884,31 +1203,25 @@ impl SqliteState {
         operation_id: OperationId,
         revision: WorkspaceRevision,
         body_digest: [u8; 32],
+        receipt_kind: AppliedOperationReceiptKind,
+        mutation_json: Option<&[u8]>,
     ) -> Result<(), SyncError> {
         let transaction = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(storage_error)?;
-        let existing = transaction
-            .query_row(
-                "SELECT origin_client_id, operation_id, revision, body_digest FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
-                params![origin_client_id.to_string(), operation_id.to_string()],
-                row_to_applied_operation,
-            )
-            .optional()
-            .map_err(storage_error)?;
-        if let Some(existing) = existing {
-            if existing.body_digest != body_digest || existing.revision != revision {
-                return Err(SyncError::OperationChanged);
-            }
-        } else {
-            transaction
-                .execute(
-                    "INSERT INTO applied_operations (origin_client_id, operation_id, revision, body_digest) VALUES (?1, ?2, ?3, ?4)",
-                    params![origin_client_id.to_string(), operation_id.to_string(), revision.to_string(), body_digest.as_slice()],
-                )
-                .map_err(storage_error)?;
-        }
+        record_applied_operation_tx(
+            &transaction,
+            AppliedOperationWrite {
+                origin_client_id,
+                operation_id,
+                revision,
+                body_digest,
+                receipt_kind,
+                mutation_json,
+                legacy_body_digest: None,
+            },
+        )?;
         transaction.commit().map_err(storage_error)
     }
 
@@ -919,26 +1232,78 @@ impl SqliteState {
     ) -> Result<Option<AppliedOperationRecord>, SyncError> {
         self.conn
             .query_row(
-                "SELECT origin_client_id, operation_id, revision, body_digest FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
+                "SELECT origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
                 params![origin_client_id.to_string(), operation_id.to_string()],
                 row_to_applied_operation,
             )
             .optional()
-            .map_err(storage_error)
+            .map_err(applied_operation_read_error)
     }
 
     pub fn applied_operations(&self) -> Result<Vec<AppliedOperationRecord>, SyncError> {
         let mut statement = self
             .conn
             .prepare(
-                "SELECT origin_client_id, operation_id, revision, body_digest FROM applied_operations ORDER BY origin_client_id, operation_id",
+                "SELECT origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json FROM applied_operations ORDER BY origin_client_id, operation_id",
             )
             .map_err(storage_error)?;
         let rows = statement
             .query_map([], row_to_applied_operation)
             .map_err(storage_error)?;
-        rows.map(|row| row.map_err(storage_error))
+        rows.map(|row| row.map_err(applied_operation_read_error))
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub(crate) fn provisional_mutation_acceptance(
+        &self,
+        origin_client_id: ClientId,
+        operation_id: OperationId,
+    ) -> Result<Option<WorkspaceMutationAcceptedMessage>, SyncError> {
+        self.conn
+            .query_row(
+                "SELECT origin_client_id, operation_id, workspace_id, revision, accepted_json, accepted_digest FROM provisional_mutation_acceptances WHERE origin_client_id = ?1 AND operation_id = ?2",
+                params![origin_client_id.to_string(), operation_id.to_string()],
+                row_to_provisional_mutation_acceptance,
+            )
+            .optional()
+            .map_err(provisional_acceptance_read_error)
+    }
+
+    pub(crate) fn provisional_mutation_acceptances(
+        &self,
+        revision: WorkspaceRevision,
+    ) -> Result<Vec<WorkspaceMutationAcceptedMessage>, SyncError> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT origin_client_id, operation_id, workspace_id, revision, accepted_json, accepted_digest FROM provisional_mutation_acceptances WHERE revision = ?1 ORDER BY origin_client_id, operation_id LIMIT 2",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(
+                params![revision.to_string()],
+                row_to_provisional_mutation_acceptance,
+            )
+            .map_err(storage_error)?;
+        rows.map(|row| row.map_err(provisional_acceptance_read_error))
+            .collect()
+    }
+
+    pub(crate) fn mutation_receipts_at_revision(
+        &self,
+        revision: WorkspaceRevision,
+    ) -> Result<Vec<AppliedOperationRecord>, SyncError> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json FROM applied_operations WHERE revision = ?1 AND receipt_kind = 'mutation_result' ORDER BY origin_client_id, operation_id LIMIT 2",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![revision.to_string()], row_to_applied_operation)
+            .map_err(storage_error)?;
+        rows.map(|row| row.map_err(applied_operation_read_error))
+            .collect()
     }
 
     pub fn put_conflict(&mut self, conflict: &ConflictRecord) -> Result<(), SyncError> {
@@ -1030,7 +1395,7 @@ impl SqliteState {
                 row_to_conflict,
             )
             .optional()
-            .map_err(storage_error)
+            .map_err(conflict_read_error)
     }
 
     pub fn conflicts(&self) -> Result<Vec<ConflictRecord>, SyncError> {
@@ -1043,7 +1408,7 @@ impl SqliteState {
         let rows = statement
             .query_map(params![self.workspace_id.to_string()], row_to_conflict)
             .map_err(storage_error)?;
-        rows.map(|row| row.map_err(storage_error))
+        rows.map(|row| row.map_err(conflict_read_error))
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -1109,7 +1474,7 @@ pub(crate) fn put_apply_journal_tx(
     }
     let existing = transaction
         .query_row(
-            "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, operation_json, preimage_json, postimage_json, stage FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
+            "SELECT apply_id, workspace_id, stream_id, item_kind, item_key, apply_namespace, operation_body_digest, operation_json, filesystem_operation_json, commit_json, preimage_json, postimage_json, filesystem_receipt_json, stage FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
             params![record.apply_id.0.to_string(), workspace_id.to_string()],
             row_to_apply_journal,
         )
@@ -1119,9 +1484,14 @@ pub(crate) fn put_apply_journal_tx(
         if existing.workspace_id != record.workspace_id
             || existing.stream_id != record.stream_id
             || existing.item_kind != record.item_kind
+            || existing.apply_namespace != record.apply_namespace
+            || existing.operation_body_digest != record.operation_body_digest
             || existing.operation_json != record.operation_json
+            || existing.filesystem_operation_json != record.filesystem_operation_json
+            || existing.commit_json != record.commit_json
             || existing.preimage_json != record.preimage_json
             || existing.postimage_json != record.postimage_json
+            || existing.filesystem_receipt_json != record.filesystem_receipt_json
             || existing.item_key != record.item_key
         {
             return Err(SyncError::OperationChanged);
@@ -1137,7 +1507,7 @@ pub(crate) fn put_apply_journal_tx(
                 params![
                     record.stage.as_str(),
                     record.apply_id.0.to_string(),
-                    workspace_id.to_string()
+                    workspace_id.to_string(),
                 ],
             )
             .map_err(storage_error)?;
@@ -1160,11 +1530,50 @@ pub(crate) fn put_apply_journal_tx(
         }
         transaction
             .execute(
-                "INSERT INTO apply_journal (apply_id, workspace_id, stream_id, item_kind, item_key, operation_json, preimage_json, postimage_json, stage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![record.apply_id.0.to_string(), record.workspace_id.to_string(), record.stream_id.to_string(), record.item_kind.as_str(), record.item_key, record.operation_json, record.preimage_json, record.postimage_json, record.stage.as_str()],
+                "INSERT INTO apply_journal (apply_id, workspace_id, stream_id, item_kind, item_key, apply_namespace, operation_body_digest, operation_json, filesystem_operation_json, commit_json, preimage_json, postimage_json, filesystem_receipt_json, stage) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![record.apply_id.0.to_string(), record.workspace_id.to_string(), record.stream_id.to_string(), record.item_kind.as_str(), record.item_key, record.apply_namespace.as_str(), record.operation_body_digest.as_slice(), record.operation_json, record.filesystem_operation_json, record.commit_json, record.preimage_json, record.postimage_json, record.filesystem_receipt_json, record.stage.as_str()],
             )
             .map_err(storage_error)?;
     }
+    Ok(())
+}
+
+pub(crate) fn set_apply_filesystem_applied_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    workspace_id: WorkspaceId,
+    apply_id: ApplyId,
+    receipt_json: &[u8],
+) -> Result<(), SyncError> {
+    let current = transaction
+        .query_row(
+            "SELECT stage, filesystem_receipt_json FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
+            params![apply_id.0.to_string(), workspace_id.to_string()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
+        )
+        .optional()
+        .map_err(storage_error)?
+        .ok_or(SyncError::ProtocolInvariant {
+            reason: "apply_journal_not_found",
+        })?;
+    let stage = ApplyStage::parse(&current.0).ok_or(corrupt("apply_journal", "stage"))?;
+    if stage == ApplyStage::FilesystemApplied {
+        return if current.1.as_deref() == Some(receipt_json) {
+            Ok(())
+        } else {
+            Err(SyncError::OperationChanged)
+        };
+    }
+    if stage != ApplyStage::FilesystemStarted {
+        return Err(SyncError::ProtocolInvariant {
+            reason: "apply_stage_regression",
+        });
+    }
+    transaction
+        .execute(
+            "UPDATE apply_journal SET filesystem_receipt_json = ?1, stage = 'filesystem_applied' WHERE apply_id = ?2 AND workspace_id = ?3 AND stage = 'filesystem_started'",
+            params![receipt_json, apply_id.0.to_string(), workspace_id.to_string()],
+        )
+        .map_err(storage_error)?;
     Ok(())
 }
 
@@ -1174,11 +1583,11 @@ pub(crate) fn set_apply_stage_tx(
     apply_id: ApplyId,
     stage: ApplyStage,
 ) -> Result<(), SyncError> {
-    let current = transaction
+    let (current, receipt): (String, Option<Vec<u8>>) = transaction
         .query_row(
-            "SELECT stage FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
+            "SELECT stage, filesystem_receipt_json FROM apply_journal WHERE apply_id = ?1 AND workspace_id = ?2",
             params![apply_id.0.to_string(), workspace_id.to_string()],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(storage_error)?
@@ -1186,6 +1595,11 @@ pub(crate) fn set_apply_stage_tx(
             reason: "apply_journal_not_found",
         })?;
     let current = ApplyStage::parse(&current).ok_or(corrupt("apply_journal", "stage"))?;
+    if matches!(stage, ApplyStage::DatabaseCommitted | ApplyStage::Finalized) && receipt.is_none() {
+        return Err(SyncError::ProtocolInvariant {
+            reason: "apply_receipt_missing",
+        });
+    }
     if !apply_stage_transition_allowed(current, stage) {
         return Err(SyncError::ProtocolInvariant {
             reason: "apply_stage_regression",
@@ -1225,30 +1639,187 @@ pub(crate) fn remove_apply_journal_tx(
 
 pub(crate) fn record_applied_operation_tx(
     transaction: &rusqlite::Transaction<'_>,
-    origin_client_id: ClientId,
-    operation_id: OperationId,
-    revision: WorkspaceRevision,
-    body_digest: [u8; 32],
+    write: AppliedOperationWrite<'_>,
 ) -> Result<(), SyncError> {
+    validate_applied_operation_write(
+        write.origin_client_id,
+        write.operation_id,
+        write.receipt_kind,
+        write.mutation_json,
+    )?;
     let existing = transaction
         .query_row(
-            "SELECT origin_client_id, operation_id, revision, body_digest FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
-            params![origin_client_id.to_string(), operation_id.to_string()],
+            "SELECT origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
+            params![write.origin_client_id.to_string(), write.operation_id.to_string()],
             row_to_applied_operation,
         )
         .optional()
         .map_err(storage_error)?;
     if let Some(existing) = existing {
-        if existing.body_digest != body_digest || existing.revision != revision {
-            return Err(SyncError::OperationChanged);
+        if existing.revision == write.revision
+            && existing.body_digest == write.body_digest
+            && existing.receipt_kind == write.receipt_kind
+            && existing.mutation_json.as_deref() == write.mutation_json
+        {
+            return Ok(());
         }
+        if existing.receipt_kind == AppliedOperationReceiptKind::Legacy
+            && existing.revision == write.revision
+            && write.legacy_body_digest == Some(existing.body_digest)
+        {
+            let changed = transaction
+                .execute(
+                    "UPDATE applied_operations SET body_digest = ?1, receipt_kind = ?2, mutation_json = ?3 WHERE origin_client_id = ?4 AND operation_id = ?5 AND revision = ?6 AND receipt_kind = 'legacy' AND body_digest = ?7",
+                    params![
+                        write.body_digest.as_slice(),
+                        write.receipt_kind.as_str(),
+                        write.mutation_json,
+                        write.origin_client_id.to_string(),
+                        write.operation_id.to_string(),
+                        write.revision.to_string(),
+                        existing.body_digest.as_slice(),
+                    ],
+                )
+                .map_err(storage_error)?;
+            if changed != 1 {
+                return Err(SyncError::OperationChanged);
+            }
+            return Ok(());
+        }
+        return Err(SyncError::OperationChanged);
     } else {
         transaction
             .execute(
-                "INSERT INTO applied_operations (origin_client_id, operation_id, revision, body_digest) VALUES (?1, ?2, ?3, ?4)",
-                params![origin_client_id.to_string(), operation_id.to_string(), revision.to_string(), body_digest.as_slice()],
+                "INSERT INTO applied_operations (origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    write.origin_client_id.to_string(),
+                    write.operation_id.to_string(),
+                    write.revision.to_string(),
+                    write.body_digest.as_slice(),
+                    write.receipt_kind.as_str(),
+                    write.mutation_json,
+                ],
             )
             .map_err(storage_error)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn record_provisional_mutation_acceptance_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    accepted: &WorkspaceMutationAcceptedMessage,
+) -> Result<(), SyncError> {
+    let receipt = transaction
+        .query_row(
+            "SELECT origin_client_id, operation_id, revision, body_digest, receipt_kind, mutation_json FROM applied_operations WHERE origin_client_id = ?1 AND operation_id = ?2",
+            params![accepted.client_id.to_string(), accepted.operation_id.to_string()],
+            row_to_applied_operation,
+        )
+        .optional()
+        .map_err(applied_operation_read_error)?
+        .ok_or(SyncError::ProtocolInvariant {
+            reason: "provisional_receipt_missing",
+        })?;
+    if receipt.receipt_kind != AppliedOperationReceiptKind::Legacy
+        || receipt.revision != accepted.revision
+    {
+        return Err(SyncError::OperationChanged);
+    }
+    let accepted_json = canonical_json(accepted)?;
+    let accepted_digest = body_digest(&accepted_json);
+    let existing: Option<Vec<u8>> = transaction
+        .query_row(
+            "SELECT accepted_json FROM provisional_mutation_acceptances WHERE origin_client_id = ?1 AND operation_id = ?2",
+            params![accepted.client_id.to_string(), accepted.operation_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(storage_error)?;
+    if let Some(existing) = existing {
+        return if existing == accepted_json {
+            Ok(())
+        } else {
+            Err(SyncError::OperationChanged)
+        };
+    }
+    transaction
+        .execute(
+            "INSERT INTO provisional_mutation_acceptances (origin_client_id, operation_id, workspace_id, revision, accepted_json, accepted_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                accepted.client_id.to_string(),
+                accepted.operation_id.to_string(),
+                accepted.workspace_id.to_string(),
+                accepted.revision.to_string(),
+                accepted_json,
+                accepted_digest.as_slice(),
+            ],
+        )
+        .map_err(storage_error)?;
+    Ok(())
+}
+
+pub(crate) fn remove_provisional_mutation_acceptance_tx(
+    transaction: &rusqlite::Transaction<'_>,
+    origin_client_id: ClientId,
+    operation_id: OperationId,
+) -> Result<(), SyncError> {
+    transaction
+        .execute(
+            "DELETE FROM provisional_mutation_acceptances WHERE origin_client_id = ?1 AND operation_id = ?2",
+            params![origin_client_id.to_string(), operation_id.to_string()],
+        )
+        .map_err(storage_error)?;
+    Ok(())
+}
+
+fn applied_operation_read_error(error: rusqlite::Error) -> SyncError {
+    match error {
+        rusqlite::Error::InvalidQuery => corrupt("applied_operations", "receipt"),
+        _ => storage_error(error),
+    }
+}
+
+fn validate_applied_operation_write(
+    origin_client_id: ClientId,
+    operation_id: OperationId,
+    receipt_kind: AppliedOperationReceiptKind,
+    mutation_json: Option<&[u8]>,
+) -> Result<(), SyncError> {
+    match receipt_kind {
+        AppliedOperationReceiptKind::Legacy => {
+            return Err(SyncError::InvalidConfiguration {
+                reason: "legacy_receipt_write_forbidden",
+            });
+        }
+        AppliedOperationReceiptKind::ConflictResolution if mutation_json.is_some() => {
+            return Err(SyncError::InvalidConfiguration {
+                reason: "conflict_receipt_has_mutation",
+            });
+        }
+        AppliedOperationReceiptKind::ConflictResolution => return Ok(()),
+        AppliedOperationReceiptKind::MutationResult => {}
+    }
+    let mutation_json = mutation_json.ok_or(SyncError::InvalidConfiguration {
+        reason: "mutation_receipt_missing_mutation",
+    })?;
+    let mutation: WorkspaceMutation =
+        serde_json::from_slice(mutation_json).map_err(|_| SyncError::InvalidConfiguration {
+            reason: "mutation_receipt_invalid_mutation",
+        })?;
+    mutation
+        .validate()
+        .map_err(|_| SyncError::InvalidConfiguration {
+            reason: "mutation_receipt_invalid_mutation",
+        })?;
+    if mutation.client_id != origin_client_id || mutation.operation_id != operation_id {
+        return Err(SyncError::InvalidConfiguration {
+            reason: "mutation_receipt_identity_mismatch",
+        });
+    }
+    if canonical_json(&mutation)? != mutation_json {
+        return Err(SyncError::InvalidConfiguration {
+            reason: "mutation_receipt_not_canonical",
+        });
     }
     Ok(())
 }
@@ -1546,6 +2117,19 @@ fn row_to_path_state(row: &rusqlite::Row<'_>) -> rusqlite::Result<PathStateRecor
     })
 }
 
+fn bounded_body_len(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+    table: &'static str,
+) -> Result<usize, SyncError> {
+    let raw = row.get::<_, i64>(index).map_err(storage_error)?;
+    usize::try_from(raw).map_err(|_| corrupt(table, "body_json"))
+}
+
+fn bounded_count(raw: i64, table: &'static str) -> Result<u64, SyncError> {
+    u64::try_from(raw).map_err(|_| corrupt(table, "count"))
+}
+
 fn row_to_outbox(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxRecord> {
     let client_id = parse_client_id(&row.get::<_, String>(0)?)?;
     let operation_id = parse_operation_id(&row.get::<_, String>(1)?)?;
@@ -1833,6 +2417,12 @@ pub(crate) fn put_stream_entry_tx(
         if existing.body_digest != body_digest {
             return Err(SyncError::OperationChanged);
         }
+        if matches!(
+            existing.status,
+            StreamItemStatus::Applied | StreamItemStatus::Preserved
+        ) {
+            return Ok(existing);
+        }
         if !stream_status_transition_allowed(existing.status, status) {
             return Err(SyncError::StreamInvariant {
                 reason: "stream_status_regression",
@@ -1923,6 +2513,15 @@ fn apply_stage_transition_allowed(from: ApplyStage, to: ApplyStage) -> bool {
             ApplyStage::Prepared,
             ApplyStage::Prepared | ApplyStage::FilesystemStarted
         ) | (ApplyStage::FilesystemStarted, ApplyStage::FilesystemStarted)
+            | (
+                ApplyStage::FilesystemApplied,
+                ApplyStage::FilesystemApplied | ApplyStage::DatabaseCommitted
+            )
+            | (
+                ApplyStage::DatabaseCommitted,
+                ApplyStage::DatabaseCommitted | ApplyStage::Finalized
+            )
+            | (ApplyStage::Finalized, ApplyStage::Finalized)
     )
 }
 
@@ -2050,6 +2649,12 @@ pub(crate) fn put_stream_revision_item_tx(
             || existing.event_index != event_index
         {
             return Err(SyncError::OperationChanged);
+        }
+        if matches!(
+            existing.status,
+            StreamItemStatus::Applied | StreamItemStatus::Preserved
+        ) {
+            return Ok(existing);
         }
         if !stream_status_transition_allowed(existing.status, status) {
             return Err(SyncError::StreamInvariant {
@@ -2195,6 +2800,12 @@ pub(crate) fn put_stream_conflict_tx(
         if existing.created_json != created_json {
             return Err(SyncError::OperationChanged);
         }
+        if matches!(
+            existing.status,
+            StreamConflictStatus::Replaced | StreamConflictStatus::Pruned
+        ) {
+            return Ok(existing);
+        }
         if !stream_conflict_status_transition_allowed(existing.status, status) {
             return Err(SyncError::StreamInvariant {
                 reason: "stream_conflict_status_regression",
@@ -2242,110 +2853,38 @@ pub(crate) fn replace_authoritative_conflicts_tx(
     workspace_id: WorkspaceId,
     stream_id: StreamId,
 ) -> Result<(), SyncError> {
-    let staged = {
-        let mut statement = transaction
-            .prepare(
-                "SELECT workspace_id, stream_id, conflict_id, conflict_revision, created_json, status FROM stream_conflicts WHERE workspace_id = ?1 AND stream_id = ?2 ORDER BY conflict_id",
-            )
-            .map_err(storage_error)?;
-        statement
-            .query_map(
-                params![workspace_id.to_string(), stream_id.to_string()],
-                row_to_stream_conflict,
-            )
-            .map_err(storage_error)?
-            .map(|row| row.map_err(storage_error))
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    let existing = {
-        let mut statement = transaction
-            .prepare(
-                "SELECT conflict_id, resolution_json, resolution_digest FROM conflicts WHERE workspace_id = ?1",
-            )
-            .map_err(storage_error)?;
-        statement
-            .query_map(params![workspace_id.to_string()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, Option<Vec<u8>>>(1)?,
-                    row.get::<_, Option<Vec<u8>>>(2)?,
-                ))
-            })
-            .map_err(storage_error)?
-            .map(|row| row.map_err(storage_error))
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    for (conflict_id, resolution_json, resolution_digest) in existing {
-        let staged_conflict = staged
-            .iter()
-            .find(|conflict| conflict.conflict_id.to_string() == conflict_id);
-        match staged_conflict {
-            Some(conflict) => {
-                let has_resolution = resolution_json.is_some();
-                let status = if has_resolution {
-                    ConflictStatus::RefreshRequired
-                } else {
-                    ConflictStatus::Manual
-                };
-                transaction
-                    .execute(
-                        "INSERT INTO conflicts (conflict_id, workspace_id, conflict_revision, created_json, status, candidate_hash, resolution_json, resolution_digest) VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7) ON CONFLICT(conflict_id) DO UPDATE SET workspace_id = excluded.workspace_id, conflict_revision = excluded.conflict_revision, created_json = excluded.created_json, status = excluded.status, candidate_hash = NULL, resolution_json = excluded.resolution_json, resolution_digest = excluded.resolution_digest",
-                        params![
-                            conflict_id,
-                            workspace_id.to_string(),
-                            conflict_revision_string(&conflict.conflict_revision)?,
-                            conflict.created_json,
-                            status.as_str(),
-                            resolution_json,
-                            resolution_digest,
-                        ],
-                    )
-                    .map_err(storage_error)?;
-            }
-            None if resolution_json.is_some() => {
-                transaction
-                    .execute(
-                        "UPDATE conflicts SET status = 'refresh_required' WHERE workspace_id = ?1 AND conflict_id = ?2",
-                        params![workspace_id.to_string(), conflict_id],
-                    )
-                    .map_err(storage_error)?;
-            }
-            None => {
-                transaction
-                    .execute(
-                        "DELETE FROM conflicts WHERE workspace_id = ?1 AND conflict_id = ?2",
-                        params![workspace_id.to_string(), conflict_id],
-                    )
-                    .map_err(storage_error)?;
-            }
-        }
-    }
-
-    for conflict in staged {
-        let exists: Option<String> = transaction
-            .query_row(
-                "SELECT conflict_id FROM conflicts WHERE workspace_id = ?1 AND conflict_id = ?2",
-                params![workspace_id.to_string(), conflict.conflict_id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(storage_error)?;
-        if exists.is_none() {
-            transaction
-                .execute(
-                    "INSERT INTO conflicts (conflict_id, workspace_id, conflict_revision, created_json, status, candidate_hash, resolution_json, resolution_digest) VALUES (?1, ?2, ?3, ?4, 'manual', NULL, NULL, NULL)",
-                    params![
-                        conflict.conflict_id.to_string(),
-                        workspace_id.to_string(),
-                        conflict_revision_string(&conflict.conflict_revision)?,
-                        conflict.created_json,
-                    ],
-                )
-                .map_err(storage_error)?;
-        }
-    }
+    let workspace_id = workspace_id.to_string();
+    let stream_id = stream_id.to_string();
+    transaction
+        .execute(
+            "DELETE FROM outbox WHERE workspace_id = ?1 AND EXISTS (SELECT 1 FROM conflicts AS existing JOIN stream_conflicts AS staged ON staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = existing.conflict_id WHERE existing.workspace_id = ?1 AND (existing.conflict_revision != staged.conflict_revision OR existing.status = 'refresh_required') AND existing.resolution_json IS NOT NULL AND existing.resolution_json = outbox.body_json AND existing.resolution_digest = outbox.body_digest)",
+            params![workspace_id, stream_id],
+        )
+        .map_err(storage_error)?;
+    transaction
+        .execute(
+            "UPDATE conflicts SET conflict_revision = (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), created_json = (SELECT staged.created_json FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), status = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' OR resolution_json IS NULL THEN 'manual' ELSE 'refresh_required' END, candidate_hash = NULL, resolution_json = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_json END, resolution_digest = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_digest END WHERE workspace_id = ?1 AND EXISTS (SELECT 1 FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id)",
+            params![workspace_id, stream_id],
+        )
+        .map_err(storage_error)?;
+    transaction
+        .execute(
+            "UPDATE conflicts SET status = 'refresh_required' WHERE workspace_id = ?1 AND resolution_json IS NOT NULL AND NOT EXISTS (SELECT 1 FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id)",
+            params![workspace_id, stream_id],
+        )
+        .map_err(storage_error)?;
+    transaction
+        .execute(
+            "DELETE FROM conflicts WHERE workspace_id = ?1 AND resolution_json IS NULL AND NOT EXISTS (SELECT 1 FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id)",
+            params![workspace_id, stream_id],
+        )
+        .map_err(storage_error)?;
+    transaction
+        .execute(
+            "INSERT INTO conflicts (conflict_id, workspace_id, conflict_revision, created_json, status, candidate_hash, resolution_json, resolution_digest) SELECT staged.conflict_id, staged.workspace_id, staged.conflict_revision, staged.created_json, 'manual', NULL, NULL, NULL FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND NOT EXISTS (SELECT 1 FROM conflicts WHERE conflicts.workspace_id = ?1 AND conflicts.conflict_id = staged.conflict_id)",
+            params![workspace_id, stream_id],
+        )
+        .map_err(storage_error)?;
     Ok(())
 }
 
@@ -2528,20 +3067,69 @@ fn row_to_apply_journal(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApplyJourna
         item_kind: ApplyItemKind::parse(&row.get::<_, String>(3)?)
             .ok_or(rusqlite::Error::InvalidQuery)?,
         item_key: row.get(4)?,
-        operation_json: row.get(5)?,
-        preimage_json: row.get(6)?,
-        postimage_json: row.get(7)?,
-        stage: ApplyStage::parse(&row.get::<_, String>(8)?).ok_or(rusqlite::Error::InvalidQuery)?,
+        apply_namespace: ApplyNamespace::parse(&row.get::<_, String>(5)?)
+            .ok_or(rusqlite::Error::InvalidQuery)?,
+        operation_body_digest: parse_digest(&row.get::<_, Vec<u8>>(6)?)?,
+        operation_json: row.get(7)?,
+        filesystem_operation_json: row.get(8)?,
+        commit_json: row.get(9)?,
+        preimage_json: row.get(10)?,
+        postimage_json: row.get(11)?,
+        filesystem_receipt_json: row.get(12)?,
+        stage: ApplyStage::parse(&row.get::<_, String>(13)?)
+            .ok_or(rusqlite::Error::InvalidQuery)?,
     })
 }
 
 fn row_to_applied_operation(row: &rusqlite::Row<'_>) -> rusqlite::Result<AppliedOperationRecord> {
+    let receipt_kind = AppliedOperationReceiptKind::parse(&row.get::<_, String>(4)?)
+        .ok_or(rusqlite::Error::InvalidQuery)?;
+    let mutation_json: Option<Vec<u8>> = row.get(5)?;
+    if (receipt_kind == AppliedOperationReceiptKind::MutationResult) != mutation_json.is_some() {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     Ok(AppliedOperationRecord {
         origin_client_id: parse_client_id(&row.get::<_, String>(0)?)?,
         operation_id: parse_operation_id(&row.get::<_, String>(1)?)?,
         revision: parse_revision(&row.get::<_, String>(2)?)?,
         body_digest: parse_digest(&row.get::<_, Vec<u8>>(3)?)?,
+        receipt_kind,
+        mutation_json,
     })
+}
+
+fn row_to_provisional_mutation_acceptance(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<WorkspaceMutationAcceptedMessage> {
+    let origin_client_id = parse_client_id(&row.get::<_, String>(0)?)?;
+    let operation_id = parse_operation_id(&row.get::<_, String>(1)?)?;
+    let workspace_id = parse_workspace_id(&row.get::<_, String>(2)?)?;
+    let revision = parse_revision(&row.get::<_, String>(3)?)?;
+    let accepted_json: Vec<u8> = row.get(4)?;
+    let accepted_digest = parse_digest(&row.get::<_, Vec<u8>>(5)?)?;
+    let accepted: WorkspaceMutationAcceptedMessage = parse_json(&accepted_json)?;
+    accepted
+        .validate()
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    if accepted.client_id != origin_client_id
+        || accepted.operation_id != operation_id
+        || accepted.workspace_id != workspace_id
+        || accepted.revision != revision
+        || canonical_json(&accepted).map_err(|_| rusqlite::Error::InvalidQuery)? != accepted_json
+        || body_digest(&accepted_json) != accepted_digest
+    {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    Ok(accepted)
+}
+
+fn provisional_acceptance_read_error(error: rusqlite::Error) -> SyncError {
+    match error {
+        rusqlite::Error::InvalidQuery => {
+            corrupt("provisional_mutation_acceptances", "accepted_json")
+        }
+        _ => storage_error(error),
+    }
 }
 
 fn row_to_conflict(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConflictRecord> {
@@ -2589,6 +3177,13 @@ fn row_to_conflict(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConflictRecord> 
             .map(|digest| parse_digest(&digest))
             .transpose()?,
     })
+}
+
+fn conflict_read_error(error: rusqlite::Error) -> SyncError {
+    match error {
+        rusqlite::Error::InvalidQuery => corrupt("conflicts", "row"),
+        _ => storage_error(error),
+    }
 }
 
 fn parse_conflict_id(value: &str) -> rusqlite::Result<ConflictId> {

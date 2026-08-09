@@ -4,11 +4,23 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+blake3 = { workspace = true }
+clap = { workspace = true }
 fns-agent = { path = "../../bins/fns-agent" }
 fns-platform = { path = "../../crates/fns-platform" }
 fns-protocol = { path = "../../crates/fns-protocol" }
+fns-transport = { path = "../../crates/fns-transport" }
+hex = { workspace = true }
+libc = "0.2"
+rusqlite = { workspace = true }
+rustix = { workspace = true, features = ["pipe", "process"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-uuid = { workspace = true }
+zeroize = { workspace = true }

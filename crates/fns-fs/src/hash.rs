@@ -114,9 +114,92 @@ pub struct ContentDescriptor {
     pub fingerprint: FileFingerprint,
 }
 
+#[derive(Clone)]
 pub struct ContentCache {
     blob_dir: PathBuf,
     temp_dir: PathBuf,
+}
+
+/// A crash-cleaned content-cache import that is not visible to readers until
+/// it has been sealed and explicitly committed.
+pub struct StagedContentImport {
+    cache: ContentCache,
+    temporary: CacheTempFile,
+    expected: WorkspaceContentHash,
+    expected_size: u64,
+    hasher: Hasher,
+    written: u64,
+}
+
+/// A fully written, fsynced, size/hash-verified import awaiting its commit
+/// point. Dropping it abandons the staging file.
+pub struct SealedContentImport {
+    cache: ContentCache,
+    temporary: CacheTempFile,
+    expected: WorkspaceContentHash,
+    size: u64,
+}
+
+impl StagedContentImport {
+    pub fn write_chunk(&mut self, bytes: &[u8]) -> Result<(), FsError> {
+        let written = self
+            .written
+            .checked_add(bytes.len() as u64)
+            .ok_or(FsError::SizeMismatch)?;
+        if written > self.expected_size || written > MAX_BLOB_BYTES {
+            return Err(FsError::SizeMismatch);
+        }
+        self.temporary
+            .file
+            .write_all(bytes)
+            .map_err(|_| FsError::Io {
+                operation: "write content staging",
+            })?;
+        self.hasher.update(bytes);
+        self.written = written;
+        Ok(())
+    }
+
+    pub fn seal(mut self) -> Result<SealedContentImport, FsError> {
+        if self.written != self.expected_size {
+            return Err(FsError::SizeMismatch);
+        }
+        let actual =
+            WorkspaceContentHash::parse(&format!("blake3:{}", self.hasher.finalize().to_hex()))
+                .map_err(|_| FsError::ContentMismatch)?;
+        if actual != self.expected {
+            return Err(FsError::ContentMismatch);
+        }
+        self.temporary.file.flush().map_err(|_| FsError::Io {
+            operation: "flush content staging",
+        })?;
+        self.temporary.file.sync_all().map_err(|_| FsError::Io {
+            operation: "sync content staging",
+        })?;
+        Ok(SealedContentImport {
+            cache: self.cache,
+            temporary: self.temporary,
+            expected: self.expected,
+            size: self.expected_size,
+        })
+    }
+}
+
+impl SealedContentImport {
+    pub fn commit(self) -> Result<ContentDescriptor, FsError> {
+        self.cache
+            .commit_temporary(self.temporary, &self.expected, self.size)?;
+        Ok(ContentDescriptor {
+            content_hash: self.expected,
+            size: self.size,
+            metadata: WorkspaceFileMetadata {
+                size: self.size,
+                modified_at_ms: 0,
+                executable: false,
+            },
+            fingerprint: synthetic_fingerprint(self.size),
+        })
+    }
 }
 
 impl ContentCache {
@@ -135,17 +218,24 @@ impl ContentCache {
                 let Some(name) = name.to_str() else {
                     continue;
                 };
-                if !name.starts_with(".fns-tmp-") || name.ends_with(".lock") {
+                if !name.starts_with(".fns-tmp-") {
                     continue;
                 }
-                let lock_path = entry.path().with_file_name(format!("{name}.lock"));
+                let base_name = name
+                    .strip_suffix(".lock")
+                    .or_else(|| name.strip_suffix(".staging"))
+                    .unwrap_or(name);
+                let base_path = temp_dir.join(base_name);
+                let staging_path = temp_dir.join(format!("{base_name}.staging"));
+                let lock_path = temp_dir.join(format!("{base_name}.lock"));
                 let lock_available = match File::options().read(true).write(true).open(&lock_path) {
                     Ok(lock) => lock.try_lock().is_ok(),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
                     Err(_) => false,
                 };
                 if lock_available {
-                    let _ = fs::remove_file(entry.path());
+                    let _ = fs::remove_file(base_path);
+                    let _ = fs::remove_file(staging_path);
                     let _ = fs::remove_file(lock_path);
                 }
             }
@@ -251,6 +341,25 @@ impl ContentCache {
             size,
             metadata,
             fingerprint: synthetic_fingerprint(size),
+        })
+    }
+
+    pub fn begin_staged_import(
+        &self,
+        expected: WorkspaceContentHash,
+        size: u64,
+    ) -> Result<StagedContentImport, FsError> {
+        WorkspaceContentHash::parse(expected.as_str()).map_err(|_| FsError::ContentMismatch)?;
+        if size > MAX_BLOB_BYTES {
+            return Err(FsError::SizeMismatch);
+        }
+        Ok(StagedContentImport {
+            cache: self.clone(),
+            temporary: self.temp_file()?,
+            expected,
+            expected_size: size,
+            hasher: Hasher::new(),
+            written: 0,
         })
     }
 

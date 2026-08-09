@@ -5,6 +5,8 @@
 //! with the desired HTTP status, which tungstenite sends back and the client
 //! observes as `Error::Http`.
 
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt;
@@ -35,6 +37,54 @@ pub enum FakeServerKind {
 pub struct FakeWorkspaceServer {
     pub endpoint: String,
     observation: Arc<Mutex<Option<UpgradeObservation>>>,
+}
+
+/// A one-connection WebSocket server whose post-upgrade behavior is supplied by
+/// the test. Dropping it aborts the script so timeout/cancellation tests cannot
+/// leave background tasks behind.
+pub struct ScriptedWorkspaceServer {
+    endpoint: String,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl ScriptedWorkspaceServer {
+    pub async fn start<F, Fut>(script: F) -> Self
+    where
+        F: FnOnce(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let endpoint = format!("ws://127.0.0.1:{}/api/user/workspace-sync/v2", addr.port());
+        let task = tokio::spawn(async move {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            let Ok(socket) = tokio_tungstenite::accept_async(stream).await else {
+                return;
+            };
+            script(socket).await;
+        });
+        Self { endpoint, task }
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    pub async fn finish(mut self) {
+        (&mut self.task)
+            .await
+            .expect("scripted workspace server task failed");
+    }
+}
+
+impl Drop for ScriptedWorkspaceServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 impl FakeWorkspaceServer {

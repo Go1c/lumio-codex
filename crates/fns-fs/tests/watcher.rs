@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use fns_fs::{
@@ -25,43 +26,63 @@ fn bounded_ingress_turns_overflow_into_one_rescan_gap() {
 }
 
 #[test]
-fn blocked_receiver_is_woken_by_a_later_overflow_gap() {
-    let (ingress, receiver) = WatchIngress::bounded(1);
-    let event = |name: &str| NormalizedWatchEvent {
+fn zero_capacity_overflow_delivers_one_gap() {
+    for attempt in 0..100 {
+        let (ingress, receiver) = WatchIngress::bounded(0);
+        let event = NormalizedWatchEvent {
+            kind: NativeWatchKind::Modify,
+            paths: vec![PathBuf::from(format!("overflow-{attempt}"))],
+            rename_cookie: None,
+            observed_at: Instant::now(),
+        };
+
+        assert!(ingress.try_send(event).is_err());
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            WatchMessage::Gap(fns_fs::WatchGap::Overflow)
+        ));
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(1)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+    }
+}
+
+#[test]
+fn receive_timeout_distinguishes_messages_timeout_and_disconnection() {
+    let event = || NormalizedWatchEvent {
         kind: NativeWatchKind::Modify,
-        paths: vec![PathBuf::from(name)],
+        paths: vec![PathBuf::from("changed.txt")],
         rename_cookie: None,
         observed_at: Instant::now(),
     };
-    ingress.try_send(event("first")).unwrap();
 
-    let (ready_sender, ready_receiver) = std::sync::mpsc::channel();
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let reader_barrier = std::sync::Arc::clone(&barrier);
-    let reader = std::thread::spawn(move || {
-        assert!(matches!(receiver.recv().unwrap(), WatchMessage::Event(_)));
-        ready_sender.send(()).unwrap();
-        assert!(matches!(receiver.recv().unwrap(), WatchMessage::Event(_)));
-        ready_sender.send(()).unwrap();
-        assert!(matches!(receiver.recv().unwrap(), WatchMessage::Event(_)));
-        ready_sender.send(()).unwrap();
-        reader_barrier.wait();
-        match receiver.recv().unwrap() {
-            WatchMessage::Gap(gap) => WatchMessage::Gap(gap),
-            WatchMessage::Event(_) => receiver.recv().unwrap(),
-        }
-    });
-    ready_receiver.recv().unwrap();
-    ingress.try_send(event("second")).unwrap();
-    ready_receiver.recv().unwrap();
-    ingress.try_send(event("third")).unwrap();
-    ready_receiver.recv().unwrap();
-    barrier.wait();
-    std::thread::sleep(Duration::from_millis(20));
-    ingress.try_send(event("fourth")).unwrap();
-    assert!(ingress.try_send(event("fifth")).is_err());
+    let (event_ingress, event_receiver) = WatchIngress::bounded(1);
+    event_ingress.try_send(event()).unwrap();
+    assert!(matches!(
+        event_receiver.recv_timeout(Duration::from_secs(1)),
+        Ok(WatchMessage::Event(_))
+    ));
 
-    assert!(matches!(reader.join().unwrap(), WatchMessage::Gap(_)));
+    let (gap_ingress, gap_receiver) = WatchIngress::bounded(0);
+    assert!(gap_ingress.try_send(event()).is_err());
+    assert!(matches!(
+        gap_receiver.recv_timeout(Duration::from_secs(1)),
+        Ok(WatchMessage::Gap(fns_fs::WatchGap::Overflow))
+    ));
+
+    let (_idle_ingress, idle_receiver) = WatchIngress::bounded(1);
+    assert!(matches!(
+        idle_receiver.recv_timeout(Duration::from_millis(1)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+
+    let (disconnected_ingress, disconnected_receiver) = WatchIngress::bounded(1);
+    drop(disconnected_ingress);
+    assert!(matches!(
+        disconnected_receiver.recv_timeout(Duration::from_secs(1)),
+        Err(RecvTimeoutError::Disconnected)
+    ));
 }
 
 #[test]
@@ -96,6 +117,45 @@ fn started_watcher_reports_a_real_file_change() {
     }
 
     assert!(found, "watcher did not report the changed file");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn reading_a_watched_file_does_not_request_a_rescan() {
+    let area = tempfile::tempdir().unwrap();
+    let file = area.path().join("observed.txt");
+    std::fs::write(&file, b"before").unwrap();
+    let root = RootedWorkspace::open(area.path()).unwrap();
+    let (_watcher, receiver) = start_platform_watcher(&root, 32).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+
+    assert_eq!(std::fs::read(&file).unwrap(), b"before");
+    assert!(matches!(
+        receiver.recv_timeout(Duration::from_millis(250)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+
+    std::fs::write(&file, b"after").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut found_mutation = false;
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(WatchMessage::Event(event))
+                if event
+                    .paths
+                    .iter()
+                    .any(|path| path == &PathBuf::from("observed.txt")) =>
+            {
+                found_mutation = true;
+                break;
+            }
+            Ok(WatchMessage::Event(_)) => {}
+            Ok(WatchMessage::Gap(gap)) => panic!("file mutation produced watcher gap: {gap:?}"),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => panic!("watcher disconnected"),
+        }
+    }
+    assert!(found_mutation, "watcher did not report a real mutation");
 }
 
 #[cfg(unix)]

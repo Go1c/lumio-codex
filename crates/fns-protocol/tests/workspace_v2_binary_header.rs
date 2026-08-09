@@ -3,7 +3,7 @@ use std::{fmt::Debug, fs, path::PathBuf};
 use fns_protocol::{
     BLOB_CHUNK_BYTES, BLOB_HEADER_LEN, TransferId, WorkspaceBlobDirection, WorkspaceBlobHeader,
     WorkspaceValidationError, compute_blob_digest, decode_binary_frame,
-    deserialize_optional_non_null, encode_binary_frame,
+    deserialize_optional_non_null, encode_binary_frame, encode_binary_frame_owned,
 };
 use serde::Deserialize;
 
@@ -147,6 +147,32 @@ fn unit_codec_encodes_exact_upload_final_layout() {
     header
         .validate_sequence(0, 0, true)
         .expect("single final chunk is a valid sequence");
+}
+
+#[test]
+fn owned_encoder_reuses_a_preallocated_payload_buffer() {
+    let payload = b"owned payload";
+    let mut owned = Vec::with_capacity(BLOB_HEADER_LEN + payload.len());
+    owned.extend_from_slice(payload);
+    let allocation = owned.as_ptr();
+
+    let frame = encode_binary_frame_owned(
+        WorkspaceBlobDirection::Upload,
+        true,
+        transfer_id(),
+        0,
+        0,
+        owned,
+    )
+    .unwrap();
+
+    assert_eq!(
+        frame.as_ptr(),
+        allocation,
+        "owned framing allocated a second blob buffer"
+    );
+    let (_, decoded) = decode_binary_frame(&frame).unwrap();
+    assert_eq!(decoded, payload);
 }
 
 #[test]

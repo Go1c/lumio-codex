@@ -26,8 +26,16 @@ pub enum SyncError {
     ConflictUnavailable,
     #[error("conflict revision is stale")]
     ConflictRevisionStale,
+    #[error("conflict resolution changed")]
+    ConflictResolutionChanged,
+    #[error("conflict cannot be resolved: {reason}")]
+    ConflictResolutionBlocked {
+        reason: crate::model::ConflictBlockedReason,
+    },
     #[error("merge rejected: {reason}")]
     MergeRejected { reason: &'static str },
+    #[error("resource limit exceeded: {resource}")]
+    ResourceLimit { resource: &'static str },
     #[error("filesystem operation failed")]
     Filesystem(#[source] fns_fs::FsError),
     #[error("workspace scan incomplete")]

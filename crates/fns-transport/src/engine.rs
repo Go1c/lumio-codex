@@ -7,17 +7,48 @@
 use crate::ENGINE_QUEUE_CAPACITY;
 use crate::error::{TransportError, TransportErrorCode};
 
-use fns_sync_core::{SyncEngine, WorkspaceCursor};
+use fns_sync_core::{
+    ConflictResolutionInput, ConflictResolutionReceipt, ConflictView, SyncEngine, WorkspaceCursor,
+};
+use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
+
+enum BlobImportStage {
+    Staging(Box<fns_fs::StagedContentImport>),
+    Sealed(fns_fs::SealedContentImport),
+}
+
+/// Read-only durable engine metrics used by the agent status publisher.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineRuntimeStatus {
+    pub last_ack_revision: fns_protocol::WorkspaceRevision,
+    pub pending_commands: u64,
+}
 
 /// Private request variants — each maps to exactly one SyncEngine method.
 #[allow(dead_code)] // Not all variants are used until dispatch/stream tasks land.
 enum EngineCall {
+    PrepareConnectionAttempt {
+        tx: oneshot::Sender<Result<usize, TransportError>>,
+    },
     Cursor {
         tx: oneshot::Sender<Result<WorkspaceCursor, TransportError>>,
     },
+    RuntimeStatus {
+        tx: oneshot::Sender<Result<EngineRuntimeStatus, TransportError>>,
+    },
+    ListConflicts {
+        tx: oneshot::Sender<Result<Vec<ConflictView>, TransportError>>,
+    },
+    ResolveConflict {
+        input: ConflictResolutionInput,
+        tx: oneshot::Sender<Result<ConflictResolutionReceipt, TransportError>>,
+    },
     ActiveStreamMode {
         tx: oneshot::Sender<Result<Option<fns_sync_core::StreamMode>, TransportError>>,
+    },
+    CompletedStreamAckRevision {
+        tx: oneshot::Sender<Result<Option<fns_protocol::WorkspaceRevision>, TransportError>>,
     },
     PendingCommands {
         limit: usize,
@@ -59,6 +90,15 @@ enum EngineCall {
         message: fns_protocol::WorkspaceConflictResolvedMessage,
         tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
     },
+    ConflictResolutionAccepted {
+        message: fns_protocol::WorkspaceConflictResolvedMessage,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    ConflictResolutionRejected {
+        operation_id: fns_protocol::OperationId,
+        code: fns_protocol::WorkspaceV2ErrorCode,
+        tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
+    },
     AckConfirmed {
         message: fns_protocol::WorkspaceAckRequest,
         tx: oneshot::Sender<Result<(), TransportError>>,
@@ -67,11 +107,31 @@ enum EngineCall {
         content_hash: fns_protocol::WorkspaceContentHash,
         tx: oneshot::Sender<Result<std::fs::File, TransportError>>,
     },
-    BlobAvailable {
+    BeginBlobImport {
+        transfer_id: fns_protocol::TransferId,
         content_hash: fns_protocol::WorkspaceContentHash,
         size: u64,
-        data: Vec<u8>,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    WriteBlobChunk {
+        transfer_id: fns_protocol::TransferId,
+        data: tokio_tungstenite::tungstenite::Bytes,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    SealBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    CommitBlobImport {
+        transfer_id: fns_protocol::TransferId,
         tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
+    },
+    AbortBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    AbortBlobImports {
+        tx: oneshot::Sender<Result<(), TransportError>>,
     },
     BlobUploaded {
         operation_id: fns_protocol::OperationId,
@@ -105,6 +165,7 @@ impl EngineWorker {
             .name("fns-sync-engine".into())
             .spawn(move || {
                 let mut engine = engine;
+                let mut blob_imports = HashMap::new();
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -115,7 +176,7 @@ impl EngineWorker {
                 rt.block_on(async move {
                     while let Some(call) = rx.recv().await {
                         let should_stop = matches!(call, EngineCall::Shutdown { .. });
-                        process_call(&mut engine, call);
+                        process_call(&mut engine, &mut blob_imports, call);
                         if should_stop {
                             break;
                         }
@@ -151,13 +212,47 @@ impl Drop for EngineWorker {
     }
 }
 
-fn process_call(engine: &mut SyncEngine, call: EngineCall) {
+fn process_call(
+    engine: &mut SyncEngine,
+    blob_imports: &mut HashMap<fns_protocol::TransferId, BlobImportStage>,
+    call: EngineCall,
+) {
     match call {
+        EngineCall::PrepareConnectionAttempt { tx } => {
+            let _ = tx.send(map_err_named(
+                engine.prepare_connection_attempt(),
+                "prepare_connection_attempt",
+            ));
+        }
         EngineCall::Cursor { tx } => {
             let _ = tx.send(map_err(engine.cursor()));
         }
+        EngineCall::RuntimeStatus { tx } => {
+            let status = engine.cursor().and_then(|cursor| {
+                Ok(EngineRuntimeStatus {
+                    last_ack_revision: cursor.last_ack_revision,
+                    pending_commands: engine.state().pending_work_count()?,
+                })
+            });
+            let _ = tx.send(map_err_named(status, "runtime_status"));
+        }
+        EngineCall::ListConflicts { tx } => {
+            let _ = tx.send(map_conflict_control_error(
+                engine.list_conflicts(),
+                "list_conflicts",
+            ));
+        }
+        EngineCall::ResolveConflict { input, tx } => {
+            let _ = tx.send(map_conflict_control_error(
+                engine.resolve_conflict(input.conflict_id, input.conflict_revision, input.choice),
+                "resolve_conflict",
+            ));
+        }
         EngineCall::ActiveStreamMode { tx } => {
             let _ = tx.send(map_err(engine.active_stream_mode()));
+        }
+        EngineCall::CompletedStreamAckRevision { tx } => {
+            let _ = tx.send(map_err(engine.completed_stream_ack_revision()));
         }
         EngineCall::PendingCommands { limit, tx } => {
             let _ = tx.send(map_err_named(
@@ -203,6 +298,22 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
                 "conflict_resolved",
             ));
         }
+        EngineCall::ConflictResolutionAccepted { message, tx } => {
+            let _ = tx.send(map_err_named(
+                engine.conflict_resolution_accepted(message),
+                "conflict_resolution_accepted",
+            ));
+        }
+        EngineCall::ConflictResolutionRejected {
+            operation_id,
+            code,
+            tx,
+        } => {
+            let _ = tx.send(map_err_named(
+                engine.conflict_resolution_rejected(operation_id, code),
+                "conflict_resolution_rejected",
+            ));
+        }
         EngineCall::AckConfirmed { message, tx } => {
             let _ = tx.send(map_err_named(
                 engine.ack_confirmed(message),
@@ -212,32 +323,147 @@ fn process_call(engine: &mut SyncEngine, call: EngineCall) {
         EngineCall::OpenBlob { content_hash, tx } => {
             let _ = tx.send(map_err(engine.open_blob(&content_hash)));
         }
-        EngineCall::BlobAvailable {
+        EngineCall::BeginBlobImport {
+            transfer_id,
             content_hash,
             size,
+            tx,
+        } => {
+            let result = match blob_imports.entry(transfer_id) {
+                std::collections::hash_map::Entry::Vacant(entry) => engine
+                    .begin_blob_import(content_hash, size)
+                    .map(|staged| {
+                        entry.insert(BlobImportStage::Staging(Box::new(staged)));
+                    })
+                    .map_err(map_sync_error),
+                std::collections::hash_map::Entry::Occupied(_) => {
+                    Err(TransportError::new(TransportErrorCode::Protocol, false))
+                }
+            };
+            let _ = tx.send(result);
+        }
+        EngineCall::WriteBlobChunk {
+            transfer_id,
             data,
             tx,
         } => {
-            let reader = std::io::Cursor::new(data);
-            let _ = tx.send(map_err_named(
-                engine.blob_available(content_hash, size, reader),
-                "blob_available",
-            ));
+            let result = match blob_imports.get_mut(&transfer_id) {
+                Some(BlobImportStage::Staging(staged)) => {
+                    staged.write_chunk(&data).map_err(map_blob_stage_error)
+                }
+                Some(BlobImportStage::Sealed(_)) | None => {
+                    Err(TransportError::new(TransportErrorCode::Protocol, false))
+                }
+            };
+            if result.is_err() {
+                blob_imports.remove(&transfer_id);
+            }
+            let _ = tx.send(result);
+        }
+        EngineCall::SealBlobImport { transfer_id, tx } => {
+            let result = match blob_imports.remove(&transfer_id) {
+                Some(BlobImportStage::Staging(staged)) => (*staged)
+                    .seal()
+                    .map(|sealed| {
+                        blob_imports.insert(transfer_id, BlobImportStage::Sealed(sealed));
+                    })
+                    .map_err(map_blob_stage_error),
+                Some(BlobImportStage::Sealed(sealed)) => {
+                    blob_imports.insert(transfer_id, BlobImportStage::Sealed(sealed));
+                    Ok(())
+                }
+                None => Err(TransportError::new(TransportErrorCode::Protocol, false)),
+            };
+            let _ = tx.send(result);
+        }
+        EngineCall::CommitBlobImport { transfer_id, tx } => {
+            let result = match blob_imports.remove(&transfer_id) {
+                Some(BlobImportStage::Sealed(sealed)) => {
+                    engine.commit_blob_import(sealed).map_err(map_sync_error)
+                }
+                Some(BlobImportStage::Staging(staged)) => {
+                    blob_imports.insert(transfer_id, BlobImportStage::Staging(staged));
+                    Err(TransportError::new(TransportErrorCode::Protocol, false))
+                }
+                None => Err(TransportError::new(TransportErrorCode::Protocol, false)),
+            };
+            let _ = tx.send(result);
+        }
+        EngineCall::AbortBlobImport { transfer_id, tx } => {
+            blob_imports.remove(&transfer_id);
+            let _ = tx.send(Ok(()));
+        }
+        EngineCall::AbortBlobImports { tx } => {
+            blob_imports.clear();
+            let _ = tx.send(Ok(()));
         }
         EngineCall::BlobUploaded { operation_id, tx } => {
             let _ = tx.send(map_err(engine.blob_uploaded(operation_id)));
         }
         EngineCall::Shutdown { tx } => {
+            blob_imports.clear();
             let _ = tx.send(map_err(engine.close()));
         }
     }
 }
 
 impl EngineHandle {
+    pub async fn prepare_connection_attempt(&self) -> Result<usize, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::PrepareConnectionAttempt { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
     pub async fn cursor(&self) -> Result<WorkspaceCursor, TransportError> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(EngineCall::Cursor { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn runtime_status(&self) -> Result<EngineRuntimeStatus, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::RuntimeStatus { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn list_conflicts(&self) -> Result<Vec<ConflictView>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ListConflicts { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn resolve_conflict(
+        &self,
+        conflict_id: fns_protocol::ConflictId,
+        conflict_revision: fns_protocol::revision::WorkspaceConflictRevision,
+        choice: fns_protocol::WorkspaceConflictChoice,
+    ) -> Result<ConflictResolutionReceipt, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ResolveConflict {
+                input: ConflictResolutionInput {
+                    conflict_id,
+                    conflict_revision,
+                    choice,
+                },
+                tx,
+            })
             .await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
@@ -250,6 +476,18 @@ impl EngineHandle {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(EngineCall::ActiveStreamMode { tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn completed_stream_ack_revision(
+        &self,
+    ) -> Result<Option<fns_protocol::WorkspaceRevision>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::CompletedStreamAckRevision { tx })
             .await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
@@ -396,6 +634,37 @@ impl EngineHandle {
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
     }
 
+    pub async fn conflict_resolution_accepted(
+        &self,
+        message: fns_protocol::WorkspaceConflictResolvedMessage,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ConflictResolutionAccepted { message, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn conflict_resolution_rejected(
+        &self,
+        operation_id: fns_protocol::OperationId,
+        code: fns_protocol::WorkspaceV2ErrorCode,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::ConflictResolutionRejected {
+                operation_id,
+                code,
+                tx,
+            })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
     pub async fn ack_confirmed(
         &self,
         message: fns_protocol::WorkspaceAckRequest,
@@ -425,20 +694,87 @@ impl EngineHandle {
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
     }
 
-    pub async fn blob_available(
+    pub async fn begin_blob_import(
         &self,
+        transfer_id: fns_protocol::TransferId,
         content_hash: fns_protocol::WorkspaceContentHash,
         size: u64,
-        data: Vec<u8>,
-    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+    ) -> Result<(), TransportError> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send(EngineCall::BlobAvailable {
+            .send(EngineCall::BeginBlobImport {
+                transfer_id,
                 content_hash,
                 size,
+                tx,
+            })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn write_blob_chunk(
+        &self,
+        transfer_id: fns_protocol::TransferId,
+        data: tokio_tungstenite::tungstenite::Bytes,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::WriteBlobChunk {
+                transfer_id,
                 data,
                 tx,
             })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn seal_blob_import(
+        &self,
+        transfer_id: fns_protocol::TransferId,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::SealBlobImport { transfer_id, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn commit_blob_import(
+        &self,
+        transfer_id: fns_protocol::TransferId,
+    ) -> Result<Vec<fns_sync_core::SyncCommand>, TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::CommitBlobImport { transfer_id, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn abort_blob_import(
+        &self,
+        transfer_id: fns_protocol::TransferId,
+    ) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::AbortBlobImport { transfer_id, tx })
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
+        rx.await
+            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
+    }
+
+    pub async fn abort_blob_imports(&self) -> Result<(), TransportError> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(EngineCall::AbortBlobImports { tx })
             .await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
@@ -462,19 +798,214 @@ impl EngineHandle {
     }
 }
 
-fn map_err<T, E: std::fmt::Debug>(result: Result<T, E>) -> Result<T, TransportError> {
+fn map_err<T>(result: Result<T, fns_sync_core::SyncError>) -> Result<T, TransportError> {
+    result.map_err(map_sync_error)
+}
+
+fn map_err_named<T>(
+    result: Result<T, fns_sync_core::SyncError>,
+    call: &'static str,
+) -> Result<T, TransportError> {
     result.map_err(|error| {
-        tracing::error!(error = ?error, "sync engine call failed");
+        if matches!(&error, fns_sync_core::SyncError::ResourceLimit { .. }) {
+            tracing::warn!(call, "sync engine work limit reached");
+            return TransportError::new(TransportErrorCode::ResourceLimit, true);
+        }
+        tracing::error!(call, error = ?error, "sync engine call failed");
         TransportError::new(TransportErrorCode::Core, false)
     })
 }
 
-fn map_err_named<T, E: std::fmt::Debug>(
-    result: Result<T, E>,
+fn map_sync_error(error: fns_sync_core::SyncError) -> TransportError {
+    if matches!(&error, fns_sync_core::SyncError::ResourceLimit { .. }) {
+        tracing::warn!("sync engine work limit reached");
+        return TransportError::new(TransportErrorCode::ResourceLimit, true);
+    }
+    if matches!(&error, fns_sync_core::SyncError::Filesystem(_)) {
+        tracing::error!(error = ?error, "sync engine filesystem call failed");
+        return TransportError::new(TransportErrorCode::Filesystem, false);
+    }
+    tracing::error!(error = ?error, "sync engine call failed");
+    TransportError::new(TransportErrorCode::Core, false)
+}
+
+fn map_conflict_control_error<T>(
+    result: Result<T, fns_sync_core::SyncError>,
     call: &'static str,
 ) -> Result<T, TransportError> {
     result.map_err(|error| {
-        tracing::error!(call, error = ?error, "sync engine call failed");
-        TransportError::new(TransportErrorCode::Core, false)
+        use fns_sync_core::{ConflictBlockedReason, SyncError};
+
+        let (code, retryable) = match &error {
+            SyncError::InvalidConfiguration { .. } => {
+                (TransportErrorCode::InvalidConfiguration, false)
+            }
+            SyncError::CorruptState { .. } => (TransportErrorCode::StateCorrupt, false),
+            SyncError::ProtocolInvariant { .. } | SyncError::StreamInvariant { .. } => {
+                (TransportErrorCode::Protocol, false)
+            }
+            SyncError::ConflictUnavailable => (TransportErrorCode::ConflictUnavailable, false),
+            SyncError::ConflictRevisionStale => (TransportErrorCode::ConflictRevisionStale, false),
+            SyncError::ConflictResolutionChanged | SyncError::OperationChanged => {
+                (TransportErrorCode::ConflictResolutionChanged, false)
+            }
+            SyncError::ConflictResolutionBlocked { reason } => match reason {
+                ConflictBlockedReason::WaitingBlobs => {
+                    (TransportErrorCode::ConflictWaitingBlobs, true)
+                }
+                ConflictBlockedReason::AutomaticResolutionPending => {
+                    (TransportErrorCode::ConflictAutomaticResolutionPending, true)
+                }
+                ConflictBlockedReason::ResolutionPending => {
+                    (TransportErrorCode::ConflictResolutionPending, true)
+                }
+                ConflictBlockedReason::RefreshRequired => {
+                    (TransportErrorCode::ConflictRefreshRequired, true)
+                }
+                ConflictBlockedReason::SelectedSideDeleted => {
+                    (TransportErrorCode::ConflictSelectedSideDeleted, false)
+                }
+            },
+            SyncError::MergeRejected {
+                reason: "merged_file_required",
+            } => (TransportErrorCode::MergeFileRequired, false),
+            SyncError::MergeRejected {
+                reason: "merged_content_unavailable",
+            } => (TransportErrorCode::MergeContentUnavailable, false),
+            SyncError::MergeRejected { .. } => (TransportErrorCode::Core, false),
+            SyncError::ResourceLimit { .. } => (TransportErrorCode::ResourceLimit, true),
+            SyncError::Filesystem(_) | SyncError::ScanIncomplete => {
+                (TransportErrorCode::Filesystem, false)
+            }
+            SyncError::StorageUnavailable => (TransportErrorCode::Core, false),
+        };
+        if retryable {
+            tracing::warn!(call, error = ?error, "sync conflict control call deferred");
+        } else {
+            tracing::error!(call, error = ?error, "sync conflict control call failed");
+        }
+        TransportError::new(code, retryable)
     })
+}
+
+fn map_blob_stage_error(error: fns_fs::FsError) -> TransportError {
+    match error {
+        fns_fs::FsError::ContentMismatch | fns_fs::FsError::SizeMismatch => {
+            tracing::warn!("workspace blob content failed integrity validation");
+            TransportError::new(TransportErrorCode::Protocol, false)
+        }
+        _ => {
+            tracing::error!("workspace blob staging filesystem call failed");
+            TransportError::new(TransportErrorCode::Filesystem, false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_resource_limit_remains_retryable_at_transport_boundary() {
+        let error = map_sync_error(fns_sync_core::SyncError::ResourceLimit {
+            resource: "pending_live_events",
+        });
+
+        assert_eq!(error.code(), TransportErrorCode::ResourceLimit);
+        assert!(error.retryable());
+    }
+
+    #[test]
+    fn conflict_control_errors_keep_stable_actionable_codes() {
+        let cases = [
+            (
+                fns_sync_core::SyncError::CorruptState {
+                    table: "conflicts",
+                    field: "created_json",
+                },
+                TransportErrorCode::StateCorrupt,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictUnavailable,
+                TransportErrorCode::ConflictUnavailable,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictRevisionStale,
+                TransportErrorCode::ConflictRevisionStale,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionChanged,
+                TransportErrorCode::ConflictResolutionChanged,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionBlocked {
+                    reason: fns_sync_core::ConflictBlockedReason::WaitingBlobs,
+                },
+                TransportErrorCode::ConflictWaitingBlobs,
+                true,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionBlocked {
+                    reason: fns_sync_core::ConflictBlockedReason::AutomaticResolutionPending,
+                },
+                TransportErrorCode::ConflictAutomaticResolutionPending,
+                true,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionBlocked {
+                    reason: fns_sync_core::ConflictBlockedReason::ResolutionPending,
+                },
+                TransportErrorCode::ConflictResolutionPending,
+                true,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionBlocked {
+                    reason: fns_sync_core::ConflictBlockedReason::RefreshRequired,
+                },
+                TransportErrorCode::ConflictRefreshRequired,
+                true,
+            ),
+            (
+                fns_sync_core::SyncError::ConflictResolutionBlocked {
+                    reason: fns_sync_core::ConflictBlockedReason::SelectedSideDeleted,
+                },
+                TransportErrorCode::ConflictSelectedSideDeleted,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::MergeRejected {
+                    reason: "merged_file_required",
+                },
+                TransportErrorCode::MergeFileRequired,
+                false,
+            ),
+            (
+                fns_sync_core::SyncError::MergeRejected {
+                    reason: "merged_content_unavailable",
+                },
+                TransportErrorCode::MergeContentUnavailable,
+                false,
+            ),
+        ];
+
+        for (source, expected, retryable) in cases {
+            let error = map_conflict_control_error::<()>(Err(source), "test")
+                .expect_err("mapped conflict error");
+            assert_eq!(error.code(), expected);
+            assert_eq!(error.retryable(), retryable);
+        }
+
+        let filesystem = map_conflict_control_error::<()>(
+            Err(fns_sync_core::SyncError::Filesystem(fns_fs::FsError::Io {
+                operation: "test",
+            })),
+            "test",
+        )
+        .expect_err("mapped filesystem error");
+        assert_eq!(filesystem.code(), TransportErrorCode::Filesystem);
+    }
 }

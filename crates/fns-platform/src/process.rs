@@ -1,13 +1,400 @@
 //! Stale-safe process locking and atomic private JSON writes.
 //!
 //! Linux locks use `/proc/sys/kernel/random/boot_id` plus field 22 of
-//! `/proc/<pid>/stat` to detect live vs stale lock holders. Non-Linux targets
-//! return `UnsupportedPlatform` at runtime.
+//! `/proc/<pid>/stat` to detect live vs stale lock holders. Atomic private JSON
+//! writes are supported on Unix; process locks remain Linux-only.
 
 use crate::error::{PlatformError, PlatformErrorCode};
 
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// A process-scoped advisory lease for one logical state-directory path.
+///
+/// On Unix the authoritative lock is attached to an owner-only sibling
+/// directory. It therefore survives replacement of the state-directory leaf or
+/// its visible `agent.lease` PID record. The sibling anchor itself remains part
+/// of the trusted owner-only filesystem area.
+pub struct StateDirLease {
+    #[cfg(unix)]
+    anchor: File,
+    #[cfg(unix)]
+    _state_dir: File,
+    file: File,
+}
+
+impl StateDirLease {
+    pub fn probe(state_dir: &Path) -> Result<bool, PlatformError> {
+        #[cfg(unix)]
+        {
+            probe_state_dir_lease_unix(state_dir)
+        }
+
+        #[cfg(not(unix))]
+        {
+            probe_visible_lease_file(state_dir)
+        }
+    }
+
+    pub fn acquire(state_dir: &Path) -> Result<Self, PlatformError> {
+        #[cfg(unix)]
+        {
+            acquire_state_dir_lease_unix(state_dir)
+        }
+
+        #[cfg(not(unix))]
+        {
+            acquire_state_dir_lease_fallback(state_dir)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn probe_state_dir_lease_unix(state_dir: &Path) -> Result<bool, PlatformError> {
+    let anchor_path = state_dir_lease_anchor(state_dir)?;
+    let anchor = match open_existing_directory_no_follow(&anchor_path)? {
+        Some(anchor) => anchor,
+        None => {
+            validate_state_and_visible_lease_for_probe(state_dir)?;
+            return probe_visible_lease_file(state_dir);
+        }
+    };
+    validate_private_mode(&anchor, 0o700)?;
+
+    match anchor.try_lock() {
+        Ok(()) => {
+            validate_open_path_identity(&anchor_path, &anchor, ExpectedFileType::Directory)?;
+            validate_state_and_visible_lease_for_probe(state_dir)?;
+            let _ = anchor.unlock();
+            Ok(false)
+        }
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(_)) => Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+}
+
+#[cfg(unix)]
+fn acquire_state_dir_lease_unix(state_dir: &Path) -> Result<StateDirLease, PlatformError> {
+    std::fs::create_dir_all(state_dir).map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    let state_dir_file = open_private_directory(state_dir, false)?;
+    let anchor_path = state_dir_lease_anchor(state_dir)?;
+    let anchor = open_private_directory(&anchor_path, true)?;
+
+    anchor.try_lock().map_err(map_lock_error)?;
+    validate_open_path_identity(&anchor_path, &anchor, ExpectedFileType::Directory)?;
+    validate_open_path_identity(state_dir, &state_dir_file, ExpectedFileType::Directory)?;
+
+    let mut file = open_visible_lease_file(state_dir, true)?
+        .ok_or_else(|| PlatformError::new(PlatformErrorCode::Io))?;
+    file.try_lock().map_err(map_lock_error)?;
+    validate_open_path_identity(
+        &state_dir.join("agent.lease"),
+        &file,
+        ExpectedFileType::Regular,
+    )?;
+    validate_open_path_identity(state_dir, &state_dir_file, ExpectedFileType::Directory)?;
+
+    write_lease_pid(&mut file)?;
+    validate_open_path_identity(
+        &state_dir.join("agent.lease"),
+        &file,
+        ExpectedFileType::Regular,
+    )?;
+
+    Ok(StateDirLease {
+        anchor,
+        _state_dir: state_dir_file,
+        file,
+    })
+}
+
+#[cfg(not(unix))]
+fn acquire_state_dir_lease_fallback(state_dir: &Path) -> Result<StateDirLease, PlatformError> {
+    std::fs::create_dir_all(state_dir).map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    let metadata = std::fs::symlink_metadata(state_dir)
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+    }
+
+    let mut file = open_visible_lease_file(state_dir, true)?
+        .ok_or_else(|| PlatformError::new(PlatformErrorCode::Io))?;
+    file.try_lock().map_err(map_lock_error)?;
+    write_lease_pid(&mut file)?;
+    Ok(StateDirLease { file })
+}
+
+fn probe_visible_lease_file(state_dir: &Path) -> Result<bool, PlatformError> {
+    let Some(file) = open_visible_lease_file(state_dir, false)? else {
+        return Ok(false);
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            Ok(false)
+        }
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(_)) => Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+}
+
+fn open_visible_lease_file(state_dir: &Path, create: bool) -> Result<Option<File>, PlatformError> {
+    let path = state_dir.join("agent.lease");
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if !create {
+                return Ok(None);
+            }
+        }
+        Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(create);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        set_no_follow(&mut options);
+    }
+    let file = match options.open(&path) {
+        Ok(file) => file,
+        Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) if path_is_symlink(&path) => {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+        }
+        Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    if !metadata.is_file() {
+        return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if create {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))
+                .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+        }
+        validate_open_path_identity(&path, &file, ExpectedFileType::Regular)?;
+        validate_private_mode(&file, 0o600)?;
+    }
+
+    Ok(Some(file))
+}
+
+fn write_lease_pid(file: &mut File) -> Result<(), PlatformError> {
+    file.set_len(0)
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    writeln!(file, "{}", std::process::id())
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    file.sync_all()
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))
+}
+
+fn map_lock_error(error: std::fs::TryLockError) -> PlatformError {
+    match error {
+        std::fs::TryLockError::WouldBlock => PlatformError::new(PlatformErrorCode::AlreadyRunning),
+        std::fs::TryLockError::Error(_) => PlatformError::new(PlatformErrorCode::Io),
+    }
+}
+
+fn path_is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_symlink())
+}
+
+#[cfg(unix)]
+fn validate_state_and_visible_lease_for_probe(state_dir: &Path) -> Result<(), PlatformError> {
+    match std::fs::symlink_metadata(state_dir) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+        }
+        Ok(metadata) => {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(PlatformError::new(PlatformErrorCode::InsecurePermissions));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+
+    let lease_path = state_dir.join("agent.lease");
+    match std::fs::symlink_metadata(lease_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(PlatformError::new(PlatformErrorCode::InvalidFileType))
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+}
+
+#[cfg(unix)]
+fn state_dir_lease_anchor(state_dir: &Path) -> Result<PathBuf, PlatformError> {
+    let file_name = state_dir
+        .file_name()
+        .ok_or_else(|| PlatformError::new(PlatformErrorCode::InvalidFileType))?;
+    let parent = state_dir
+        .parent()
+        .ok_or_else(|| PlatformError::new(PlatformErrorCode::InvalidFileType))?;
+    let mut anchor_name = std::ffi::OsString::from(".");
+    anchor_name.push(file_name);
+    anchor_name.push(".fns-agent-lease");
+    Ok(parent.join(anchor_name))
+}
+
+#[cfg(unix)]
+fn open_private_directory(path: &Path, create: bool) -> Result<File, PlatformError> {
+    if create {
+        match std::fs::create_dir(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+        }
+    }
+    open_existing_directory_no_follow(path)?
+        .ok_or_else(|| PlatformError::new(PlatformErrorCode::Io))
+        .and_then(|file| {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o700))
+                .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+            validate_open_path_identity(path, &file, ExpectedFileType::Directory)?;
+            Ok(file)
+        })
+}
+
+#[cfg(unix)]
+fn open_existing_directory_no_follow(path: &Path) -> Result<Option<File>, PlatformError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    set_no_follow(&mut options);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(_) if path_is_symlink(path) => {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+        }
+        Err(_) => return Err(PlatformError::new(PlatformErrorCode::Io)),
+    };
+    validate_open_path_identity(path, &file, ExpectedFileType::Directory)?;
+    Ok(Some(file))
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum ExpectedFileType {
+    Directory,
+    Regular,
+}
+
+#[cfg(unix)]
+fn validate_open_path_identity(
+    path: &Path,
+    file: &File,
+    expected: ExpectedFileType,
+) -> Result<(), PlatformError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let opened = file
+        .metadata()
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    let current =
+        std::fs::symlink_metadata(path).map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    let expected_matches = match expected {
+        ExpectedFileType::Directory => opened.is_dir() && current.is_dir(),
+        ExpectedFileType::Regular => opened.is_file() && current.is_file(),
+    };
+    if opened.file_type().is_symlink() || current.file_type().is_symlink() || !expected_matches {
+        return Err(PlatformError::new(PlatformErrorCode::InvalidFileType));
+    }
+    if opened.dev() != current.dev() || opened.ino() != current.ino() {
+        return Err(PlatformError::new(PlatformErrorCode::Io));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_private_mode(file: &File, expected: u32) -> Result<(), PlatformError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = file
+        .metadata()
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?
+        .permissions()
+        .mode()
+        & 0o777;
+    if mode != expected {
+        return Err(PlatformError::new(PlatformErrorCode::InsecurePermissions));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_no_follow(options: &mut std::fs::OpenOptions) {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    if let Some(flag) = no_follow_flag() {
+        options.custom_flags(flag);
+    }
+}
+
+#[cfg(unix)]
+#[allow(unreachable_code)]
+const fn no_follow_flag() -> Option<i32> {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "solaris",
+        target_os = "illumos"
+    ))]
+    {
+        return Some(0x0002_0000);
+    }
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        return Some(0x0000_0100);
+    }
+    None
+}
+
+impl fmt::Debug for StateDirLease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StateDirLease")
+    }
+}
+
+impl Drop for StateDirLease {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+        #[cfg(unix)]
+        let _ = self.anchor.unlock();
+    }
+}
 
 /// On-disk record of who holds a process lock.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -42,7 +429,6 @@ impl ProcessLock {
     /// mismatch, or start_ticks mismatch), it is renamed atomically and a new one is created.
     pub fn acquire_linux(path: &Path) -> Result<Self, PlatformError> {
         use std::fs;
-        use std::io::Read;
 
         let boot_id = read_boot_id()?;
         let pid = std::process::id();
@@ -139,23 +525,22 @@ impl Drop for ProcessLock {
                 return;
             }
             // Only remove if the on-disk nonce matches our own.
-            if let Ok(Some(record)) = Self::probe_linux(&self.path) {
-                if record.nonce == self.nonce {
-                    let _ = std::fs::remove_file(&self.path);
-                }
+            if let Ok(Some(record)) = Self::probe_linux(&self.path)
+                && record.nonce == self.nonce
+            {
+                let _ = std::fs::remove_file(&self.path);
             }
         }
     }
 }
 
 /// Write JSON atomically to a private (0600) file via a temp sibling + rename.
-#[cfg(target_os = "linux")]
+#[cfg(target_family = "unix")]
 pub fn atomic_write_private_json<T: serde::Serialize>(
     path: &Path,
     value: &T,
 ) -> Result<(), PlatformError> {
     use std::fs;
-    use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     let json = serde_json::to_vec(value).map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
@@ -183,15 +568,14 @@ pub fn atomic_write_private_json<T: serde::Serialize>(
         PlatformError::new(PlatformErrorCode::Io)
     })?;
 
-    // Sync parent directory where supported.
-    if let Ok(dir) = fs::File::open(parent) {
-        let _ = dir.sync_all();
-    }
+    let dir = fs::File::open(parent).map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
+    dir.sync_all()
+        .map_err(|_| PlatformError::new(PlatformErrorCode::Io))?;
 
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(target_family = "unix"))]
 pub fn atomic_write_private_json<T: serde::Serialize>(
     _path: &Path,
     _value: &T,

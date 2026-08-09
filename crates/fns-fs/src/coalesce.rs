@@ -50,10 +50,11 @@ pub trait PriorEntryLookup {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(transparent)]
 pub struct ApplyId(pub uuid::Uuid);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ApplyReceipt {
     pub apply_id: ApplyId,
     pub touched: Vec<WorkspacePath>,

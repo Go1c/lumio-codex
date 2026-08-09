@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import OnboardingWizard from "./components/OnboardingWizard";
 import ProjectList from "./components/ProjectList";
 import WorkspaceView from "./components/WorkspaceView";
-import { invoke } from "@tauri-apps/api/core";
+import { isAuthenticationFailure } from "./auth";
 
 interface Project {
   id: string;
@@ -10,7 +11,17 @@ interface Project {
   sshHostAlias: string;
   remoteRoot: string;
   localRoot: string;
+  workspaceId: string;
   tmuxSession: string;
+}
+
+function errorSummary(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "primary" in error) {
+    return String(error.primary);
+  }
+  return "Unknown error";
 }
 
 export default function App() {
@@ -18,24 +29,82 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [showWizard, setShowWizard] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [startFailures, setStartFailures] = useState<Record<string, unknown>>(
+    {},
+  );
+  const [credentialRequired, setCredentialRequired] = useState<
+    Record<string, boolean>
+  >({});
 
   useEffect(() => {
-    loadProjects();
+    void loadProjects();
   }, []);
 
+  async function startProject(projectId: string): Promise<unknown | null> {
+    setStartFailures((current) => {
+      const next = { ...current };
+      delete next[projectId];
+      return next;
+    });
+
+    try {
+      setCredentialRequired((current) => ({
+        ...current,
+        [projectId]: false,
+      }));
+      await invoke("start_sync", { projectId });
+      return null;
+    } catch (error) {
+      if (isAuthenticationFailure(error)) {
+        setCredentialRequired((current) => ({ ...current, [projectId]: true }));
+      }
+      setStartFailures((current) => ({ ...current, [projectId]: error }));
+      return error;
+    }
+  }
+
   async function loadProjects() {
+    setLoadError(null);
     try {
       const list = await invoke<Project[]>("list_projects");
       setProjects(list);
-    } catch (e) {
-      console.error("Failed to load projects:", e);
-    } finally {
+      setSelectedProject((current) =>
+        current
+          ? list.find((project) => project.id === current.id) ?? null
+          : null,
+      );
+      setLoading(false);
+
+      list.forEach((project) => {
+        void startProject(project.id);
+      });
+    } catch (error) {
+      setLoadError(error);
       setLoading(false);
     }
   }
 
   if (loading) {
-    return <div className="app">Loading...</div>;
+    return (
+      <div className="app app-state">
+        <p>Loading projects...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="app app-state">
+        <div className="load-error" role="alert">
+          <strong>Projects could not be loaded</strong>
+          <span>{errorSummary(loadError)}</span>
+          <button className="btn btn-primary" onClick={() => void loadProjects()}>
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (showWizard || projects.length === 0) {
@@ -44,7 +113,7 @@ export default function App() {
         <OnboardingWizard
           onComplete={() => {
             setShowWizard(false);
-            loadProjects();
+            void loadProjects();
           }}
           onCancel={() => setShowWizard(false)}
         />
@@ -52,56 +121,68 @@ export default function App() {
     );
   }
 
-  if (selectedProject) {
-    return (
-      <div className="app" style={{ flexDirection: "row" }}>
-        <div className="sidebar">
-          <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Projects</h2>
-          <ProjectList
-            projects={projects}
-            onSelect={(p) => setSelectedProject(p)}
-          />
-          <button
-            className="btn btn-secondary"
-            style={{ marginTop: "8px" }}
-            onClick={() => setSelectedProject(null)}
-          >
-            ← Back
-          </button>
-          <button
-            className="btn btn-primary"
-            style={{ marginTop: "auto" }}
-            onClick={() => setShowWizard(true)}
-          >
-            + New Project
-          </button>
-        </div>
-        <WorkspaceView project={selectedProject} />
-      </div>
-    );
-  }
+  const failedProjects = projects.filter(
+    (project) =>
+      startFailures[project.id] !== undefined &&
+      !isAuthenticationFailure(startFailures[project.id]),
+  );
 
   return (
-    <div className="app" style={{ flexDirection: "row" }}>
-      <div className="sidebar">
-        <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Projects</h2>
+    <div className="app app-workspace">
+      <aside className="sidebar">
+        <div className="sidebar-heading">
+          <span>Projects</span>
+          <span className="project-count">{projects.length}</span>
+        </div>
         <ProjectList
           projects={projects}
-          onSelect={(p) => setSelectedProject(p)}
+          onSelect={(project) =>
+            setSelectedProject(
+              projects.find((candidate) => candidate.id === project.id) ?? null,
+            )
+          }
         />
+        {failedProjects.length > 0 && (
+          <div className="sidebar-alert" role="alert">
+            <strong>Sync start failed</strong>
+            {failedProjects.map((project) => (
+              <span key={project.id}>
+                {project.name}: {errorSummary(startFailures[project.id])}
+              </span>
+            ))}
+          </div>
+        )}
+        {selectedProject && (
+          <button
+            className="btn btn-sidebar"
+            onClick={() => setSelectedProject(null)}
+          >
+            Back to overview
+          </button>
+        )}
         <button
-          className="btn btn-primary"
-          style={{ marginTop: "auto" }}
+          className="btn btn-primary sidebar-new-project"
           onClick={() => setShowWizard(true)}
         >
-          + New Project
+          New project
         </button>
-      </div>
-      <div className="main-content">
-        <p style={{ padding: "40px", color: "#888" }}>
-          Select a project to open the terminal and file sync view.
-        </p>
-      </div>
+      </aside>
+
+      {selectedProject ? (
+        <WorkspaceView
+          project={selectedProject}
+          startupFailure={startFailures[selectedProject.id]}
+          credentialRequired={credentialRequired[selectedProject.id] === true}
+          onRetryStart={() => startProject(selectedProject.id)}
+        />
+      ) : (
+        <main className="main-content empty-workspace">
+          <div>
+            <strong>Select a project</strong>
+            <p>Open its terminal, files, and live sync status.</p>
+          </div>
+        </main>
+      )}
     </div>
   );
 }

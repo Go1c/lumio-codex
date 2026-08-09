@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use notify::Event;
+use notify::{Event, EventKind};
 
 use super::{NativeWatchKind, NormalizedWatchEvent, WatchGap};
 
@@ -12,9 +12,12 @@ const MAX_EVENT_BATCH_BYTES: usize = 1_048_576;
 pub(crate) fn normalize_notify_event(
     root: &Path,
     event: Event,
-) -> Result<NormalizedWatchEvent, WatchGap> {
+) -> Result<Option<NormalizedWatchEvent>, WatchGap> {
     if event.need_rescan() {
         return Err(WatchGap::Backend);
+    }
+    if matches!(event.kind, EventKind::Access(_)) {
+        return Ok(None);
     }
     if event.paths.len() > MAX_EVENT_PATHS {
         return Err(WatchGap::Overflow);
@@ -51,12 +54,12 @@ pub(crate) fn normalize_notify_event(
         .iter()
         .map(|path| relative_path(root, path))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(NormalizedWatchEvent {
+    Ok(Some(NormalizedWatchEvent {
         kind,
         paths,
         rename_cookie: event.tracker().map(|value| value as u64),
         observed_at: Instant::now(),
-    })
+    }))
 }
 
 fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, WatchGap> {
@@ -77,7 +80,10 @@ fn relative_path(root: &Path, path: &Path) -> Result<PathBuf, WatchGap> {
 mod tests {
     use std::path::PathBuf;
 
-    use notify::{Event, EventKind, event::ModifyKind, event::RenameMode};
+    use notify::{
+        Event, EventKind,
+        event::{AccessKind, AccessMode, ModifyKind, RenameMode},
+    };
 
     use super::{
         MAX_EVENT_BATCH_BYTES, MAX_EVENT_PATH_BYTES, MAX_EVENT_PATHS, normalize_notify_event,
@@ -128,7 +134,9 @@ mod tests {
             ),
         ];
         for (kind, paths, expected) in cases {
-            let normalized = normalize_notify_event(&root, event(kind, paths)).unwrap();
+            let normalized = normalize_notify_event(&root, event(kind, paths))
+                .unwrap()
+                .unwrap();
             assert_eq!(normalized.kind, expected);
         }
     }
@@ -143,6 +151,7 @@ mod tests {
         renamed.attrs.set_tracker(7);
         assert_eq!(
             normalize_notify_event(&root, renamed)
+                .unwrap()
                 .unwrap()
                 .rename_cookie,
             Some(7)
@@ -180,6 +189,41 @@ mod tests {
                 ),
             ),
             Err(WatchGap::OutsideRoot)
+        ));
+    }
+
+    #[test]
+    fn ignores_non_mutating_access_without_hiding_unknown_events() {
+        let root = PathBuf::from("/workspace");
+        for kind in [
+            AccessKind::Read,
+            AccessKind::Open(AccessMode::Read),
+            AccessKind::Close(AccessMode::Read),
+            AccessKind::Close(AccessMode::Write),
+        ] {
+            assert!(
+                normalize_notify_event(
+                    &root,
+                    event(EventKind::Access(kind), &["/workspace/file.txt"]),
+                )
+                .unwrap()
+                .is_none()
+            );
+        }
+
+        let access_requiring_rescan = event(
+            EventKind::Access(AccessKind::Read),
+            &["/workspace/file.txt"],
+        )
+        .set_flag(notify::event::Flag::Rescan);
+        assert!(matches!(
+            normalize_notify_event(&root, access_requiring_rescan),
+            Err(WatchGap::Backend)
+        ));
+
+        assert!(matches!(
+            normalize_notify_event(&root, event(EventKind::Any, &["/workspace/file.txt"])),
+            Err(WatchGap::Ambiguous)
         ));
     }
 

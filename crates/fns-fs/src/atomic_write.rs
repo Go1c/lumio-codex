@@ -12,21 +12,25 @@ use fns_protocol::{
 };
 
 use crate::{
-    ApplyId, ApplyReceipt, ContentCache, FileFingerprint, FsError, MemoryHashCache, ObservedEntry,
-    RootedWorkspace,
+    ApplyId, ApplyReceipt, ContentCache, DirectorySnapshot, FileFingerprint, FsError,
+    MemoryHashCache, ObservedEntry, RootedWorkspace,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExpectedEntry {
     Missing,
     Present {
         kind: WorkspaceEntryKind,
         content_hash: Option<WorkspaceContentHash>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        directory_snapshot: Option<DirectorySnapshot>,
         fingerprint: FileFingerprint,
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FsOperation {
     UpsertFile {
         path: WorkspacePath,
@@ -71,7 +75,20 @@ pub enum ApplyCheckpoint {
     TempSynced,
     PreimageValidated,
     DestinationBackedUp,
+    SourceBackedUp,
     FilesystemCommitted,
+}
+
+impl ApplyCheckpoint {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TempSynced => "temp_synced",
+            Self::PreimageValidated => "preimage_validated",
+            Self::DestinationBackedUp => "destination_backed_up",
+            Self::SourceBackedUp => "source_backed_up",
+            Self::FilesystemCommitted => "filesystem_committed",
+        }
+    }
 }
 
 pub trait ApplyObserver: Send + Sync {
@@ -82,7 +99,12 @@ pub trait ApplyObserver: Send + Sync {
 struct NoopObserver;
 
 impl ApplyObserver for NoopObserver {
-    fn checkpoint(&self, _checkpoint: ApplyCheckpoint) {}
+    fn checkpoint(&self, _checkpoint: ApplyCheckpoint) {
+        #[cfg(debug_assertions)]
+        if std::env::var("FNS_FS_APPLY_FAILPOINT").as_deref() == Ok(_checkpoint.as_str()) {
+            std::process::abort();
+        }
+    }
 }
 
 pub struct AtomicWorkspaceWriter {
@@ -119,6 +141,12 @@ impl AtomicWorkspaceWriter {
             let mut postimage_cache = MemoryHashCache::default();
             if self.matches_postimage(apply_id, operation, &mut postimage_cache)? {
                 return self.receipt_for_postimage(apply_id, operation);
+            }
+            if matches!(
+                operation,
+                FsOperation::UpsertFile { .. } | FsOperation::UpsertSymlink { .. }
+            ) {
+                return self.resume_upsert(apply_id, operation);
             }
             if !matches!(operation, FsOperation::Rename { .. }) {
                 return Err(FsError::ContentMismatch);
@@ -191,6 +219,87 @@ impl AtomicWorkspaceWriter {
             })?;
         }
         sync_parent(&parent)
+    }
+
+    /// Remove artifacts owned by an unfinished apply without overwriting a
+    /// live path that may have changed after the crash.
+    pub fn abandon(&self, apply_id: ApplyId, operation: &FsOperation) -> Result<(), FsError> {
+        match operation {
+            FsOperation::UpsertFile { path, .. } | FsOperation::UpsertSymlink { path, .. } => {
+                let (parent, leaf) = self.parent_path(path)?;
+                let temporary = format!(".fns-tmp-{}", apply_id.0);
+                let tomb = format!(".fns-delete-{}", apply_id.0);
+                remove_if_exists(&parent, &temporary)?;
+                if parent.symlink_metadata(&tomb).is_ok() {
+                    if parent.symlink_metadata(&leaf).is_err() {
+                        rename_noreplace(&parent, &tomb, &parent, &leaf).map_err(|_| {
+                            FsError::Io {
+                                operation: "restore abandoned workspace apply",
+                            }
+                        })?;
+                        sync_parent(&parent)?;
+                    } else {
+                        remove_if_exists(&parent, &tomb)?;
+                    }
+                }
+            }
+            FsOperation::Delete { path, .. } => {
+                let (parent, leaf) = self.parent_path(path)?;
+                let tomb = format!(".fns-delete-{}", apply_id.0);
+                if parent.symlink_metadata(&tomb).is_ok() {
+                    if self.root.inspect(path)?.is_some() {
+                        remove_if_exists(&parent, &tomb)?;
+                    } else {
+                        rename_noreplace(&parent, &tomb, &parent, &leaf).map_err(|_| {
+                            FsError::Io {
+                                operation: "restore abandoned workspace delete",
+                            }
+                        })?;
+                        sync_parent(&parent)?;
+                    }
+                }
+            }
+            FsOperation::Rename { path, new_path, .. } => {
+                let (source_parent, source_leaf) = self.parent_path(path)?;
+                let (target_parent, target_leaf) = self.parent_path(new_path)?;
+                let source_backup = format!(".fns-rename-{}", apply_id.0);
+                let target_backup = format!(".fns-delete-{}", apply_id.0);
+                if source_parent.symlink_metadata(&source_backup).is_ok() {
+                    if source_parent.symlink_metadata(&source_leaf).is_err() {
+                        rename_noreplace(
+                            &source_parent,
+                            &source_backup,
+                            &source_parent,
+                            &source_leaf,
+                        )
+                        .map_err(|_| FsError::Io {
+                            operation: "restore abandoned rename source",
+                        })?;
+                        sync_parent(&source_parent)?;
+                    } else {
+                        remove_if_exists(&source_parent, &source_backup)?;
+                    }
+                }
+                if target_parent.symlink_metadata(&target_backup).is_ok() {
+                    if target_parent.symlink_metadata(&target_leaf).is_err() {
+                        rename_noreplace(
+                            &target_parent,
+                            &target_backup,
+                            &target_parent,
+                            &target_leaf,
+                        )
+                        .map_err(|_| FsError::Io {
+                            operation: "restore abandoned rename target",
+                        })?;
+                        sync_parent(&target_parent)?;
+                    } else {
+                        remove_if_exists(&target_parent, &target_backup)?;
+                    }
+                }
+            }
+            FsOperation::Mkdir { .. } => {}
+        }
+        Ok(())
     }
 
     fn matches_preimage(
@@ -441,6 +550,7 @@ impl AtomicWorkspaceWriter {
         let ExpectedEntry::Present {
             kind,
             content_hash,
+            directory_snapshot,
             fingerprint,
         } = expected
         else {
@@ -454,6 +564,9 @@ impl AtomicWorkspaceWriter {
                 && observed.fingerprint.modified_at_ns == fingerprint.modified_at_ns
         };
         if observed.kind != *kind || !fingerprint_matches {
+            return Ok(false);
+        }
+        if !self.matches_directory_snapshot(path, &observed, directory_snapshot.as_ref())? {
             return Ok(false);
         }
         self.matches_hash(path, &observed, content_hash.as_ref(), cache)
@@ -471,6 +584,7 @@ impl AtomicWorkspaceWriter {
         let ExpectedEntry::Present {
             kind,
             content_hash,
+            directory_snapshot,
             fingerprint,
         } = expected
         else {
@@ -479,6 +593,7 @@ impl AtomicWorkspaceWriter {
         Ok(observed.kind == *kind
             && observed.fingerprint.file_id == fingerprint.file_id
             && observed.fingerprint.size == fingerprint.size
+            && self.matches_directory_snapshot(path, &observed, directory_snapshot.as_ref())?
             && self.matches_hash(path, &observed, content_hash.as_ref(), cache)?)
     }
 
@@ -499,6 +614,7 @@ impl AtomicWorkspaceWriter {
         path: &WorkspacePath,
         snapshot: &ObservedEntry,
         content_hash: Option<&WorkspaceContentHash>,
+        directory_snapshot: Option<&DirectorySnapshot>,
         cache: &mut MemoryHashCache,
     ) -> Result<bool, FsError> {
         let Some(observed) = self.root.inspect(path)? else {
@@ -510,7 +626,23 @@ impl AtomicWorkspaceWriter {
             && observed.fingerprint.size == snapshot.fingerprint.size
             && observed.fingerprint.modified_at_ns == snapshot.fingerprint.modified_at_ns
             && observed.symlink_target == snapshot.symlink_target
+            && self.matches_directory_snapshot(path, &observed, directory_snapshot)?
             && self.matches_hash(path, &observed, content_hash, cache)?)
+    }
+
+    fn matches_directory_snapshot(
+        &self,
+        path: &WorkspacePath,
+        observed: &ObservedEntry,
+        expected: Option<&DirectorySnapshot>,
+    ) -> Result<bool, FsError> {
+        if observed.kind != WorkspaceEntryKind::Directory {
+            return Ok(expected.is_none());
+        }
+        let Some(expected) = expected else {
+            return Ok(false);
+        };
+        Ok(self.root.directory_snapshot(path)? == *expected)
     }
 
     fn matches_live(
@@ -581,7 +713,7 @@ impl AtomicWorkspaceWriter {
             ExpectedEntry::Missing => None,
         };
         self.observer.checkpoint(ApplyCheckpoint::PreimageValidated);
-        self.rename_checked(
+        let cleanup_name = self.rename_checked(
             &parent,
             &temporary,
             &leaf,
@@ -596,7 +728,13 @@ impl AtomicWorkspaceWriter {
         let postimage = self.root.inspect(path)?.ok_or(FsError::ContentMismatch)?;
         self.observer
             .checkpoint(ApplyCheckpoint::FilesystemCommitted);
-        self.receipt_single(apply_id, path, postimage, Some(content_hash.clone()), None)
+        self.receipt_single(
+            apply_id,
+            path,
+            postimage,
+            Some(content_hash.clone()),
+            cleanup_name,
+        )
     }
 
     fn apply_mkdir(
@@ -674,7 +812,7 @@ impl AtomicWorkspaceWriter {
             ExpectedEntry::Missing => None,
         };
         self.observer.checkpoint(ApplyCheckpoint::PreimageValidated);
-        self.rename_checked(
+        let cleanup_name = self.rename_checked(
             &parent,
             &temporary,
             &leaf,
@@ -689,7 +827,13 @@ impl AtomicWorkspaceWriter {
         let postimage = self.root.inspect(path)?.ok_or(FsError::ContentMismatch)?;
         self.observer
             .checkpoint(ApplyCheckpoint::FilesystemCommitted);
-        self.receipt_single(apply_id, path, postimage, Some(content_hash.clone()), None)
+        self.receipt_single(
+            apply_id,
+            path,
+            postimage,
+            Some(content_hash.clone()),
+            cleanup_name,
+        )
     }
 
     fn apply_delete(
@@ -723,13 +867,26 @@ impl AtomicWorkspaceWriter {
             operation: "stage workspace delete",
         })?;
         sync_parent(&parent)?;
+        self.observer.checkpoint(ApplyCheckpoint::SourceBackedUp);
         let tomb_path = sibling_path(path, &tomb_name)?;
         let mut moved_cache = MemoryHashCache::default();
         let content_hash = match expected {
             ExpectedEntry::Present { content_hash, .. } => content_hash.as_ref(),
             ExpectedEntry::Missing => None,
         };
-        if !self.matches_snapshot(&tomb_path, &preimage, content_hash, &mut moved_cache)? {
+        let directory_snapshot = match expected {
+            ExpectedEntry::Present {
+                directory_snapshot, ..
+            } => directory_snapshot.as_ref(),
+            ExpectedEntry::Missing => None,
+        };
+        if !self.matches_snapshot(
+            &tomb_path,
+            &preimage,
+            content_hash,
+            directory_snapshot,
+            &mut moved_cache,
+        )? {
             restore_moved_if_missing(&parent, &tomb_name, &parent, &name);
             return Err(FsError::ContentMismatch);
         }
@@ -785,6 +942,18 @@ impl AtomicWorkspaceWriter {
             ExpectedEntry::Present { content_hash, .. } => content_hash.as_ref(),
             ExpectedEntry::Missing => None,
         };
+        let source_directory_snapshot = match source_expected {
+            ExpectedEntry::Present {
+                directory_snapshot, ..
+            } => directory_snapshot.as_ref(),
+            ExpectedEntry::Missing => None,
+        };
+        let target_directory_snapshot = match target_expected {
+            ExpectedEntry::Present {
+                directory_snapshot, ..
+            } => directory_snapshot.as_ref(),
+            ExpectedEntry::Missing => None,
+        };
         let source_kind = match source_expected {
             ExpectedEntry::Present { kind, .. } => *kind,
             ExpectedEntry::Missing => return Err(FsError::ContentMismatch),
@@ -798,6 +967,9 @@ impl AtomicWorkspaceWriter {
             let mut destination_cache = MemoryHashCache::default();
             let destination_committed = destination.as_ref().is_some_and(|observed| {
                 observed.kind == source_kind
+                    && self
+                        .matches_directory_snapshot(new_path, observed, source_directory_snapshot)
+                        .unwrap_or(false)
                     && self
                         .matches_hash(
                             new_path,
@@ -901,6 +1073,7 @@ impl AtomicWorkspaceWriter {
                 &target_backup_path,
                 target_preimage,
                 target_hash,
+                target_directory_snapshot,
                 &mut target_cache,
             )? {
                 restore_if_missing(&target_parent, &target_backup, &target_leaf);
@@ -916,6 +1089,7 @@ impl AtomicWorkspaceWriter {
                 &target_backup_path,
                 &target_baseline,
                 target_hash,
+                target_directory_snapshot,
                 &mut target_cache,
             )? {
                 restore_if_missing(&target_parent, &target_backup, &target_leaf);
@@ -939,6 +1113,7 @@ impl AtomicWorkspaceWriter {
                     &target_backup_path,
                     target_baseline,
                     target_hash,
+                    target_directory_snapshot,
                     &mut target_cache,
                 )? {
                     restore_if_missing(&target_parent, &target_backup, &target_leaf);
@@ -961,6 +1136,7 @@ impl AtomicWorkspaceWriter {
                 &source_backup_path,
                 &source_preimage,
                 source_hash,
+                source_directory_snapshot,
                 &mut source_cache,
             )? {
                 restore_source_if_missing(
@@ -975,6 +1151,7 @@ impl AtomicWorkspaceWriter {
                 return Err(FsError::ContentMismatch);
             }
         }
+        self.observer.checkpoint(ApplyCheckpoint::SourceBackedUp);
 
         if let Err(error) =
             set_entry_metadata(&source_parent, &source_backup, source_kind, metadata)
@@ -1089,6 +1266,85 @@ impl AtomicWorkspaceWriter {
             postimage_hashes: vec![content_hash],
             cleanup_name,
         })
+    }
+
+    fn resume_upsert(
+        &self,
+        apply_id: ApplyId,
+        operation: &FsOperation,
+    ) -> Result<ApplyReceipt, FsError> {
+        let (path, content_hash, metadata, expected, kind) = match operation {
+            FsOperation::UpsertFile {
+                path,
+                content_hash,
+                metadata,
+                expected,
+            } => (
+                path,
+                content_hash,
+                metadata,
+                expected,
+                WorkspaceEntryKind::File,
+            ),
+            FsOperation::UpsertSymlink {
+                path,
+                content_hash,
+                metadata,
+                expected,
+            } => (
+                path,
+                content_hash,
+                metadata,
+                expected,
+                WorkspaceEntryKind::Symlink,
+            ),
+            _ => return Err(FsError::ContentMismatch),
+        };
+        if !matches!(expected, ExpectedEntry::Present { .. }) || self.root.inspect(path)?.is_some()
+        {
+            return Err(FsError::ContentMismatch);
+        }
+        let (parent, leaf) = self.parent_path(path)?;
+        let temporary = format!(".fns-tmp-{}", apply_id.0);
+        let tomb = format!(".fns-delete-{}", apply_id.0);
+        let temporary_path = sibling_path(path, &temporary)?;
+        let tomb_path = sibling_path(path, &tomb)?;
+        let mut cache = MemoryHashCache::default();
+        if !self.matches_staged_expected(&tomb_path, expected, &mut cache)?
+            || !self.matches_live(
+                &temporary_path,
+                kind,
+                Some(content_hash),
+                Some(metadata),
+                &mut cache,
+            )?
+        {
+            return Err(FsError::ContentMismatch);
+        }
+        rename_noreplace(&parent, &temporary, &parent, &leaf).map_err(|_| FsError::Io {
+            operation: "resume workspace staging",
+        })?;
+        sync_parent(&parent)?;
+        let mut postimage_cache = MemoryHashCache::default();
+        if !self.matches_live(
+            path,
+            kind,
+            Some(content_hash),
+            Some(metadata),
+            &mut postimage_cache,
+        )? {
+            return Err(FsError::ContentMismatch);
+        }
+        let postimage = self.root.inspect(path)?.ok_or(FsError::ContentMismatch)?;
+        self.observer
+            .checkpoint(ApplyCheckpoint::FilesystemCommitted);
+        self.receipt_single(
+            apply_id,
+            path,
+            postimage,
+            Some(content_hash.clone()),
+            Some(tomb_path.as_str().to_owned()),
+        )
     }
 
     fn parent_path(&self, path: &WorkspacePath) -> Result<(Dir, String), FsError> {
@@ -1219,7 +1475,7 @@ impl AtomicWorkspaceWriter {
         _expected: &ExpectedEntry,
         preimage: Option<&ObservedEntry>,
         preimage_hash: Option<&WorkspaceContentHash>,
-    ) -> Result<(), FsError> {
+    ) -> Result<Option<String>, FsError> {
         if parent.symlink_metadata(destination).is_ok() && !replace_existing {
             let _ = parent.remove_file(temporary);
             return Err(FsError::ContentMismatch);
@@ -1257,7 +1513,7 @@ impl AtomicWorkspaceWriter {
                 let _ = parent.remove_file(temporary);
                 return Err(FsError::ContentMismatch);
             };
-            match self.matches_snapshot(&backup_path, preimage, preimage_hash, &mut cache) {
+            match self.matches_snapshot(&backup_path, preimage, preimage_hash, None, &mut cache) {
                 Ok(true) => {}
                 Ok(false) => {
                     restore_if_missing(parent, &backup, destination);
@@ -1295,7 +1551,13 @@ impl AtomicWorkspaceWriter {
             };
             self.observer
                 .checkpoint(ApplyCheckpoint::DestinationBackedUp);
-            match self.matches_snapshot(&backup_path, &backup_baseline, preimage_hash, &mut cache) {
+            match self.matches_snapshot(
+                &backup_path,
+                &backup_baseline,
+                preimage_hash,
+                None,
+                &mut cache,
+            ) {
                 Ok(true) => {}
                 Ok(false) => {
                     restore_if_missing(parent, &backup, destination);
@@ -1321,16 +1583,15 @@ impl AtomicWorkspaceWriter {
                 });
             }
             sync_parent(parent)?;
-            remove_entry(parent, &backup)?;
-            sync_parent(parent)?;
-            return Ok(());
+            return Ok(Some(backup_path.as_str().to_owned()));
         }
         rename_noreplace(parent, temporary, parent, destination).map_err(|_| {
             let _ = parent.remove_file(temporary);
             FsError::Io {
                 operation: "commit workspace staging",
             }
-        })
+        })?;
+        Ok(None)
     }
 
     fn has_unrelated_artifact(
@@ -1437,16 +1698,24 @@ fn create_symlink(parent: &Dir, target: &str, temporary: &str) -> Result<(), FsE
 }
 
 fn sync_parent(parent: &Dir) -> Result<(), FsError> {
-    parent
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let directory = parent
+        .open(".")
+        .map_err(|_| FsError::Io {
+            operation: "open workspace parent for sync",
+        })?
+        .into_std();
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let directory = parent
         .try_clone()
         .map_err(|_| FsError::Io {
             operation: "clone workspace parent",
         })?
-        .into_std_file()
-        .sync_all()
-        .map_err(|_| FsError::Io {
-            operation: "sync workspace parent",
-        })?;
+        .into_std_file();
+
+    directory.sync_all().map_err(|_| FsError::Io {
+        operation: "sync workspace parent",
+    })?;
     #[cfg(test)]
     run_sync_parent_test_hook(parent);
     Ok(())
@@ -1643,6 +1912,20 @@ mod tests {
 
     use super::*;
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn sync_parent_reopens_capability_directory_before_fsync() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let state_dir = tempfile::tempdir().unwrap();
+        let root = RootedWorkspace::open(root_dir.path()).unwrap();
+        let content = ContentCache::open(state_dir.path()).unwrap();
+        let writer = AtomicWorkspaceWriter::new(root, content);
+        let path = WorkspacePath::parse("entry.txt").unwrap();
+        let (parent, _) = writer.parent_path(&path).unwrap();
+
+        sync_parent(&parent).unwrap();
+    }
+
     #[test]
     fn rename_cleanup_syncs_parent_after_backup_removal() {
         let root_dir = tempfile::tempdir().unwrap();
@@ -1664,6 +1947,7 @@ mod tests {
         let source_expected = ExpectedEntry::Present {
             kind: source_observed.kind,
             content_hash: Some(source_hash.clone()),
+            directory_snapshot: None,
             fingerprint: source_observed.fingerprint,
         };
         let target_expected = ExpectedEntry::Present {
@@ -1675,6 +1959,7 @@ mod tests {
                 ))
                 .unwrap(),
             ),
+            directory_snapshot: None,
             fingerprint: target_observed.fingerprint,
         };
         let apply_id = ApplyId(uuid::Uuid::new_v4());

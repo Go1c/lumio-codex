@@ -194,6 +194,14 @@ impl SocketWriter {
             .map_err(|_| TransportError::new(TransportErrorCode::Network, true))
     }
 
+    pub async fn send_ping(&mut self, data: Vec<u8>) -> Result<(), TransportError> {
+        let msg = tokio_tungstenite::tungstenite::Message::Ping(data.into());
+        self.inner
+            .send(msg)
+            .await
+            .map_err(|_| TransportError::new(TransportErrorCode::Network, true))
+    }
+
     pub async fn close(&mut self) -> Result<(), TransportError> {
         self.inner
             .close()
@@ -206,7 +214,7 @@ impl SocketWriter {
 #[derive(Debug)]
 pub enum InboundMessage {
     Text(Vec<u8>),
-    Binary(Vec<u8>),
+    Binary(tokio_tungstenite::tungstenite::Bytes),
     Ping(Vec<u8>),
     Pong(Vec<u8>),
     Close,
@@ -219,7 +227,7 @@ impl SocketReader {
                 Some(Ok(InboundMessage::Text(s.as_bytes().to_vec())))
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(b))) => {
-                Some(Ok(InboundMessage::Binary(b.to_vec())))
+                Some(Ok(InboundMessage::Binary(b)))
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(b))) => {
                 Some(Ok(InboundMessage::Pong(b.to_vec())))
@@ -231,8 +239,22 @@ impl SocketReader {
                 Some(Ok(InboundMessage::Close))
             }
             Some(Ok(_)) => Some(Ok(InboundMessage::Close)),
-            Some(Err(_)) => Some(Err(TransportError::new(TransportErrorCode::Network, true))),
+            Some(Err(error)) => Some(Err(classify_read_error(&error))),
             None => None,
         }
+    }
+}
+
+fn classify_read_error(error: &tokio_tungstenite::tungstenite::Error) -> TransportError {
+    use tokio_tungstenite::tungstenite::Error;
+
+    match error {
+        Error::Protocol(
+            tokio_tungstenite::tungstenite::error::ProtocolError::ResetWithoutClosingHandshake,
+        ) => TransportError::new(TransportErrorCode::Network, true),
+        Error::Capacity(_) | Error::Protocol(_) | Error::Utf8(_) | Error::AttackAttempt => {
+            TransportError::new(TransportErrorCode::Protocol, false)
+        }
+        _ => TransportError::new(TransportErrorCode::Network, true),
     }
 }

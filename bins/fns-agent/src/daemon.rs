@@ -1,9 +1,9 @@
 //! Daemon: recovery-first watcher/transport orchestration with bounded shutdown.
 //!
-//! Startup order: load config → acquire lock → open engine (includes recovery) →
-//! spawn engine worker → start watcher → connect transport → run until signal.
-//! Shutdown: stop watcher intake → drain engine work (≤30s) → close socket →
-//! write stopped status → release lock.
+//! Startup order: open and recover the engine, start observation, reconcile, then
+//! connect transport. Normal shutdown quiesces the watcher before engine close.
+//! A parent process supervisor, not this in-process engine thread, supplies the
+//! hard deadline by killing and reaping the complete worker process if needed.
 
 use crate::config::AgentConfig;
 use crate::error::{AgentError, AgentErrorCode, AgentPhase};
@@ -11,128 +11,65 @@ use crate::status::AgentStatus;
 
 use fns_sync_core::{SyncEngine, SyncEngineConfig};
 use fns_transport::{
-    EngineWorker, ReconnectPolicy, ReconnectSchedule, UuidJitter, WorkspaceEndpoint,
+    EngineWorker, JitterSource, ReconnectPolicy, ReconnectSchedule, SessionConnectionPhase,
+    SessionRuntimeStatus, UuidJitter, WorkspaceEndpoint,
 };
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::future::Future;
+use std::path::Path;
+use std::pin::Pin;
+use std::sync::{
+    Arc as StdArc,
+    atomic::{AtomicUsize as StdAtomicUsize, Ordering as StdOrdering},
+};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[allow(dead_code)]
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+const BRIDGE_RECEIVE_TICK: Duration = Duration::from_millis(25);
+const ENGINE_SUBMISSION_TIMEOUT: Duration = Duration::from_secs(5);
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Run the agent daemon until shutdown.
-///
-/// This is a foreground process: no fork, daemonization, PID killing, or service
-/// installation. The caller is expected to handle signals.
-pub async fn run(config: AgentConfig, token: fns_platform::SecretToken) -> Result<(), AgentError> {
-    let workspace_id = config.workspace_id;
+#[cfg(test)]
+async fn run_with_shutdown_signal<Signal>(
+    config: AgentConfig,
+    token: fns_platform::SecretToken,
+    signal: Signal,
+) -> Result<(), AgentError>
+where
+    Signal: Future<Output = Result<(), AgentError>> + Send + 'static,
+{
     let state_dir = config.state_dir.clone();
-
-    // Step 1: Acquire singleton lock.
-    #[cfg(target_os = "linux")]
-    {
-        let lock_path = state_dir.join("agent.lock");
-        let _lock = fns_platform::ProcessLock::acquire_linux(&lock_path).map_err(|e| {
-            if e.code() == fns_platform::PlatformErrorCode::AlreadyRunning {
-                AgentError::new(AgentErrorCode::AlreadyRunning)
-            } else {
-                AgentError::new(AgentErrorCode::Filesystem)
-            }
-        })?;
-        // Lock is held for the duration of run.
-        std::mem::forget(_lock); // Keep lock alive — released when process exits.
-    }
-
-    // Step 2: Write starting status.
-    write_status(&state_dir, AgentPhase::Starting, workspace_id);
-
-    // Step 3: Open engine (includes recovery).
-    write_status(&state_dir, AgentPhase::Recovering, workspace_id);
-    let engine_config = SyncEngineConfig::new(
-        workspace_id,
-        config.client_id,
-        &config.workspace_root,
-        &state_dir,
-    );
-    let engine =
-        SyncEngine::open(engine_config).map_err(|_| AgentError::new(AgentErrorCode::Core))?;
-
-    // Step 4: Spawn engine worker.
-    let (worker, handle) = EngineWorker::spawn(engine);
-
-    // Step 5: Start watcher (after recovery).
-    let _watcher = start_watcher(&config, handle.clone());
-
-    // Step 6: Connect transport.
-    write_status(&state_dir, AgentPhase::Connecting, workspace_id);
-
-    let endpoint = WorkspaceEndpoint::parse(&config.endpoint)
-        .map_err(|_| AgentError::new(AgentErrorCode::InvalidConfiguration))?;
-
-    let mut schedule = ReconnectSchedule::new(ReconnectPolicy::default(), UuidJitter);
-
-    // Reconnect loop.
-    loop {
-        let connect_result = fns_transport::socket::connect(&endpoint, &token, "0.1.0").await;
-
-        match connect_result {
-            Ok(stream) => {
-                write_status(&state_dir, AgentPhase::Subscribing, workspace_id);
-                let (session, mut writer) = fns_transport::session::Session::new(
-                    stream,
-                    handle.clone(),
-                    workspace_id,
-                    config.client_id,
-                    "0.1.0".into(),
-                );
-
-                let shutdown = tokio_util::sync::CancellationToken::new();
-                let shutdown_clone = shutdown.clone();
-
-                // Spawn signal handler.
-                tokio::spawn(async move {
-                    #[cfg(unix)]
-                    {
-                        use tokio::signal;
-                        let _ = signal::unix::signal(signal::unix::SignalKind::terminate());
-                        let _ = signal::ctrl_c().await;
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        let _ = tokio::signal::ctrl_c().await;
-                    }
-                    shutdown_clone.cancel();
-                });
-
-                let result = session.run(&mut writer, shutdown).await;
-                match result {
-                    fns_transport::session::SessionResult::Closed => {
-                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
-                    }
-                    fns_transport::session::SessionResult::Error(e) => {
-                        if !e.retryable() {
-                            write_status_error(&state_dir, workspace_id, e.code());
-                            let _ = handle.shutdown().await;
-                            let _ = worker.join();
-                            return Err(map_transport_error(e.code()));
-                        }
-                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
-                    }
-                }
-            }
-            Err(e) => {
-                if !e.retryable() {
-                    write_status_error(&state_dir, workspace_id, e.code());
-                    let _ = handle.shutdown().await;
-                    let _ = worker.join();
-                    return Err(map_transport_error(e.code()));
-                }
-            }
+    let workspace_id = config.workspace_id;
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let signal_shutdown = shutdown.clone();
+    let mut signal = tokio::spawn(async move {
+        let result = signal.await;
+        signal_shutdown.cancel();
+        result
+    });
+    let runtime_result = run_until_shutdown(config, token, shutdown, None).await;
+    let signal_result = if signal.is_finished() {
+        match (&mut signal).await {
+            Ok(result) => Some(result),
+            Err(_) => Some(Err(AgentError::new(AgentErrorCode::Core))),
         }
-
-        // Backoff before reconnecting.
-        let delay = schedule.next_delay();
-        tokio::time::sleep(delay).await;
-        write_status_reconnect(&state_dir, workspace_id, schedule.attempt());
+    } else {
+        signal.abort();
+        match signal.await {
+            Err(error) if error.is_cancelled() => None,
+            Ok(result) => Some(result),
+            Err(_) => Some(Err(AgentError::new(AgentErrorCode::Core))),
+        }
+    };
+    match runtime_result {
+        Err(error) => Err(error),
+        Ok(()) => match signal_result {
+            Some(Err(error)) => {
+                write_status_error(&state_dir, workspace_id, error.code())?;
+                Err(error)
+            }
+            Some(Ok(())) | None => Ok(()),
+        },
     }
 }
 
@@ -142,107 +79,330 @@ pub async fn run(config: AgentConfig, token: fns_platform::SecretToken) -> Resul
 /// The caller controls shutdown by cancelling the `external_shutdown` token.
 /// When the token is cancelled, the current session (if any) stops and the
 /// function returns `Ok(())`.
-pub async fn run_embedded(
+#[cfg(test)]
+async fn run_embedded(
     config: AgentConfig,
     token: fns_platform::SecretToken,
     external_shutdown: tokio_util::sync::CancellationToken,
 ) -> Result<(), AgentError> {
+    run_until_shutdown(config, token, external_shutdown, None).await
+}
+
+/// Run under the worker control protocol and report readiness only after
+/// recovery, watcher startup, and the initial durable reconciliation complete.
+pub async fn run_supervised(
+    config: AgentConfig,
+    token: fns_platform::SecretToken,
+    external_shutdown: tokio_util::sync::CancellationToken,
+    ready: tokio::sync::oneshot::Sender<fns_transport::EngineHandle>,
+) -> Result<(), AgentError> {
+    run_until_shutdown(config, token, external_shutdown, Some(ready)).await
+}
+
+async fn run_until_shutdown(
+    config: AgentConfig,
+    token: fns_platform::SecretToken,
+    shutdown: tokio_util::sync::CancellationToken,
+    ready: Option<tokio::sync::oneshot::Sender<fns_transport::EngineHandle>>,
+) -> Result<(), AgentError> {
     let workspace_id = config.workspace_id;
     let state_dir = config.state_dir.clone();
-
-    // No singleton lock in embedded mode — the App enforces one sync per project.
-
-    write_status(&state_dir, AgentPhase::Starting, workspace_id);
-    write_status(&state_dir, AgentPhase::Recovering, workspace_id);
-
-    let engine_config = SyncEngineConfig::new(
-        workspace_id,
-        config.client_id,
-        &config.workspace_root,
-        &state_dir,
-    );
-    let engine =
-        SyncEngine::open(engine_config).map_err(|_| AgentError::new(AgentErrorCode::Core))?;
-
-    let (worker, handle) = EngineWorker::spawn(engine);
-    let _watcher = start_watcher(&config, handle.clone());
-
-    write_status(&state_dir, AgentPhase::Connecting, workspace_id);
-
     let endpoint = WorkspaceEndpoint::parse(&config.endpoint)
         .map_err(|_| AgentError::new(AgentErrorCode::InvalidConfiguration))?;
+
+    write_status(&state_dir, AgentPhase::Starting, workspace_id)?;
+    write_status(&state_dir, AgentPhase::Recovering, workspace_id)?;
+
+    let (mut watcher, worker, handle) = match start_local_runtime(&config).await {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            write_status_error(&state_dir, workspace_id, error.code())?;
+            return Err(error);
+        }
+    };
+    let watcher_failure = watcher.failure_token();
+    let queued_watcher_batches = watcher.queued_batches_handle();
+    let run_result = match write_status(&state_dir, AgentPhase::Connecting, workspace_id) {
+        Ok(()) => {
+            if ready.is_some_and(|ready| ready.send(handle.clone()).is_err()) {
+                return finalize_runtime(
+                    &mut watcher,
+                    worker,
+                    handle,
+                    &state_dir,
+                    workspace_id,
+                    Err(AgentError::new(AgentErrorCode::Protocol)),
+                )
+                .await;
+            }
+            run_transport_loop(
+                &config,
+                &token,
+                &endpoint,
+                &handle,
+                shutdown,
+                watcher_failure,
+                queued_watcher_batches,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    finalize_runtime(
+        &mut watcher,
+        worker,
+        handle,
+        &state_dir,
+        workspace_id,
+        run_result,
+    )
+    .await
+}
+
+async fn start_local_runtime(
+    config: &AgentConfig,
+) -> Result<(WatcherRuntime, EngineWorker, fns_transport::EngineHandle), AgentError> {
+    let rule_config = configured_sync_rules(config);
+    let watcher_rules = compile_sync_rules(rule_config.clone())?;
+    let engine_config = SyncEngineConfig::new(
+        config.workspace_id,
+        config.client_id,
+        &config.workspace_root,
+        &config.state_dir,
+    )
+    .with_sync_rules(rule_config);
+    let engine = SyncEngine::open(engine_config).map_err(map_sync_error)?;
+    let (worker, handle) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| EngineWorker::spawn(engine)))
+            .map_err(|_| AgentError::new(AgentErrorCode::Core))?;
+    match start_watcher_and_reconcile(&config.workspace_root, watcher_rules, handle.clone()).await {
+        Ok(watcher) => Ok((watcher, worker, handle)),
+        Err(error) => {
+            let cleanup = shutdown_engine_worker(worker, handle).await;
+            Err(cleanup.err().unwrap_or(error))
+        }
+    }
+}
+
+async fn run_transport_loop(
+    config: &AgentConfig,
+    token: &fns_platform::SecretToken,
+    endpoint: &WorkspaceEndpoint,
+    handle: &fns_transport::EngineHandle,
+    shutdown: tokio_util::sync::CancellationToken,
+    watcher_failure: tokio_util::sync::CancellationToken,
+    queued_watcher_batches: StdArc<StdAtomicUsize>,
+) -> Result<(), AgentError> {
+    let workspace_id = config.workspace_id;
+    let state_dir = &config.state_dir;
 
     let mut schedule = ReconnectSchedule::new(ReconnectPolicy::default(), UuidJitter);
 
     loop {
-        // Check for external shutdown before connecting.
-        if external_shutdown.is_cancelled() {
-            break;
+        if shutdown.is_cancelled() {
+            return Ok(());
+        }
+        if watcher_failure.is_cancelled() {
+            return Err(AgentError::new(AgentErrorCode::Core));
         }
 
         let connect_result = tokio::select! {
-            _ = external_shutdown.cancelled() => break,
-            res = fns_transport::socket::connect(&endpoint, &token, "0.1.0") => res,
+            _ = shutdown.cancelled() => return Ok(()),
+            _ = watcher_failure.cancelled() => {
+                return Err(AgentError::new(AgentErrorCode::Core));
+            }
+            res = fns_transport::socket::connect(endpoint, token, "0.1.0") => res,
         };
 
         match connect_result {
             Ok(stream) => {
-                write_status(&state_dir, AgentPhase::Subscribing, workspace_id);
-                let (session, mut writer) = fns_transport::session::Session::new(
-                    stream,
-                    handle.clone(),
+                let (session, mut writer, mut session_status_rx) =
+                    fns_transport::session::Session::new_observed(
+                        stream,
+                        handle.clone(),
+                        workspace_id,
+                        config.client_id,
+                        "0.1.0".into(),
+                    );
+                let mut current_status = *session_status_rx.borrow_and_update();
+                write_session_status(
+                    state_dir,
                     workspace_id,
-                    config.client_id,
-                    "0.1.0".into(),
-                );
+                    handle,
+                    &queued_watcher_batches,
+                    current_status,
+                    schedule.attempt(),
+                )
+                .await?;
+                let mut reached_online = false;
+                let mut status_channel_open = true;
+                let mut status_tick = tokio::time::interval(STATUS_REFRESH_INTERVAL);
+                status_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                status_tick.tick().await;
+                let mut session_run = Box::pin(session.run(&mut writer, shutdown.clone()));
 
-                // Use external shutdown token directly — no signal handler.
-                let result = session.run(&mut writer, external_shutdown.clone()).await;
+                let result = loop {
+                    tokio::select! {
+                        _ = watcher_failure.cancelled() => {
+                            return Err(AgentError::new(AgentErrorCode::Core));
+                        }
+                        result = &mut session_run => break result,
+                        changed = session_status_rx.changed(), if status_channel_open => {
+                            if changed.is_err() {
+                                status_channel_open = false;
+                                continue;
+                            }
+                            current_status = *session_status_rx.borrow_and_update();
+                            reset_reconnect_after_online(
+                                &mut schedule,
+                                &mut reached_online,
+                                current_status.phase,
+                            );
+                            write_session_status(
+                                state_dir,
+                                workspace_id,
+                                handle,
+                                &queued_watcher_batches,
+                                current_status,
+                                schedule.attempt(),
+                            )
+                            .await?;
+                        }
+                        _ = status_tick.tick() => {
+                            write_session_status(
+                                state_dir,
+                                workspace_id,
+                                handle,
+                                &queued_watcher_batches,
+                                current_status,
+                                schedule.attempt(),
+                            )
+                            .await?;
+                        }
+                    }
+                };
                 match result {
                     fns_transport::session::SessionResult::Closed => {
-                        if external_shutdown.is_cancelled() {
-                            break;
+                        if shutdown.is_cancelled() {
+                            return Ok(());
                         }
-                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
                     }
                     fns_transport::session::SessionResult::Error(e) => {
                         if !e.retryable() {
-                            write_status_error(&state_dir, workspace_id, e.code());
-                            let _ = handle.shutdown().await;
-                            let _ = worker.join();
                             return Err(map_transport_error(e.code()));
                         }
-                        write_status(&state_dir, AgentPhase::Connecting, workspace_id);
                     }
                 }
             }
             Err(e) => {
                 if !e.retryable() {
-                    write_status_error(&state_dir, workspace_id, e.code());
-                    let _ = handle.shutdown().await;
-                    let _ = worker.join();
                     return Err(map_transport_error(e.code()));
                 }
             }
         }
 
-        if external_shutdown.is_cancelled() {
-            break;
-        }
-
         let delay = schedule.next_delay();
+        write_reconnect_status(
+            state_dir,
+            workspace_id,
+            handle,
+            &queued_watcher_batches,
+            schedule.attempt(),
+        )
+        .await?;
         tokio::select! {
-            _ = external_shutdown.cancelled() => break,
+            _ = shutdown.cancelled() => return Ok(()),
+            _ = watcher_failure.cancelled() => {
+                return Err(AgentError::new(AgentErrorCode::Core));
+            }
             _ = tokio::time::sleep(delay) => {}
         }
-        write_status_reconnect(&state_dir, workspace_id, schedule.attempt());
     }
+}
 
-    // Clean shutdown.
-    let _ = handle.shutdown().await;
-    let _ = worker.join();
-    write_status_stopped(&state_dir, workspace_id);
-    Ok(())
+fn reset_reconnect_after_online<J: JitterSource>(
+    schedule: &mut ReconnectSchedule<J>,
+    reached_online: &mut bool,
+    phase: SessionConnectionPhase,
+) {
+    if phase == SessionConnectionPhase::Online && !*reached_online {
+        schedule.reset();
+        *reached_online = true;
+    }
+}
+
+async fn finalize_runtime(
+    watcher: &mut WatcherRuntime,
+    worker: EngineWorker,
+    handle: fns_transport::EngineHandle,
+    state_dir: &Path,
+    workspace_id: fns_protocol::WorkspaceId,
+    run_result: Result<(), AgentError>,
+) -> Result<(), AgentError> {
+    let stopping_result = if run_result.is_ok() {
+        write_status(state_dir, AgentPhase::Stopping, workspace_id)
+    } else {
+        Ok(())
+    };
+    let watcher_result = watcher.shutdown(SHUTDOWN_GRACE).await;
+    let engine_result = shutdown_engine_worker(worker, handle).await;
+    let error = watcher_result
+        .err()
+        .or_else(|| run_result.err())
+        .or_else(|| stopping_result.err())
+        .or_else(|| engine_result.err());
+    if let Some(error) = error {
+        write_status_error(state_dir, workspace_id, error.code())?;
+        return Err(error);
+    }
+    write_status_stopped(state_dir, workspace_id)
+}
+
+async fn shutdown_engine_worker(
+    worker: EngineWorker,
+    handle: fns_transport::EngineHandle,
+) -> Result<(), AgentError> {
+    let shutdown_result = match tokio::time::timeout(SHUTDOWN_GRACE, handle.shutdown()).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(map_transport_error(error.code())),
+        Err(_) => Err(AgentError::new(AgentErrorCode::ShutdownTimeout)),
+    };
+    drop(handle);
+    let join_result = worker
+        .join()
+        .map_err(|error| map_transport_error(error.code()));
+    shutdown_result.and(join_result)
+}
+
+fn map_sync_error(error: fns_sync_core::SyncError) -> AgentError {
+    match error {
+        fns_sync_core::SyncError::InvalidConfiguration { .. } => {
+            AgentError::new(AgentErrorCode::InvalidConfiguration)
+        }
+        fns_sync_core::SyncError::Filesystem(_) | fns_sync_core::SyncError::ScanIncomplete => {
+            AgentError::new(AgentErrorCode::Filesystem)
+        }
+        _ => AgentError::new(AgentErrorCode::Core),
+    }
+}
+
+#[cfg(all(test, unix))]
+async fn wait_for_shutdown_signal_from<RegisterTerminate, Terminate, CtrlC>(
+    register_terminate: RegisterTerminate,
+    ctrl_c: CtrlC,
+) -> Result<(), AgentError>
+where
+    RegisterTerminate: FnOnce() -> std::io::Result<Terminate>,
+    Terminate: Future<Output = Option<()>>,
+    CtrlC: Future<Output = std::io::Result<()>>,
+{
+    let terminate = register_terminate().map_err(|_| AgentError::new(AgentErrorCode::Core))?;
+    tokio::pin!(terminate);
+    tokio::pin!(ctrl_c);
+    tokio::select! {
+        result = &mut ctrl_c => result.map_err(|_| AgentError::new(AgentErrorCode::Core)),
+        result = &mut terminate => result.ok_or_else(|| AgentError::new(AgentErrorCode::Core)),
+    }
 }
 
 fn map_transport_error(code: fns_transport::TransportErrorCode) -> AgentError {
@@ -257,82 +417,312 @@ fn map_transport_error(code: fns_transport::TransportErrorCode) -> AgentError {
         fns_transport::TransportErrorCode::Filesystem => {
             AgentError::new(AgentErrorCode::Filesystem)
         }
+        fns_transport::TransportErrorCode::InvalidConfiguration => {
+            AgentError::new(AgentErrorCode::InvalidConfiguration)
+        }
+        fns_transport::TransportErrorCode::ShutdownTimeout => {
+            AgentError::new(AgentErrorCode::ShutdownTimeout)
+        }
         _ => AgentError::new(AgentErrorCode::Network),
     }
 }
 
-fn start_watcher(
-    config: &AgentConfig,
-    handle: fns_transport::EngineHandle,
-) -> Option<fns_fs::PlatformWatcher> {
-    let rules = fns_fs::SyncRuleConfig {
+type BridgeFuture = Pin<Box<dyn Future<Output = Result<(), AgentError>> + Send + 'static>>;
+type BridgeJoin = tokio_util::task::AbortOnDropHandle<Result<(), AgentError>>;
+
+struct WatcherRuntime {
+    watcher: Option<fns_fs::PlatformWatcher>,
+    cancellation: tokio_util::sync::CancellationToken,
+    failure: tokio_util::sync::CancellationToken,
+    queued_batches: StdArc<StdAtomicUsize>,
+    bridge: Option<BridgeJoin>,
+}
+
+impl WatcherRuntime {
+    fn failure_token(&self) -> tokio_util::sync::CancellationToken {
+        self.failure.clone()
+    }
+
+    fn queued_batches_handle(&self) -> StdArc<StdAtomicUsize> {
+        StdArc::clone(&self.queued_batches)
+    }
+
+    async fn shutdown(&mut self, grace: Duration) -> Result<(), AgentError> {
+        self.cancellation.cancel();
+        self.watcher.take();
+        let Some(mut bridge) = self.bridge.take() else {
+            return Ok(());
+        };
+        match tokio::time::timeout(grace, &mut bridge).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(AgentError::new(AgentErrorCode::Core)),
+            Err(_) => {
+                bridge.abort();
+                match bridge.await {
+                    Err(error) if !error.is_cancelled() => {
+                        Err(AgentError::new(AgentErrorCode::Core))
+                    }
+                    Ok(_) | Err(_) => Err(AgentError::new(AgentErrorCode::ShutdownTimeout)),
+                }
+            }
+        }
+    }
+}
+
+impl Drop for WatcherRuntime {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        self.watcher.take();
+        if let Some(bridge) = &self.bridge {
+            bridge.abort();
+        }
+    }
+}
+
+fn configured_sync_rules(config: &AgentConfig) -> fns_fs::SyncRuleConfig {
+    fns_fs::SyncRuleConfig {
         includes: config.sync.includes.clone(),
         excludes: config.sync.excludes.clone(),
         protect_secrets: config.sync.protect_secrets,
-    };
-    let rules = fns_fs::SyncRules::compile(rules).ok()?;
+    }
+}
 
-    let root = fns_fs::RootedWorkspace::open(&config.workspace_root).ok()?;
-    let (watcher, receiver) = fns_fs::start_platform_watcher(&root, 4096).ok()?;
+fn compile_sync_rules(config: fns_fs::SyncRuleConfig) -> Result<fns_fs::SyncRules, AgentError> {
+    fns_fs::SyncRules::compile(config)
+        .map_err(|_| AgentError::new(AgentErrorCode::InvalidConfiguration))
+}
 
-    // Spawn a thread to consume watch events and feed them into the engine.
-    // The bridge uses crossbeam receiver (sync blocking) on a dedicated thread,
-    // batching FsChange events and sending them to the engine via the async handle.
-    let debounce = Duration::from_millis(200);
-    std::thread::Builder::new()
-        .name("fns-watch-bridge".into())
-        .spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(rt) => rt,
-                Err(_) => return,
-            };
-            rt.block_on(async move {
-                let mut coalescer = fns_fs::EventCoalescer::with_rules(
-                    debounce,
-                    Duration::from_millis(500),
-                    8192,
-                    rules,
-                );
-                loop {
-                    match receiver.recv() {
-                        Ok(fns_fs::WatchMessage::Event(event)) => {
-                            let _ = coalescer.push(event);
-                            // Try to flush ready events.
-                            let now = std::time::Instant::now();
-                            match coalescer.flush_ready(now, &ConservativePrior) {
-                                Ok(changes) if !changes.is_empty() => {
-                                    if handle.record_local_changes(changes).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                Ok(_) => {}
-                                Err(_) => {
-                                    // Coalescer error — force rescan.
-                                    let _ = handle
-                                        .record_local_changes(vec![
-                                            fns_fs::FsChange::RescanRequired,
-                                        ])
-                                        .await;
-                                }
-                            }
+fn start_watcher(
+    workspace_root: &Path,
+    rules: fns_fs::SyncRules,
+    handle: fns_transport::EngineHandle,
+) -> Result<WatcherRuntime, AgentError> {
+    let runtime =
+        tokio::runtime::Handle::try_current().map_err(|_| AgentError::new(AgentErrorCode::Core))?;
+    start_watcher_with(
+        workspace_root,
+        rules,
+        handle,
+        |root| fns_fs::start_platform_watcher(root, fns_fs::WATCH_QUEUE_CAPACITY),
+        move |future| {
+            Ok(tokio_util::task::AbortOnDropHandle::new(
+                runtime.spawn(future),
+            ))
+        },
+    )
+}
+
+fn start_watcher_with<StartPlatform, SpawnBridge>(
+    workspace_root: &Path,
+    rules: fns_fs::SyncRules,
+    handle: fns_transport::EngineHandle,
+    start_platform: StartPlatform,
+    spawn_bridge: SpawnBridge,
+) -> Result<WatcherRuntime, AgentError>
+where
+    StartPlatform:
+        FnOnce(
+            &fns_fs::RootedWorkspace,
+        )
+            -> Result<(fns_fs::PlatformWatcher, fns_fs::WatchReceiver), fns_fs::FsError>,
+    SpawnBridge: FnOnce(BridgeFuture) -> Result<BridgeJoin, AgentError>,
+{
+    let root = fns_fs::RootedWorkspace::open(workspace_root)
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?;
+    let (watcher, receiver) =
+        start_platform(&root).map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    let failure = tokio_util::sync::CancellationToken::new();
+    let task_failure = failure.clone();
+    let queued_batches = StdArc::new(StdAtomicUsize::new(0));
+    let task_queued_batches = StdArc::clone(&queued_batches);
+    let task: BridgeFuture = Box::pin(async move {
+        let result = run_watch_bridge(
+            receiver,
+            rules,
+            handle,
+            task_cancellation,
+            task_queued_batches,
+        )
+        .await;
+        if result.is_err() {
+            task_failure.cancel();
+        }
+        result
+    });
+    let bridge = spawn_bridge(task)?;
+    Ok(WatcherRuntime {
+        watcher: Some(watcher),
+        cancellation,
+        failure,
+        queued_batches,
+        bridge: Some(bridge),
+    })
+}
+
+async fn start_watcher_and_reconcile(
+    workspace_root: &Path,
+    rules: fns_fs::SyncRules,
+    handle: fns_transport::EngineHandle,
+) -> Result<WatcherRuntime, AgentError> {
+    let mut watcher = start_watcher(workspace_root, rules, handle.clone())?;
+    if let Err(error) = submit_engine_changes(&handle, vec![fns_fs::FsChange::RescanRequired]).await
+    {
+        let cleanup = watcher.shutdown(SHUTDOWN_GRACE).await;
+        return Err(cleanup.err().unwrap_or(error));
+    }
+    Ok(watcher)
+}
+
+async fn run_watch_bridge(
+    receiver: fns_fs::WatchReceiver,
+    rules: fns_fs::SyncRules,
+    handle: fns_transport::EngineHandle,
+    cancellation: tokio_util::sync::CancellationToken,
+    queued_batches: StdArc<StdAtomicUsize>,
+) -> Result<(), AgentError> {
+    let mut coalescer = fns_fs::EventCoalescer::with_rules(
+        fns_fs::DEBOUNCE_WINDOW,
+        fns_fs::RENAME_WINDOW,
+        fns_fs::COALESCER_PATH_CAPACITY,
+        rules,
+    );
+    let mut tick = tokio::time::interval(BRIDGE_RECEIVE_TICK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = cancellation.cancelled() => {
+                return submit_bridge_changes(
+                    &handle,
+                    vec![fns_fs::FsChange::RescanRequired],
+                    &queued_batches,
+                ).await;
+            }
+            _ = tick.tick() => {
+                let mut disconnected = false;
+                for _ in 0..fns_fs::WATCH_QUEUE_CAPACITY {
+                    match receiver.try_recv_detailed() {
+                        Ok(message) => {
+                            process_watch_message(
+                                &mut coalescer,
+                                &handle,
+                                message,
+                                &queued_batches,
+                            )
+                            .await?;
                         }
-                        Ok(fns_fs::WatchMessage::Gap(_)) => {
-                            // Watch gap — discard coalescer and force rescan.
-                            let _ = handle
-                                .record_local_changes(vec![fns_fs::FsChange::RescanRequired])
-                                .await;
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            disconnected = true;
+                            break;
                         }
-                        Err(_) => break, // Watcher disconnected.
                     }
                 }
-            });
-        })
-        .ok()?;
+                if disconnected {
+                    if cancellation.is_cancelled() {
+                        return submit_bridge_changes(
+                            &handle,
+                            vec![fns_fs::FsChange::RescanRequired],
+                            &queued_batches,
+                        ).await;
+                    }
+                    return Err(AgentError::new(AgentErrorCode::Filesystem));
+                }
+                let changes = coalescer
+                    .flush_ready(Instant::now(), &ConservativePrior)
+                    .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?;
+                if !changes.is_empty() {
+                    submit_bridge_changes(&handle, changes, &queued_batches).await?;
+                }
+            }
+        }
+    }
+}
 
-    Some(watcher)
+async fn process_watch_message(
+    coalescer: &mut fns_fs::EventCoalescer,
+    handle: &fns_transport::EngineHandle,
+    message: fns_fs::WatchMessage,
+    queued_batches: &StdArc<StdAtomicUsize>,
+) -> Result<(), AgentError> {
+    match message {
+        fns_fs::WatchMessage::Event(event) => {
+            let push = coalescer.push(event);
+            let changes = coalescer
+                .flush_ready(Instant::now(), &ConservativePrior)
+                .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?;
+            if push == fns_fs::CoalescePush::RescanRequired {
+                submit_bridge_changes(
+                    handle,
+                    vec![fns_fs::FsChange::RescanRequired],
+                    queued_batches,
+                )
+                .await
+            } else {
+                submit_bridge_changes(handle, changes, queued_batches).await
+            }
+        }
+        fns_fs::WatchMessage::Gap(_) => {
+            let discard_at = Instant::now()
+                .checked_add(fns_fs::RENAME_WINDOW.max(fns_fs::DEBOUNCE_WINDOW))
+                .ok_or_else(|| AgentError::new(AgentErrorCode::Core))?;
+            drop(
+                coalescer
+                    .flush_ready(discard_at, &ConservativePrior)
+                    .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?,
+            );
+            submit_bridge_changes(
+                handle,
+                vec![fns_fs::FsChange::RescanRequired],
+                queued_batches,
+            )
+            .await
+        }
+    }
+}
+
+async fn submit_bridge_changes(
+    handle: &fns_transport::EngineHandle,
+    changes: Vec<fns_fs::FsChange>,
+    queued_batches: &StdArc<StdAtomicUsize>,
+) -> Result<(), AgentError> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+    let _pending = PendingWatcherBatch::new(StdArc::clone(queued_batches));
+    submit_engine_changes(handle, changes).await
+}
+
+struct PendingWatcherBatch(StdArc<StdAtomicUsize>);
+
+impl PendingWatcherBatch {
+    fn new(counter: StdArc<StdAtomicUsize>) -> Self {
+        counter.fetch_add(1, StdOrdering::AcqRel);
+        Self(counter)
+    }
+}
+
+impl Drop for PendingWatcherBatch {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, StdOrdering::AcqRel);
+    }
+}
+
+async fn submit_engine_changes(
+    handle: &fns_transport::EngineHandle,
+    changes: Vec<fns_fs::FsChange>,
+) -> Result<(), AgentError> {
+    match tokio::time::timeout(
+        ENGINE_SUBMISSION_TIMEOUT,
+        handle.record_local_changes(changes),
+    )
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(map_transport_error(error.code())),
+        Err(_) => Err(AgentError::new(AgentErrorCode::Core)),
+    }
 }
 
 /// Conservative prior lookup that always returns None (no engine state query).
@@ -352,137 +742,787 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-fn write_status(
-    state_dir: &std::path::Path,
-    phase: AgentPhase,
+async fn write_session_status(
+    state_dir: &Path,
     workspace_id: fns_protocol::WorkspaceId,
-) {
+    handle: &fns_transport::EngineHandle,
+    queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    session: SessionRuntimeStatus,
+    reconnect_attempt: u32,
+) -> Result<(), AgentError> {
+    let (phase, connected) = match session.phase {
+        SessionConnectionPhase::Handshaking => (AgentPhase::Connecting, false),
+        SessionConnectionPhase::Subscribing => (AgentPhase::Subscribing, true),
+        SessionConnectionPhase::Online => (AgentPhase::Online, true),
+    };
+    write_runtime_status(
+        state_dir,
+        workspace_id,
+        handle,
+        queued_watcher_batches,
+        phase,
+        connected,
+        session.active_transfers,
+        reconnect_attempt,
+        None,
+    )
+    .await
+}
+
+async fn write_reconnect_status(
+    state_dir: &Path,
+    workspace_id: fns_protocol::WorkspaceId,
+    handle: &fns_transport::EngineHandle,
+    queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    reconnect_attempt: u32,
+) -> Result<(), AgentError> {
+    write_runtime_status(
+        state_dir,
+        workspace_id,
+        handle,
+        queued_watcher_batches,
+        AgentPhase::Connecting,
+        false,
+        0,
+        reconnect_attempt,
+        Some(AgentErrorCode::Network),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_runtime_status(
+    state_dir: &Path,
+    workspace_id: fns_protocol::WorkspaceId,
+    handle: &fns_transport::EngineHandle,
+    queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    phase: AgentPhase,
+    connected: bool,
+    active_transfers: usize,
+    reconnect_attempt: u32,
+    last_error_code: Option<AgentErrorCode>,
+) -> Result<(), AgentError> {
+    let queued_watcher_batches = queued_watcher_batches.load(StdOrdering::Acquire);
+    let engine =
+        match tokio::time::timeout(ENGINE_SUBMISSION_TIMEOUT, handle.runtime_status()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(error)) => return Err(map_transport_error(error.code())),
+            Err(_) => return Err(AgentError::new(AgentErrorCode::Core)),
+        };
     let status = AgentStatus {
         schema_version: "fns-agent-status/1".into(),
         running: true,
         phase,
         pid: Some(std::process::id()),
-        connected: phase == AgentPhase::Online || phase == AgentPhase::Subscribing,
+        connected,
         workspace_id,
-        last_ack_revision: fns_protocol::WorkspaceRevision::ZERO,
-        pending_commands: 0,
-        queued_watcher_batches: 0,
-        active_transfers: 0,
-        reconnect_attempt: 0,
-        last_error_code: None,
+        last_ack_revision: engine.last_ack_revision,
+        pending_commands: engine.pending_commands,
+        queued_watcher_batches,
+        active_transfers,
+        reconnect_attempt,
+        last_error_code,
         updated_at_ms: now_ms(),
     };
-    let path = state_dir.join("runtime-status.json");
-    let _ = status.write_to(&path);
+    status
+        .write_to(&state_dir.join("runtime-status.json"))
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))
 }
 
-fn write_status_reconnect(
+fn previous_status(state_dir: &Path, workspace_id: fns_protocol::WorkspaceId) -> AgentStatus {
+    let status = AgentStatus::read_or_stored(&state_dir.join("runtime-status.json"), workspace_id);
+    if status.workspace_id == workspace_id {
+        status
+    } else {
+        AgentStatus::stopped(workspace_id)
+    }
+}
+
+fn write_status(
     state_dir: &std::path::Path,
+    phase: AgentPhase,
     workspace_id: fns_protocol::WorkspaceId,
-    attempt: u32,
-) {
-    let status = AgentStatus {
-        schema_version: "fns-agent-status/1".into(),
-        running: true,
-        phase: AgentPhase::Connecting,
-        pid: Some(std::process::id()),
-        connected: false,
-        workspace_id,
-        last_ack_revision: fns_protocol::WorkspaceRevision::ZERO,
-        pending_commands: 0,
-        queued_watcher_batches: 0,
-        active_transfers: 0,
-        reconnect_attempt: attempt,
-        last_error_code: Some(AgentErrorCode::Network),
-        updated_at_ms: now_ms(),
-    };
+) -> Result<(), AgentError> {
+    let mut status = previous_status(state_dir, workspace_id);
+    status.schema_version = "fns-agent-status/1".into();
+    status.running = true;
+    status.phase = phase;
+    status.pid = Some(std::process::id());
+    status.connected = phase == AgentPhase::Online || phase == AgentPhase::Subscribing;
+    status.active_transfers = 0;
+    status.reconnect_attempt = 0;
+    status.last_error_code = None;
+    status.updated_at_ms = now_ms();
     let path = state_dir.join("runtime-status.json");
-    let _ = status.write_to(&path);
+    status
+        .write_to(&path)
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))
 }
 
 fn write_status_error(
     state_dir: &std::path::Path,
     workspace_id: fns_protocol::WorkspaceId,
-    code: fns_transport::TransportErrorCode,
-) {
-    let agent_code = match code {
-        fns_transport::TransportErrorCode::AuthenticationRejected => {
-            AgentErrorCode::AuthenticationRejected
-        }
-        fns_transport::TransportErrorCode::Forbidden => AgentErrorCode::Forbidden,
-        _ => AgentErrorCode::Network,
-    };
-    let status = AgentStatus {
-        schema_version: "fns-agent-status/1".into(),
-        running: false,
-        phase: AgentPhase::Fatal,
-        pid: None,
-        connected: false,
-        workspace_id,
-        last_ack_revision: fns_protocol::WorkspaceRevision::ZERO,
-        pending_commands: 0,
-        queued_watcher_batches: 0,
-        active_transfers: 0,
-        reconnect_attempt: 0,
-        last_error_code: Some(agent_code),
-        updated_at_ms: now_ms(),
-    };
-    let path = state_dir.join("runtime-status.json");
-    let _ = status.write_to(&path);
-}
-
-fn write_status_stopped(state_dir: &std::path::Path, workspace_id: fns_protocol::WorkspaceId) {
-    let status = AgentStatus {
-        schema_version: "fns-agent-status/1".into(),
-        running: false,
-        phase: AgentPhase::Stopped,
-        pid: None,
-        connected: false,
-        workspace_id,
-        last_ack_revision: fns_protocol::WorkspaceRevision::ZERO,
-        pending_commands: 0,
-        queued_watcher_batches: 0,
-        active_transfers: 0,
-        reconnect_attempt: 0,
-        last_error_code: None,
-        updated_at_ms: now_ms(),
-    };
-    let path = state_dir.join("runtime-status.json");
-    let _ = status.write_to(&path);
-}
-
-/// Await all participants with a bounded grace period.
-#[cfg(test)]
-async fn await_shutdown_participants(
-    participants: Vec<tokio::task::JoinHandle<()>>,
-    grace: Duration,
+    code: AgentErrorCode,
 ) -> Result<(), AgentError> {
-    let deadline = tokio::time::sleep(grace);
-    tokio::pin!(deadline);
+    let mut status = previous_status(state_dir, workspace_id);
+    status.schema_version = "fns-agent-status/1".into();
+    status.running = false;
+    status.phase = AgentPhase::Fatal;
+    status.pid = None;
+    status.connected = false;
+    status.queued_watcher_batches = 0;
+    status.active_transfers = 0;
+    status.last_error_code = Some(code);
+    status.updated_at_ms = now_ms();
+    let path = state_dir.join("runtime-status.json");
+    status
+        .write_to(&path)
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))
+}
 
-    for mut participant in participants {
-        tokio::select! {
-            _ = &mut deadline => {
-                return Err(AgentError::new(AgentErrorCode::ShutdownTimeout));
-            }
-            _ = &mut participant => {}
-        }
-    }
-    Ok(())
+pub(crate) fn persist_fatal_status(
+    state_dir: &Path,
+    workspace_id: fns_protocol::WorkspaceId,
+    code: AgentErrorCode,
+) -> Result<(), AgentError> {
+    write_status_error(state_dir, workspace_id, code)
+}
+
+fn write_status_stopped(
+    state_dir: &std::path::Path,
+    workspace_id: fns_protocol::WorkspaceId,
+) -> Result<(), AgentError> {
+    let mut status = previous_status(state_dir, workspace_id);
+    status.schema_version = "fns-agent-status/1".into();
+    status.running = false;
+    status.phase = AgentPhase::Stopped;
+    status.pid = None;
+    status.connected = false;
+    status.queued_watcher_batches = 0;
+    status.active_transfers = 0;
+    status.reconnect_attempt = 0;
+    status.last_error_code = None;
+    status.updated_at_ms = now_ms();
+    let path = state_dir.join("runtime-status.json");
+    status
+        .write_to(&path)
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn shutdown_timeout_when_participant_never_completes() {
-        // A participant that never completes.
-        let handle = tokio::spawn(async {
-            std::future::pending::<()>().await;
-        });
+    use std::path::Path;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    };
 
-        let result = await_shutdown_participants(vec![handle], Duration::from_millis(10)).await;
-        assert!(result.is_err());
+    use fns_fs::{FsError, SyncRuleConfig, SyncRules};
+
+    struct ActiveBridge {
+        active: Arc<AtomicUsize>,
+        stopped: Option<tokio::sync::oneshot::Sender<()>>,
+    }
+
+    impl ActiveBridge {
+        fn new(active: Arc<AtomicUsize>, stopped: tokio::sync::oneshot::Sender<()>) -> Self {
+            active.fetch_add(1, AtomicOrdering::SeqCst);
+            Self {
+                active,
+                stopped: Some(stopped),
+            }
+        }
+    }
+
+    impl Drop for ActiveBridge {
+        fn drop(&mut self) {
+            self.active.fetch_sub(1, AtomicOrdering::SeqCst);
+            if let Some(stopped) = self.stopped.take() {
+                let _result = stopped.send(());
+            }
+        }
+    }
+
+    fn rules_config() -> SyncRuleConfig {
+        SyncRuleConfig {
+            includes: Vec::new(),
+            excludes: Vec::new(),
+            protect_secrets: true,
+        }
+    }
+
+    fn agent_config(workspace: &Path, state: &Path) -> AgentConfig {
+        AgentConfig {
+            schema_version: "fns-agent-config/1".into(),
+            endpoint: "ws://127.0.0.1:1/api/user/workspace-sync/v2".into(),
+            workspace_id: fns_protocol::WorkspaceId::parse("10000000-0000-4000-8000-000000000001")
+                .unwrap(),
+            client_id: fns_protocol::ClientId::parse("10000000-0000-4000-8000-000000000002")
+                .unwrap(),
+            workspace_root: workspace.to_path_buf(),
+            state_dir: state.to_path_buf(),
+            token_file: state.join("token"),
+            sync: crate::config::AgentSyncConfig {
+                includes: Vec::new(),
+                excludes: Vec::new(),
+                protect_secrets: true,
+            },
+            transport: crate::config::AgentTransportConfig {
+                max_active_transfers: 1,
+            },
+        }
+    }
+
+    fn engine(
+        workspace: &Path,
+        state: &Path,
+        rules: SyncRuleConfig,
+    ) -> (EngineWorker, fns_transport::EngineHandle) {
+        let config = SyncEngineConfig::new(
+            fns_protocol::WorkspaceId::parse("10000000-0000-4000-8000-000000000001").unwrap(),
+            fns_protocol::ClientId::parse("10000000-0000-4000-8000-000000000002").unwrap(),
+            workspace,
+            state,
+        )
+        .with_sync_rules(rules);
+        EngineWorker::spawn(SyncEngine::open(config).unwrap())
+    }
+
+    fn has_mutation(commands: &[fns_sync_core::SyncCommand], path: &str) -> bool {
+        commands.iter().any(|command| {
+            command
+                .mutation()
+                .is_ok_and(|mutation| mutation.path.as_str() == path)
+        })
+    }
+
+    async fn wait_for_mutation(handle: &fns_transport::EngineHandle, path: &str) -> bool {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let commands = handle.pending_commands(32).await.unwrap();
+                if has_mutation(&commands, path) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    async fn stop_engine(worker: EngineWorker, handle: &fns_transport::EngineHandle) {
+        handle.shutdown().await.unwrap();
+        worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_records_a_preexisting_file() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("existing.txt"), b"existing").unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+
+        let mut watcher = start_watcher_and_reconcile(workspace.path(), rules, handle.clone())
+            .await
+            .unwrap();
+        let commands = handle.pending_commands(32).await.unwrap();
+        let found = has_mutation(&commands, "existing.txt");
+
+        watcher.shutdown(Duration::from_secs(2)).await.unwrap();
+        stop_engine(worker, &handle).await;
+        assert!(found, "initial reconciliation did not queue existing.txt");
+    }
+
+    #[tokio::test]
+    async fn isolated_real_file_event_flushes_after_debounce() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        let mut watcher = start_watcher_and_reconcile(workspace.path(), rules, handle.clone())
+            .await
+            .unwrap();
+
+        std::fs::write(workspace.path().join("isolated.txt"), b"isolated").unwrap();
+        let found = wait_for_mutation(&handle, "isolated.txt").await;
+
+        watcher.shutdown(Duration::from_secs(2)).await.unwrap();
+        stop_engine(worker, &handle).await;
+        assert!(found, "isolated event was not flushed by the timer");
+    }
+
+    #[test]
+    fn invalid_rules_return_a_stable_configuration_error() {
+        let config = SyncRuleConfig {
+            includes: vec!["[".into()],
+            excludes: Vec::new(),
+            protect_secrets: true,
+        };
+
+        let error = match compile_sync_rules(config) {
+            Ok(_) => panic!("invalid rules unexpectedly compiled"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), AgentErrorCode::InvalidConfiguration);
+    }
+
+    #[tokio::test]
+    async fn embedded_invalid_rules_write_fatal_status() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let mut config = agent_config(workspace.path(), state.path());
+        let workspace_id = config.workspace_id;
+        config.sync.includes = vec!["[".into()];
+        let token = fns_platform::SecretToken::from_bytes_for_test(b"test-token");
+
+        let error = run_embedded(config, token, tokio_util::sync::CancellationToken::new())
+            .await
+            .unwrap_err();
+        let status =
+            AgentStatus::read_or_stored(&state.path().join("runtime-status.json"), workspace_id);
+
+        assert_eq!(error.code(), AgentErrorCode::InvalidConfiguration);
+        assert_eq!(status.phase, AgentPhase::Fatal);
+        assert!(!status.running);
+        assert_eq!(
+            status.last_error_code,
+            Some(AgentErrorCode::InvalidConfiguration)
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_missing_root_write_fatal_status() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let mut config = agent_config(workspace.path(), state.path());
+        let workspace_id = config.workspace_id;
+        config.workspace_root = workspace.path().join("missing");
+        let token = fns_platform::SecretToken::from_bytes_for_test(b"test-token");
+
+        let error = run_embedded(config, token, tokio_util::sync::CancellationToken::new())
+            .await
+            .unwrap_err();
+        let status =
+            AgentStatus::read_or_stored(&state.path().join("runtime-status.json"), workspace_id);
+
+        assert_eq!(error.code(), AgentErrorCode::Filesystem);
+        assert_eq!(status.phase, AgentPhase::Fatal);
+        assert!(!status.running);
+        assert_eq!(status.last_error_code, Some(AgentErrorCode::Filesystem));
+    }
+
+    #[tokio::test]
+    async fn root_creation_failure_is_returned() {
+        let workspace = tempfile::tempdir().unwrap();
+        let missing_root = workspace.path().join("missing");
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+
+        let error = match start_watcher(&missing_root, rules, handle.clone()) {
+            Ok(_) => panic!("missing root unexpectedly started"),
+            Err(error) => error,
+        };
+
+        stop_engine(worker, &handle).await;
+        assert_eq!(error.code(), AgentErrorCode::Filesystem);
+    }
+
+    #[tokio::test]
+    async fn platform_watcher_creation_failure_is_returned() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+
+        let error = match start_watcher_with(
+            workspace.path(),
+            rules,
+            handle.clone(),
+            |_root| {
+                Err(FsError::Io {
+                    operation: "injected watcher failure",
+                })
+            },
+            |future| {
+                Ok(tokio_util::task::AbortOnDropHandle::new(tokio::spawn(
+                    future,
+                )))
+            },
+        ) {
+            Ok(_) => panic!("injected watcher failure unexpectedly started"),
+            Err(error) => error,
+        };
+
+        stop_engine(worker, &handle).await;
+        assert_eq!(error.code(), AgentErrorCode::Filesystem);
+    }
+
+    #[tokio::test]
+    async fn bridge_spawn_failure_is_returned() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+
+        let error = match start_watcher_with(
+            workspace.path(),
+            rules,
+            handle.clone(),
+            |root| fns_fs::start_platform_watcher(root, 32),
+            |_future| Err(AgentError::new(AgentErrorCode::Core)),
+        ) {
+            Ok(_) => panic!("injected bridge failure unexpectedly started"),
+            Err(error) => error,
+        };
+
+        stop_engine(worker, &handle).await;
+        assert_eq!(error.code(), AgentErrorCode::Core);
+    }
+
+    #[tokio::test]
+    async fn initial_reconciliation_submission_failure_is_returned() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        stop_engine(worker, &handle).await;
+
+        let error = match start_watcher_and_reconcile(workspace.path(), rules, handle).await {
+            Ok(_) => panic!("disconnected engine unexpectedly reconciled"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code(), AgentErrorCode::Core);
+    }
+
+    #[tokio::test]
+    async fn bridge_submission_failure_is_observable() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        let mut watcher = start_watcher_and_reconcile(workspace.path(), rules, handle.clone())
+            .await
+            .unwrap();
+        stop_engine(worker, &handle).await;
+
+        std::fs::write(workspace.path().join("failure.txt"), b"failure").unwrap();
+        tokio::time::timeout(Duration::from_secs(3), watcher.failure_token().cancelled())
+            .await
+            .unwrap();
+        let error = watcher.shutdown(Duration::from_secs(2)).await.unwrap_err();
+        assert_eq!(error.code(), AgentErrorCode::Core);
+    }
+
+    #[tokio::test]
+    async fn shutdown_reconciles_late_work_and_joins_the_bridge() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        let mut watcher = start_watcher_and_reconcile(workspace.path(), rules, handle.clone())
+            .await
+            .unwrap();
+
+        std::fs::write(workspace.path().join("late.txt"), b"late").unwrap();
+        watcher.shutdown(Duration::from_secs(2)).await.unwrap();
+        let commands = handle.pending_commands(32).await.unwrap();
+        let found = has_mutation(&commands, "late.txt");
+        let joined = watcher.bridge.is_none();
+
+        stop_engine(worker, &handle).await;
+        assert!(found, "shutdown did not reconcile late.txt");
+        assert!(joined, "bridge thread remained owned after shutdown");
+    }
+
+    #[test]
+    fn status_write_failure_is_returned() {
+        let state_path = tempfile::NamedTempFile::new().unwrap();
+        let workspace_id =
+            fns_protocol::WorkspaceId::parse("10000000-0000-4000-8000-000000000001").unwrap();
+
+        let error =
+            write_status(state_path.path(), AgentPhase::Starting, workspace_id).unwrap_err();
+
+        assert_eq!(error.code(), AgentErrorCode::Filesystem);
+    }
+
+    struct ZeroJitter;
+
+    impl JitterSource for ZeroJitter {
+        fn sample_inclusive(&mut self, _upper: u32) -> u32 {
+            0
+        }
+    }
+
+    #[test]
+    fn online_transition_resets_reconnect_schedule_once() {
+        let mut schedule = ReconnectSchedule::new(ReconnectPolicy::default(), ZeroJitter);
+        let _ = schedule.next_delay();
+        let _ = schedule.next_delay();
+        assert_eq!(schedule.attempt(), 2);
+        let mut reached_online = false;
+
+        reset_reconnect_after_online(
+            &mut schedule,
+            &mut reached_online,
+            SessionConnectionPhase::Subscribing,
+        );
+        assert_eq!(schedule.attempt(), 2);
+        reset_reconnect_after_online(
+            &mut schedule,
+            &mut reached_online,
+            SessionConnectionPhase::Online,
+        );
+        assert_eq!(schedule.attempt(), 0);
+
+        let _ = schedule.next_delay();
+        reset_reconnect_after_online(
+            &mut schedule,
+            &mut reached_online,
+            SessionConnectionPhase::Online,
+        );
+        assert_eq!(schedule.attempt(), 1);
+    }
+
+    #[tokio::test]
+    async fn online_status_uses_engine_watcher_and_session_metrics() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("pending.txt"), b"pending").unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config());
+        handle
+            .record_local_changes(vec![fns_fs::FsChange::RescanRequired])
+            .await
+            .unwrap();
+        let queued = StdArc::new(StdAtomicUsize::new(2));
+
+        write_session_status(
+            state.path(),
+            agent_config(workspace.path(), state.path()).workspace_id,
+            &handle,
+            &queued,
+            SessionRuntimeStatus {
+                phase: SessionConnectionPhase::Online,
+                active_transfers: 3,
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let status: AgentStatus = serde_json::from_slice(
+            &std::fs::read(state.path().join("runtime-status.json")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(status.phase, AgentPhase::Online);
+        assert!(status.running && status.connected);
+        assert_eq!(
+            status.last_ack_revision,
+            fns_protocol::WorkspaceRevision::ZERO
+        );
+        assert_eq!(status.pending_commands, 1);
+        assert_eq!(status.queued_watcher_batches, 2);
+        assert_eq!(status.active_transfers, 3);
+        stop_engine(worker, &handle).await;
+    }
+
+    #[tokio::test]
+    async fn dropping_watcher_runtime_aborts_bridge_without_orphan() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        let active = Arc::new(AtomicUsize::new(0));
+        let task_active = Arc::clone(&active);
+        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (stopped_sender, stopped_receiver) = tokio::sync::oneshot::channel();
+        let watcher = start_watcher_with(
+            workspace.path(),
+            rules,
+            handle.clone(),
+            |root| fns_fs::start_platform_watcher(root, 32),
+            move |_bridge_future| {
+                Ok(tokio_util::task::AbortOnDropHandle::new(tokio::spawn(
+                    async move {
+                        let _active = ActiveBridge::new(task_active, stopped_sender);
+                        let _result = started_sender.send(());
+                        std::future::pending::<()>().await;
+                        Ok(())
+                    },
+                )))
+            },
+        )
+        .unwrap();
+        started_receiver.await.unwrap();
+        assert_eq!(active.load(AtomicOrdering::SeqCst), 1);
+
+        drop(watcher);
+        tokio::time::timeout(Duration::from_secs(1), stopped_receiver)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.load(AtomicOrdering::SeqCst), 0);
+
+        stop_engine(worker, &handle).await;
+    }
+
+    #[tokio::test]
+    async fn watcher_shutdown_timeout_aborts_and_awaits_bridge() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let rules_config = rules_config();
+        let rules = SyncRules::compile(rules_config.clone()).unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config);
+        let active = Arc::new(AtomicUsize::new(0));
+        let task_active = Arc::clone(&active);
+        let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+        let (stopped_sender, stopped_receiver) = tokio::sync::oneshot::channel();
+        let mut watcher = start_watcher_with(
+            workspace.path(),
+            rules,
+            handle.clone(),
+            |root| fns_fs::start_platform_watcher(root, 32),
+            move |_bridge_future| {
+                Ok(tokio_util::task::AbortOnDropHandle::new(tokio::spawn(
+                    async move {
+                        let _active = ActiveBridge::new(task_active, stopped_sender);
+                        let _result = started_sender.send(());
+                        std::future::pending::<()>().await;
+                        Ok(())
+                    },
+                )))
+            },
+        )
+        .unwrap();
+        started_receiver.await.unwrap();
+
+        let error = watcher
+            .shutdown(Duration::from_millis(1))
+            .await
+            .unwrap_err();
+        tokio::time::timeout(Duration::from_secs(1), stopped_receiver)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(error.code(), AgentErrorCode::ShutdownTimeout);
+        assert_eq!(active.load(AtomicOrdering::SeqCst), 0);
+        assert!(watcher.bridge.is_none());
+
+        stop_engine(worker, &handle).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn signal_registration_failure_is_returned() {
+        let result = wait_for_shutdown_signal_from(
+            || -> std::io::Result<std::future::Pending<Option<()>>> {
+                Err(std::io::Error::other("injected registration failure"))
+            },
+            std::future::pending::<std::io::Result<()>>(),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), AgentErrorCode::Core);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn ctrl_c_await_failure_is_returned() {
+        let result = wait_for_shutdown_signal_from(
+            || Ok(std::future::pending::<Option<()>>()),
+            std::future::ready(Err(std::io::Error::other("injected ctrl-c failure"))),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), AgentErrorCode::Core);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn closed_terminate_channel_is_returned() {
+        let result = wait_for_shutdown_signal_from(
+            || Ok(std::future::ready(None)),
+            std::future::pending::<std::io::Result<()>>(),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err().code(), AgentErrorCode::Core);
+    }
+
+    #[tokio::test]
+    async fn standalone_signal_error_finalizes_runtime_before_returning() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let config = agent_config(workspace.path(), state.path());
+        let workspace_id = config.workspace_id;
+        let token = fns_platform::SecretToken::from_bytes_for_test(b"test-token");
+
+        let result = run_with_shutdown_signal(config, token, async {
+            Err(AgentError::new(AgentErrorCode::Core))
+        })
+        .await;
+        let status =
+            AgentStatus::read_or_stored(&state.path().join("runtime-status.json"), workspace_id);
+
+        assert_eq!(result.unwrap_err().code(), AgentErrorCode::Core);
+        assert_eq!(status.phase, AgentPhase::Fatal);
+        assert_eq!(status.last_error_code, Some(AgentErrorCode::Core));
+    }
+
+    #[tokio::test]
+    async fn embedded_cancelled_start_runs_full_finalizer() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let config = agent_config(workspace.path(), state.path());
+        let workspace_id = config.workspace_id;
+        let token = fns_platform::SecretToken::from_bytes_for_test(b"test-token");
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        shutdown.cancel();
+
+        run_embedded(config, token, shutdown).await.unwrap();
+        let status =
+            AgentStatus::read_or_stored(&state.path().join("runtime-status.json"), workspace_id);
+
+        assert_eq!(status.phase, AgentPhase::Stopped);
+        assert!(!status.running);
+    }
+
+    #[tokio::test]
+    async fn finalize_runtime_stops_watcher_engine_and_writes_fatal_status() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let config = agent_config(workspace.path(), state.path());
+        let workspace_id = config.workspace_id;
+        let (mut watcher, worker, handle) = start_local_runtime(&config).await.unwrap();
+
+        let result = finalize_runtime(
+            &mut watcher,
+            worker,
+            handle,
+            state.path(),
+            workspace_id,
+            Err(AgentError::new(AgentErrorCode::Network)),
+        )
+        .await;
+        let status =
+            AgentStatus::read_or_stored(&state.path().join("runtime-status.json"), workspace_id);
+
+        assert_eq!(result.unwrap_err().code(), AgentErrorCode::Network);
+        assert!(watcher.bridge.is_none());
+        assert_eq!(status.phase, AgentPhase::Fatal);
+        assert_eq!(status.last_error_code, Some(AgentErrorCode::Network));
     }
 }

@@ -29,34 +29,87 @@ pub enum AgentErrorCode {
     Protocol,
     Core,
     Filesystem,
+    StateCorrupt,
+    ConflictUnavailable,
+    ConflictRevisionStale,
+    ConflictResolutionChanged,
+    ConflictWaitingBlobs,
+    ConflictAutomaticResolutionPending,
+    ConflictResolutionPending,
+    ConflictRefreshRequired,
+    ConflictSelectedSideDeleted,
+    MergeFileRequired,
+    MergeContentUnavailable,
+    ConflictRequestUnavailable,
+    ConflictRequestChanged,
+    RequestCancelled,
+    AuthRequired,
+    SpawnFailed,
+    StartupTimeout,
+    RequestTimeout,
+    ResourceLimit,
+    AbnormalExit,
     ShutdownTimeout,
 }
 
 /// Agent error carrying only a stable code.
 pub struct AgentError {
     code: AgentErrorCode,
+    reaped: bool,
 }
 
 impl AgentError {
     pub const fn new(code: AgentErrorCode) -> Self {
-        Self { code }
+        Self {
+            code,
+            reaped: false,
+        }
+    }
+
+    pub(crate) const fn after_reap(code: AgentErrorCode) -> Self {
+        Self { code, reaped: true }
     }
 
     pub const fn code(&self) -> AgentErrorCode {
         self.code
     }
 
+    pub const fn reaped(&self) -> bool {
+        self.reaped
+    }
+
     /// Map error code to process exit code.
     pub fn exit_code(&self) -> i32 {
         match self.code {
-            AgentErrorCode::InvalidConfiguration | AgentErrorCode::InsecureCredential => 2,
+            AgentErrorCode::InvalidConfiguration
+            | AgentErrorCode::InsecureCredential
+            | AgentErrorCode::AuthRequired => 2,
             AgentErrorCode::AlreadyRunning => 4,
             AgentErrorCode::AuthenticationRejected => 5,
             AgentErrorCode::Forbidden => 5,
-            AgentErrorCode::Network => 6,
+            AgentErrorCode::Network
+            | AgentErrorCode::SpawnFailed
+            | AgentErrorCode::StartupTimeout
+            | AgentErrorCode::RequestTimeout
+            | AgentErrorCode::ResourceLimit
+            | AgentErrorCode::AbnormalExit => 6,
             AgentErrorCode::Protocol => 6,
             AgentErrorCode::Core => 6,
             AgentErrorCode::Filesystem => 6,
+            AgentErrorCode::StateCorrupt
+            | AgentErrorCode::ConflictUnavailable
+            | AgentErrorCode::ConflictRevisionStale
+            | AgentErrorCode::ConflictResolutionChanged
+            | AgentErrorCode::ConflictWaitingBlobs
+            | AgentErrorCode::ConflictAutomaticResolutionPending
+            | AgentErrorCode::ConflictResolutionPending
+            | AgentErrorCode::ConflictRefreshRequired
+            | AgentErrorCode::ConflictSelectedSideDeleted
+            | AgentErrorCode::MergeFileRequired
+            | AgentErrorCode::MergeContentUnavailable
+            | AgentErrorCode::ConflictRequestUnavailable
+            | AgentErrorCode::ConflictRequestChanged
+            | AgentErrorCode::RequestCancelled => 6,
             AgentErrorCode::ShutdownTimeout => 7,
         }
     }
@@ -66,6 +119,7 @@ impl fmt::Debug for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AgentError")
             .field("code", &self.code)
+            .field("reaped", &self.reaped)
             .finish()
     }
 }

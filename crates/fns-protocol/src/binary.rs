@@ -66,30 +66,51 @@ pub fn encode_binary_frame(
     offset: u64,
     payload: &[u8],
 ) -> Result<Vec<u8>, WorkspaceValidationError> {
+    encode_binary_frame_owned(
+        direction,
+        final_chunk,
+        transfer_id,
+        chunk_index,
+        offset,
+        payload.to_vec(),
+    )
+}
+
+/// Encode a frame by moving an owned payload into header-prefixed form. When
+/// the caller reserves `BLOB_HEADER_LEN` spare capacity this performs no
+/// second blob-sized allocation.
+pub fn encode_binary_frame_owned(
+    direction: WorkspaceBlobDirection,
+    final_chunk: bool,
+    transfer_id: TransferId,
+    chunk_index: u64,
+    offset: u64,
+    mut frame: Vec<u8>,
+) -> Result<Vec<u8>, WorkspaceValidationError> {
     if transfer_id.as_uuid().is_nil() {
         return Err(validation_error("transferId", "invalid_uuid"));
     }
-    validate_payload_len(payload.len())?;
+    validate_payload_len(frame.len())?;
 
-    let payload_len = payload.len() as u32;
-    let (_, chunk_digest) = compute_blob_digest(payload);
-    let mut frame = vec![0; BLOB_HEADER_LEN];
+    let payload_len = frame.len();
+    let (_, chunk_digest) = compute_blob_digest(&frame);
+    frame.reserve(BLOB_HEADER_LEN);
+    frame.resize(payload_len + BLOB_HEADER_LEN, 0);
+    frame.copy_within(0..payload_len, BLOB_HEADER_LEN);
+    frame[..BLOB_HEADER_LEN].fill(0);
     frame[0..4].copy_from_slice(BLOB_MAGIC);
     frame[4] = BLOB_VERSION;
     frame[5] = match direction {
         WorkspaceBlobDirection::Upload => UPLOAD_DIRECTION,
         WorkspaceBlobDirection::Download => DOWNLOAD_DIRECTION,
     };
-    if final_chunk {
-        frame[6] = FINAL_CHUNK_FLAG;
-    }
+    frame[6] = u8::from(final_chunk) * FINAL_CHUNK_FLAG;
     frame[7] = BLOB_HEADER_LEN as u8;
     frame[8..24].copy_from_slice(transfer_id.as_uuid().as_bytes());
     frame[24..32].copy_from_slice(&chunk_index.to_be_bytes());
     frame[32..40].copy_from_slice(&offset.to_be_bytes());
-    frame[40..44].copy_from_slice(&payload_len.to_be_bytes());
+    frame[40..44].copy_from_slice(&(payload_len as u32).to_be_bytes());
     frame[48..64].copy_from_slice(&chunk_digest);
-    frame.extend_from_slice(payload);
     Ok(frame)
 }
 
