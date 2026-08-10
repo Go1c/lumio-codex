@@ -2400,9 +2400,17 @@ struct TokenData {
 }
 
 fn validate_token_expiry(expired_at: &str) -> Result<(), ProvisionFailure> {
+    // The server may return expiry in RFC3339 (e.g. "2027-08-09T22:24:51Z")
+    // or SQLite datetime format (e.g. "2027-08-09 22:24:51"). Accept both.
     let expiry = chrono::DateTime::parse_from_rfc3339(expired_at)
-        .map_err(|_| ProvisionFailure::from(ProvisionErrorCode::MalformedResponse))?
-        .with_timezone(&chrono::Utc);
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(expired_at, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .map(|naive| naive.and_utc())
+        })
+        .ok_or_else(|| ProvisionFailure::from(ProvisionErrorCode::MalformedResponse))?;
     let now = chrono::Utc::now();
     let latest = now
         .checked_add_signed(chrono::Duration::days(i64::from(AGENT_TOKEN_EXPIRY_DAYS)))
