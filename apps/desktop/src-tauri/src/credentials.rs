@@ -2426,7 +2426,7 @@ fn decode_envelope<T: for<'de> Deserialize<'de>>(
     }
     let envelope: Envelope<T> = serde_json::from_slice(&response.body)
         .map_err(|_| ProvisionFailure::from(ProvisionErrorCode::MalformedResponse))?;
-    if !envelope.status || envelope.code != 0 {
+    if !envelope.status {
         return Err(match (endpoint, envelope.code) {
             (Endpoint::Login, 401 | 402) => ProvisionErrorCode::AuthenticationRejected.into(),
             (_, 403) => ProvisionErrorCode::Forbidden.into(),
@@ -2445,7 +2445,7 @@ fn decode_empty_envelope(response: HttpResponse) -> Result<(), ProvisionFailure>
     }
     let envelope: Envelope<serde::de::IgnoredAny> = serde_json::from_slice(&response.body)
         .map_err(|_| ProvisionFailure::from(ProvisionErrorCode::RevocationFailed))?;
-    if envelope.status && envelope.code == 0 {
+    if envelope.status {
         Ok(())
     } else {
         Err(ProvisionErrorCode::RevocationFailed.into())
