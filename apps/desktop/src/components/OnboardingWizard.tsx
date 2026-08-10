@@ -394,17 +394,6 @@ export default function OnboardingWizard({
       if (generation !== operationGeneration.current || !mounted.current) return;
 
       await trackInvoke(
-        invoke("probe_workspace_access", {
-          request: {
-            projectId,
-            sshHostAlias: sshAlias,
-            workspaceId: workspaceId.trim(),
-          },
-        }),
-      );
-      if (generation !== operationGeneration.current || !mounted.current) return;
-
-      await trackInvoke(
         invoke("save_project", {
           config: {
             id: projectId,
@@ -448,6 +437,21 @@ export default function OnboardingWizard({
       deploymentStarted.current = false;
       progressUnlisten.current?.();
       progressUnlisten.current = null;
+      if (generation !== operationGeneration.current || !mounted.current) return;
+
+      // Probe after deployment: the workspace root is registered and the
+      // server restarted during execute_remote_deployment, so the workspace
+      // is now accessible. Probing before deployment always failed for new
+      // workspaces because the root had not been registered yet.
+      await trackInvoke(
+        invoke("probe_workspace_access", {
+          request: {
+            projectId,
+            sshHostAlias: sshAlias,
+            workspaceId: workspaceId.trim(),
+          },
+        }),
+      );
       if (generation !== operationGeneration.current || !mounted.current) return;
 
       provisioningStarted.current = false;
