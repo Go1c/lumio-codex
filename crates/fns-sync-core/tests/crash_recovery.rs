@@ -2515,6 +2515,7 @@ fn engine_open_preserves_local_content_for_exact_empty_legacy_gap_receipt() {
             last_ack_revision: WorkspaceRevision::new(93),
             last_applied_revision: WorkspaceRevision::new(94),
             pending_ack_revision: None,
+            pending_segment_ack_revision: None,
         }
     );
     assert!(engine.state().apply_journals().unwrap().is_empty());

@@ -26,6 +26,7 @@ const MIGRATION_0002: &str = include_str!("../migrations/0002_applied_operation_
 const MIGRATION_0003: &str =
     include_str!("../migrations/0003_provisional_mutation_acceptances.sql");
 const MIGRATION_0004: &str = include_str!("../migrations/0004_apply_journal_v2.sql");
+const MIGRATION_0005: &str = include_str!("../migrations/0005_segment_ack.sql");
 const TABLES: [&str; 13] = [
     "workspace_cursor",
     "path_states",
@@ -84,6 +85,7 @@ pub fn read_persisted_identity<P: AsRef<Path>>(
         2 => validate_v2_schema(&connection)?,
         3 => validate_v3_schema(&connection)?,
         4 => validate_v4_schema(&connection)?,
+        5 => validate_v5_schema(&connection)?,
         _ => return Err(corrupt("schema", "user_version")),
     }
 
@@ -173,7 +175,10 @@ impl SqliteState {
                 transaction
                     .execute_batch(MIGRATION_0004)
                     .map_err(storage_error)?;
-                validate_v4_schema(&transaction)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
                 transaction.commit().map_err(storage_error)?;
             }
             1 => {
@@ -190,7 +195,10 @@ impl SqliteState {
                 transaction
                     .execute_batch(MIGRATION_0004)
                     .map_err(storage_error)?;
-                validate_v4_schema(&transaction)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
                 transaction.commit().map_err(storage_error)?;
             }
             2 => {
@@ -204,7 +212,10 @@ impl SqliteState {
                 transaction
                     .execute_batch(MIGRATION_0004)
                     .map_err(storage_error)?;
-                validate_v4_schema(&transaction)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
                 transaction.commit().map_err(storage_error)?;
             }
             3 => {
@@ -215,10 +226,24 @@ impl SqliteState {
                 transaction
                     .execute_batch(MIGRATION_0004)
                     .map_err(storage_error)?;
-                validate_v4_schema(&transaction)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
                 transaction.commit().map_err(storage_error)?;
             }
-            4 => validate_v4_schema(&conn)?,
+            4 => {
+                validate_v4_schema(&conn)?;
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            5 => validate_v5_schema(&conn)?,
             _ => return Err(corrupt("schema", "user_version")),
         }
 
@@ -298,7 +323,7 @@ impl SqliteState {
         let raw = self
             .conn
             .query_row(
-                "SELECT workspace_id, client_id, last_ack_revision, last_applied_revision, pending_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
+                "SELECT workspace_id, client_id, last_ack_revision, last_applied_revision, pending_ack_revision, pending_segment_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
                 params![self.workspace_id.to_string()],
                 |row| {
                     Ok((
@@ -307,6 +332,7 @@ impl SqliteState {
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
@@ -328,12 +354,19 @@ impl SqliteState {
             .map(fns_protocol::WorkspaceRevision::parse)
             .transpose()
             .map_err(|_| corrupt("workspace_cursor", "pending_ack_revision"))?;
+        let pending_segment_ack_revision = raw
+            .5
+            .as_deref()
+            .map(fns_protocol::WorkspaceRevision::parse)
+            .transpose()
+            .map_err(|_| corrupt("workspace_cursor", "pending_segment_ack_revision"))?;
         Ok(WorkspaceCursor {
             workspace_id,
             client_id,
             last_ack_revision,
             last_applied_revision,
             pending_ack_revision,
+            pending_segment_ack_revision,
         })
     }
 
@@ -363,6 +396,29 @@ impl SqliteState {
         self.conn
             .execute(
                 "UPDATE workspace_cursor SET pending_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
+                params![now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn set_pending_segment_ack(
+        &mut self,
+        revision: fns_protocol::WorkspaceRevision,
+    ) -> Result<(), SyncError> {
+        self.conn
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = ?1, updated_at_ms = ?2 WHERE workspace_id = ?3",
+                params![revision.to_string(), now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn clear_pending_segment_ack(&mut self) -> Result<(), SyncError> {
+        self.conn
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
                 params![now_ms(), self.workspace_id.to_string()],
             )
             .map_err(storage_error)?;
@@ -1062,6 +1118,29 @@ impl StateTransaction<'_> {
         Ok(())
     }
 
+    pub fn set_pending_segment_ack(
+        &mut self,
+        revision: WorkspaceRevision,
+    ) -> Result<(), SyncError> {
+        self.transaction
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = ?1, updated_at_ms = ?2 WHERE workspace_id = ?3",
+                params![revision.to_string(), now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn clear_pending_segment_ack(&mut self) -> Result<(), SyncError> {
+        self.transaction
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
+                params![now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
     pub fn set_last_ack_revision(&mut self, revision: WorkspaceRevision) -> Result<(), SyncError> {
         crate::state::set_last_ack_revision_tx(&self.transaction, self.workspace_id(), revision)
     }
@@ -1533,6 +1612,20 @@ fn validate_v4_schema(connection: &Connection) -> Result<(), SyncError> {
             MIGRATION_0002,
             MIGRATION_0003,
             MIGRATION_0004,
+        ],
+    )
+}
+
+fn validate_v5_schema(connection: &Connection) -> Result<(), SyncError> {
+    validate_schema(
+        connection,
+        5,
+        &[
+            MIGRATION_0001,
+            MIGRATION_0002,
+            MIGRATION_0003,
+            MIGRATION_0004,
+            MIGRATION_0005,
         ],
     )
 }

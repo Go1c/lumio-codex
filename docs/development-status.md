@@ -81,21 +81,25 @@ Evidence is machine-local and intentionally outside the Git repository:
 - Run-06 is useful regression evidence but is not final release evidence because
   it ran before that fix. A fresh run must use a new workspace and binaries
   built from the eventual final commit.
-- The complete required client commands have not been rerun after the final
-  rollback change:
+- The complete required client commands have been rerun after the segment ack
+  fix (see below). All pass: 663 tests passed, 0 failed, 2 ignored; clippy
+  clean with `-D warnings`; `cargo fmt --check` clean; `git diff --check`
+  clean.
 
-  ```sh
-  cargo test --locked --workspace --all-targets
-  cargo clippy --locked --workspace --all-targets -- -D warnings
-  cargo fmt --all -- --check
-  git diff --check
-  ```
-
-- The saved `Test` project was observed in a stopped
-  `recovery_exhausted:core` state with `lastAckRevision=360` and
-  `pendingCommands=23`. Retrying did not recover it. An older candidate also
-  surfaced `shutdown_timeout`. Preserve this state for diagnosis; do not delete
-  or rewrite its SQLite database to make the UI appear healthy.
+- The saved `Test` project was diagnosed and the root cause fixed. The project
+  was in a stopped `recovery_exhausted:core` state with `lastAckRevision=360`,
+  `lastAppliedRevision=364`, `pending_ack_revision=NULL`, and a stream stalled
+  at `from=360, final=383, end_received=0` with only 5 of 23 expected events
+  arrived (4 applied, 1 ready). Root cause: the incremental-stream Ack model
+  only set `pending_ack` at terminal stream completion
+  (`finish_stream_if_ready`), so when the stream could not reach completion
+  (e.g. SnapshotEnd lost, or a later item blocked), `last_ack` was permanently
+  stranded and every reconnect re-subscribed and re-applied the same work. The
+  fix adds a *segment ack* (`pending_segment_ack_revision`, migration 0005)
+  that advances `last_ack` for a contiguous applied prefix when every expected
+  event has arrived and been fully processed, without clearing the active
+  stream. The `Test` project's SQLite state is preserved for reference; do not
+  delete or rewrite it.
 - No final current-commit macOS App or DMG exists. All bundles under `target/`
   predate the pause commit and are preview artifacts only.
 - The old `/Applications/FNS Workspace.app` was an x86_64 build and was removed

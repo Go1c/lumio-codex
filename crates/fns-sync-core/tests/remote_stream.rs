@@ -643,7 +643,7 @@ fn legacy_mutation_receipt_upgrades_only_after_authoritative_replay_validation()
             )
             .unwrap();
     } else {
-        assert_eq!(user_version, 4);
+        assert_eq!(user_version, 5);
         connection
             .execute(
                 "UPDATE applied_operations SET body_digest = ?1, receipt_kind = 'legacy', mutation_json = NULL WHERE origin_client_id = ?2 AND operation_id = ?3",
@@ -4903,4 +4903,176 @@ fn older_correlated_ack_advances_without_clearing_newer_pending_ack() {
     let converged = fixture.engine.cursor().unwrap();
     assert_eq!(converged.last_ack_revision, WorkspaceRevision::new(2));
     assert_eq!(converged.pending_ack_revision, None);
+}
+
+#[test]
+fn incremental_stream_advances_segment_ack_when_end_not_received() {
+    // Reproduces a deadlock variant: when an incremental stream delivers every
+    // expected event and they are all processed, but the SnapshotEnd frame is
+    // lost (end_received=0), the already-applied events cannot be acknowledged.
+    // last_ack stays at the pre-stream revision forever, so every reconnect
+    // re-subscribes and re-applies the same events — a permanent stall.
+    //
+    // The fix lets the contiguous Applied prefix be acknowledged via a *segment*
+    // ack that advances last_ack without clearing the active stream (the stream
+    // is still waiting for End). This is safe because every expected event has
+    // arrived and been fully processed — no blob download or deferred event is
+    // in flight.
+    let mut fixture = support::EngineFixture::new();
+    fixture
+        .engine
+        .state_mut()
+        .set_last_ack_revision(WorkspaceRevision::new(10))
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_last_applied_revision(WorkspaceRevision::new(10))
+        .unwrap();
+
+    // Incremental stream: from=10, final=20, expects 5 events, 0 conflicts.
+    // final_revision is intentionally higher than the last event to simulate a
+    // stream that the server ended early or where End was lost mid-way.
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(10, 20, 5, 0))
+        .unwrap();
+
+    // Apply all 5 expected events (11-15). No blob required (mkdir).
+    fixture
+        .engine
+        .workspace_event(fixture.remote_mkdir_event(0, 11, "dir-a"))
+        .unwrap();
+    fixture
+        .engine
+        .workspace_event(fixture.remote_mkdir_event(1, 12, "dir-b"))
+        .unwrap();
+    fixture
+        .engine
+        .workspace_event(fixture.remote_mkdir_event(2, 13, "dir-c"))
+        .unwrap();
+    fixture
+        .engine
+        .workspace_event(fixture.remote_mkdir_event(3, 14, "dir-d"))
+        .unwrap();
+    fixture
+        .engine
+        .workspace_event(fixture.remote_mkdir_event(4, 15, "dir-e"))
+        .unwrap();
+
+    // End has NOT been received — simulates a lost SnapshotEnd frame.
+    assert!(
+        !fixture
+            .engine
+            .state()
+            .stream_state()
+            .unwrap()
+            .unwrap()
+            .end_received
+    );
+    assert_eq!(
+        fixture.engine.cursor().unwrap().last_applied_revision,
+        WorkspaceRevision::new(15)
+    );
+
+    // Before the fix: no SendAck would be produced and last_ack stayed at 10.
+    // After the fix: a segment ack for revision 15 (all expected events
+    // applied) is emitted.
+    let commands = fixture.engine.pending_commands(16).unwrap();
+    assert_eq!(
+        support::ack_revisions(&commands),
+        vec![15],
+        "segment ack should be emitted when all expected events are applied"
+    );
+
+    // Confirming the segment ack advances last_ack to 15.
+    fixture.engine.ack_confirmed(fixture.ack(15)).unwrap();
+    assert_eq!(
+        fixture.engine.cursor().unwrap().last_ack_revision.get(),
+        15,
+        "segment ack should advance last_ack"
+    );
+
+    // The active stream must NOT be cleared — End has not arrived.
+    assert!(
+        fixture.engine.state().stream_state().unwrap().is_some(),
+        "segment ack must not clear the active stream"
+    );
+    assert!(
+        fixture
+            .engine
+            .cursor()
+            .unwrap()
+            .pending_ack_revision
+            .is_none(),
+        "segment ack must not set the terminal pending_ack"
+    );
+
+    // Delivering End should allow the terminal ack at the stream's final
+    // revision to proceed normally after the segment ack.
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(20, 5, 0))
+        .unwrap();
+
+    let final_commands = fixture.engine.pending_commands(16).unwrap();
+    assert_eq!(
+        support::ack_revisions(&final_commands),
+        vec![20],
+        "terminal ack should be emitted after stream completion"
+    );
+    fixture.engine.ack_confirmed(fixture.ack(20)).unwrap();
+    let converged = fixture.engine.cursor().unwrap();
+    assert_eq!(converged.last_ack_revision.get(), 20);
+    assert_eq!(converged.pending_ack_revision, None);
+    assert!(
+        fixture.engine.state().stream_state().unwrap().is_none(),
+        "terminal ack should clear the active stream"
+    );
+}
+
+#[test]
+fn incremental_stream_segment_ack_not_emitted_when_no_applied_prefix() {
+    // When the stream has events that are still WaitingBlob (not yet Applied),
+    // no segment ack should be emitted — there is no contiguous Applied prefix
+    // to safely acknowledge.
+    let mut fixture = support::EngineFixture::new();
+    fixture
+        .engine
+        .state_mut()
+        .set_last_ack_revision(WorkspaceRevision::new(10))
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_last_applied_revision(WorkspaceRevision::new(10))
+        .unwrap();
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(10, 12, 2, 0))
+        .unwrap();
+
+    // This event needs a blob that is not yet available — it stalls in
+    // WaitingBlob and last_applied does not advance.
+    let commands = fixture
+        .engine
+        .workspace_event(fixture.remote_update_event(0, 11, "a.txt", b"server"))
+        .unwrap();
+    assert!(
+        commands.iter().any(support::is_download),
+        "blob-blocked event should request download"
+    );
+    assert_eq!(
+        fixture.engine.cursor().unwrap().last_applied_revision.get(),
+        10,
+        "blob-blocked event must not advance last_applied"
+    );
+
+    // No segment ack — nothing Applied to acknowledge.
+    let pending = fixture.engine.pending_commands(16).unwrap();
+    assert!(
+        support::ack_revisions(&pending).is_empty(),
+        "no segment ack when no Applied prefix exists"
+    );
 }

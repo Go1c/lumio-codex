@@ -93,7 +93,7 @@ fn opens_exact_schema_and_round_trips_max_revision() {
         .unwrap();
     let cursor = state.cursor().unwrap();
     assert_eq!(cursor.pending_ack_revision.unwrap().get(), u64::MAX);
-    assert_eq!(state.user_version().unwrap(), 4);
+    assert_eq!(state.user_version().unwrap(), 5);
     assert_eq!(state.pragma("journal_mode").unwrap(), "wal");
     assert_eq!(state.pragma("synchronous").unwrap(), "2");
     assert_eq!(state.pragma("foreign_keys").unwrap(), "1");
@@ -124,7 +124,7 @@ fn v1_applied_operation_receipts_migrate_as_explicit_legacy_rows() {
     drop(connection);
 
     let state = fixture.open();
-    assert_eq!(state.user_version().unwrap(), 4);
+    assert_eq!(state.user_version().unwrap(), 5);
     drop(state);
 
     for _ in 0..2 {
@@ -148,7 +148,7 @@ fn v1_applied_operation_receipts_migrate_as_explicit_legacy_rows() {
         drop(connection);
 
         let reopened = fixture.open();
-        assert_eq!(reopened.user_version().unwrap(), 4);
+        assert_eq!(reopened.user_version().unwrap(), 5);
         drop(reopened);
     }
 }
@@ -221,7 +221,7 @@ fn exact_v2_migrates_to_v3_without_changing_receipt_bytes() {
     drop(connection);
 
     let state = fixture.open();
-    assert_eq!(state.user_version().unwrap(), 4);
+    assert_eq!(state.user_version().unwrap(), 5);
     drop(state);
     let connection = rusqlite::Connection::open(fixture.db_path()).unwrap();
     let retained: (Vec<u8>, Vec<u8>) = connection

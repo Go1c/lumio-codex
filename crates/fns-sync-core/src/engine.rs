@@ -970,6 +970,20 @@ impl SyncEngine {
                 client_id: self.runtime.state.client_id(),
                 revision,
             }));
+        } else if commands.len() < limit {
+            // Fallback: acknowledge a contiguous applied prefix of an
+            // incremental stream that has not reached terminal completion.
+            // See `advance_segment_ack_if_stalled`.
+            let cursor = self.runtime.state.cursor()?;
+            if let Some(revision) = cursor.pending_segment_ack_revision
+                && cursor.pending_ack_revision.is_none()
+            {
+                commands.push(SyncCommand::SendAck(WorkspaceAckRequest {
+                    workspace_id: self.runtime.state.workspace_id(),
+                    client_id: self.runtime.state.client_id(),
+                    revision,
+                }));
+            }
         }
         Ok(commands)
     }
@@ -2325,6 +2339,22 @@ impl SyncEngine {
             if message.revision == cursor.last_ack_revision {
                 return Ok(());
             }
+            // Segment ack: when no terminal ack is pending but a segment ack
+            // was emitted for a contiguous applied prefix of an unfinished
+            // incremental stream, the server confirms it here. Advance
+            // last_ack without clearing the active stream.
+            if let Some(segment) = cursor.pending_segment_ack_revision
+                && message.revision == segment
+                && message.revision > cursor.last_ack_revision
+                && message.revision <= cursor.last_applied_revision
+            {
+                self.runtime.state.transaction(|tx| {
+                    tx.set_last_ack_revision(message.revision)?;
+                    tx.clear_pending_segment_ack()?;
+                    Ok(())
+                })?;
+                return Ok(());
+            }
             return Err(SyncError::ProtocolInvariant {
                 reason: "ack_not_pending",
             });
@@ -2341,6 +2371,7 @@ impl SyncEngine {
             tx.set_last_ack_revision(message.revision)?;
             if message.revision == pending {
                 tx.clear_pending_ack()?;
+                tx.clear_pending_segment_ack()?;
                 tx.clear_stream()?;
             }
             Ok(())
@@ -3287,7 +3318,66 @@ impl SyncEngine {
             }
         }
         let _ = self.finish_stream_if_ready()?;
+        self.advance_segment_ack_if_stalled()?;
         Ok(commands)
+    }
+
+    /// When an incremental stream cannot reach its terminal completion barrier
+    /// every item has arrived and been processed but the End frame was lost or a
+    /// finalization gate (conflict count, apply journal) is stuck already-
+    /// applied revision items would otherwise be stranded: `last_ack` stays at
+    /// the pre-stream revision, so every reconnect re-subscribes and re-applies
+    /// the same work.
+    ///
+    /// This advances a *segment* ack target to the current `last_applied`
+    /// revision so the transport can acknowledge the contiguous applied prefix
+    /// without waiting for the full stream to finish. The terminal
+    /// `pending_ack` (set by `finish_stream_if_ready`) always takes priority;
+    /// segment ack only fills the gap when the terminal barrier is not reached.
+    ///
+    /// Safety: this only fires when every expected event has arrived and been
+    /// fully processed (`revision_count == expected && pending == 0`). This
+    /// guarantees no blob download or deferred event is in flight, so the
+    /// applied prefix is durable and safe to confirm.
+    fn advance_segment_ack_if_stalled(&mut self) -> Result<(), SyncError> {
+        let cursor = self.runtime.state.cursor()?;
+        // Terminal ack already pending — let it take priority.
+        if cursor.pending_ack_revision.is_some() {
+            return Ok(());
+        }
+        let Some(active) = self.runtime.state.stream_state()? else {
+            return Ok(());
+        };
+        // Only incremental streams benefit from segment ack. A full snapshot
+        // reconciles atomically and has no useful partial-ack semantics.
+        if active.mode != WorkspaceSnapshotMode::Incremental {
+            return Ok(());
+        }
+        // No applied prefix to acknowledge yet.
+        if cursor.last_applied_revision <= cursor.last_ack_revision {
+            return Ok(());
+        }
+        // The terminal revision is about to be acknowledged by the normal path.
+        if cursor.last_applied_revision >= active.final_revision {
+            return Ok(());
+        }
+        // Every expected event must have arrived and been fully processed.
+        // This is the same item-readiness condition as finish_stream_if_ready,
+        // minus the end_received / conflict_count / apply_journal gates. It
+        // guarantees no blob download or deferred event is still in flight.
+        let summary = self.runtime.state.stream_table_summary(active.stream_id)?;
+        if summary.revision_count != u64::from(active.expected_event_count)
+            || summary.pending_revision_count != 0
+            || summary.entry_count != 0
+        {
+            return Ok(());
+        }
+        let target = cursor.last_applied_revision;
+        if cursor.pending_segment_ack_revision == Some(target) {
+            return Ok(());
+        }
+        self.runtime.state.set_pending_segment_ack(target)?;
+        Ok(())
     }
 
     fn resume_live_step(
@@ -3700,6 +3790,7 @@ impl SyncEngine {
             }
             tx.replace_authoritative_conflicts(active.stream_id)?;
             tx.set_last_applied_revision(active.final_revision)?;
+            tx.clear_pending_segment_ack()?;
             if needs_ack {
                 tx.set_pending_ack(active.final_revision)?;
             } else {

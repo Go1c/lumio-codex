@@ -139,6 +139,7 @@ pub struct WorkspaceCursor {
     pub last_ack_revision: WorkspaceRevision,
     pub last_applied_revision: WorkspaceRevision,
     pub pending_ack_revision: Option<WorkspaceRevision>,
+    pub pending_segment_ack_revision: Option<WorkspaceRevision>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

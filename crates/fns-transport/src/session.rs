@@ -1038,11 +1038,24 @@ impl Session {
                 }
             }
             SyncCommand::SendAck(body) => {
-                if !matches!(self.phase, SessionPhase::Online) {
+                let cursor = self.engine.cursor().await?;
+                // Classify the ack: terminal (stream-completion) or segment
+                // (partial applied prefix of an unfinished incremental stream).
+                let is_terminal_ack = cursor.pending_ack_revision == Some(body.revision);
+                let is_segment_ack = cursor.pending_segment_ack_revision == Some(body.revision)
+                    && cursor.pending_ack_revision.is_none();
+                if !is_terminal_ack && !is_segment_ack {
                     return Ok(CommandSendResult::Consumed);
                 }
-                let cursor = self.engine.cursor().await?;
-                if cursor.pending_ack_revision != Some(body.revision) {
+                // Terminal acks are sent once the session is fully online.
+                // Segment acks are also safe during Streaming: the connection
+                // is established and every expected event in the range has
+                // been fully processed (no blob download in flight).
+                let is_online = matches!(self.phase, SessionPhase::Online);
+                if is_terminal_ack && !is_online {
+                    return Ok(CommandSendResult::Consumed);
+                }
+                if !is_online && !matches!(self.phase, SessionPhase::Streaming(_)) {
                     return Ok(CommandSendResult::Consumed);
                 }
                 if self.requests.has_ack_in_flight() {
