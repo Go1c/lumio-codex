@@ -469,7 +469,6 @@ export default function OnboardingWizard({
       progressUnlisten.current?.();
       progressUnlisten.current = null;
       if (generation === operationGeneration.current && mounted.current) {
-        setPassword("");
         setSaving(false);
       }
     }
