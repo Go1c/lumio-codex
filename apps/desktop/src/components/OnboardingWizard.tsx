@@ -157,7 +157,7 @@ export default function OnboardingWizard({
   const [projectName, setProjectName] = useState("");
   const [projectId] = useState(() => crypto.randomUUID());
   const [sshAlias, setSshAlias] = useState("");
-  const [workspaceId, setWorkspaceId] = useState("");
+  const [workspaceId] = useState(() => crypto.randomUUID());
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remoteRoot, setRemoteRoot] = useState("");
@@ -522,17 +522,6 @@ export default function OnboardingWizard({
                 onChange={(e) => setSshAlias(e.target.value)}
               />
             )}
-          </div>
-          <div className="wizard-step">
-            <label>Workspace UUID</label>
-            <input
-              type="text"
-              spellCheck={false}
-              autoCapitalize="none"
-              placeholder="server-configured workspace UUID"
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-            />
           </div>
           <div className="wizard-step">
             <label>Server Username or Email</label>
