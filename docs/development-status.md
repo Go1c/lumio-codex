@@ -1,24 +1,25 @@
 # Development Status
 
-Status date: 2026-08-10
+Status date: 2026-08-10 (updated)
 
-Development and release work are paused by the project owner. The current
-client branch contains substantial bidirectional-sync work, but it has not met
-the final acceptance criteria and must not be described or distributed as a
-release candidate.
+Development has resumed. The segment-ack root-cause fix has been implemented,
+verified, and committed. A full controlled E2E matrix passed against the real
+service. Linux x86_64 release artifacts (fns-agent + fns-server) and a signed
+macOS arm64 App + DMG have been built from the final commit. This checkout is
+not yet distributed as a release candidate because notarization is not
+configured (local acceptance only).
 
-## Repository State at Pause
+## Repository State
 
 - Client repository: `/Users/cui/Sites/AI-Remote-Workspace/client`
 - Client branch: `dev`
-- Client base before the pause commit: `69c1be76befb4fd751155da7b2af88ca604399c3`
+- Client commit (segment-ack fix): `827554de8256949a980b71058c1924bec31634be`
 - Server repository:
   `/Users/cui/Sites/.worktrees/fast-note-sync-service/remote-claude-desktop-mvp-go`
 - Server branch: `feature/remote-claude-desktop-mvp-go`
 - Server commit: `39fadbfbfc62f26e4499b3cd27dbf403c0c9545a`
 
-The commit containing this document is the handoff point. Use `git log -1` to
-resolve its client commit instead of relying on an uncommitted diff hash.
+Use `git log -1` to resolve the current client commit.
 
 ## What Is Implemented
 
@@ -145,3 +146,37 @@ Evidence is machine-local and intentionally outside the Git repository:
 
 At pause time there were no FNS Workspace, fns-agent, test-sync, controlled E2E,
 or owned SSH processes left running.
+
+## Build Artifacts (2026-08-10 resume)
+
+All artifacts are built from client commit `827554de` and server commit
+`39fadbfb`.
+
+### Linux x86_64 release
+
+- `target/release-assets/linux-x86_64/fns-agent` — sha256
+  `9210c1732e7b21d28a9dcd505a1bfccd86901afcc63c7a89ce78db43740fef6c`
+- `target/release-assets/linux-x86_64/fns-server` — sha256
+  `12397c235ff349a9d72dbbb7dc48ebc080103ef0e02610574949a8d474442e7e`
+  (note: fns-server sha256 differs from the pause-era value because the
+  cross-compile was rerun during this resume)
+- `target/release-assets/linux-x86_64/release-provenance.json` — verified
+  client=`827554d` server=`39fadbfb`
+- fns-agent built on `vps-108-80-81-15` (Ubuntu 22.04 x86_64, rustc 1.94.0)
+
+### macOS arm64 release
+
+- App: `target/macos-arm64-release/aarch64-apple-darwin/release/bundle/macos/FNS Workspace.app`
+- DMG: `target/macos-arm64-release/aarch64-apple-darwin/release/bundle/dmg/FNS Workspace_0.1.0_aarch64.dmg`
+- Signed with Apple Development identity (Team `TQG593C9NG`)
+- Verified: codesign strict, arm64 architecture, embedded Linux artifacts
+  byte-match provenance, DMG inner app verified
+- Notarization not configured — local acceptance only
+
+### Controlled E2E
+
+- Run `post-segment-ack-20260810-120940` against workspace 15
+  (`70000000-0000-4000-8000-202608100015`), `result.json` status=`completed`,
+  all three error fields null
+- Evidence:
+  `/Users/cui/Sites/fns-workspace/acceptance-evidence/post-segment-ack-20260810-120940/`
