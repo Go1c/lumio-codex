@@ -1103,6 +1103,40 @@ impl SqliteState {
             .collect::<Result<Vec<_>, _>>()
     }
 
+    pub fn stream_conflicts_bounded(
+        &self,
+        stream_id: StreamId,
+        limit: u32,
+    ) -> Result<Vec<StreamConflictRecord>, SyncError> {
+        let sql_limit = i64::from(limit) + 1;
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT workspace_id, stream_id, conflict_id, conflict_revision, created_json, status FROM stream_conflicts WHERE workspace_id = ?1 AND stream_id = ?2 ORDER BY conflict_id LIMIT ?3",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    self.workspace_id.to_string(),
+                    stream_id.to_string(),
+                    sql_limit
+                ],
+                row_to_stream_conflict,
+            )
+            .map_err(storage_error)?;
+        let records = rows
+            .map(|row| row.map_err(storage_error))
+            .collect::<Result<Vec<_>, _>>()?;
+        if records.len() > limit as usize {
+            return Err(SyncError::CorruptState {
+                table: "stream_conflicts",
+                field: "conflict_id",
+            });
+        }
+        Ok(records)
+    }
+
     pub fn replace_authoritative_conflicts(
         &mut self,
         stream_id: StreamId,
@@ -2855,6 +2889,16 @@ pub(crate) fn replace_authoritative_conflicts_tx(
 ) -> Result<(), SyncError> {
     let workspace_id = workspace_id.to_string();
     let stream_id = stream_id.to_string();
+    let changed_same_generation = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM conflicts AS existing JOIN stream_conflicts AS staged ON staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = existing.conflict_id WHERE existing.workspace_id = ?1 AND existing.conflict_revision = staged.conflict_revision AND existing.created_json != staged.created_json)",
+            params![workspace_id, stream_id],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(storage_error)?;
+    if changed_same_generation {
+        return Err(SyncError::OperationChanged);
+    }
     transaction
         .execute(
             "DELETE FROM outbox WHERE workspace_id = ?1 AND EXISTS (SELECT 1 FROM conflicts AS existing JOIN stream_conflicts AS staged ON staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = existing.conflict_id WHERE existing.workspace_id = ?1 AND (existing.conflict_revision != staged.conflict_revision OR existing.status = 'refresh_required') AND existing.resolution_json IS NOT NULL AND existing.resolution_json = outbox.body_json AND existing.resolution_digest = outbox.body_digest)",
@@ -2863,7 +2907,7 @@ pub(crate) fn replace_authoritative_conflicts_tx(
         .map_err(storage_error)?;
     transaction
         .execute(
-            "UPDATE conflicts SET conflict_revision = (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), created_json = (SELECT staged.created_json FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), status = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' OR resolution_json IS NULL THEN 'manual' ELSE 'refresh_required' END, candidate_hash = NULL, resolution_json = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_json END, resolution_digest = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_digest END WHERE workspace_id = ?1 AND EXISTS (SELECT 1 FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id)",
+            "UPDATE conflicts SET conflict_revision = (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), created_json = (SELECT staged.created_json FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id), status = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' OR resolution_json IS NULL THEN 'manual' ELSE 'resolving' END, candidate_hash = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE candidate_hash END, resolution_json = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_json END, resolution_digest = CASE WHEN conflict_revision != (SELECT staged.conflict_revision FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id) OR status = 'refresh_required' THEN NULL ELSE resolution_digest END WHERE workspace_id = ?1 AND EXISTS (SELECT 1 FROM stream_conflicts AS staged WHERE staged.workspace_id = ?1 AND staged.stream_id = ?2 AND staged.conflict_id = conflicts.conflict_id)",
             params![workspace_id, stream_id],
         )
         .map_err(storage_error)?;

@@ -2074,6 +2074,8 @@ fn is_retryable(code: AgentErrorCode) -> bool {
             | AgentErrorCode::Filesystem
             | AgentErrorCode::SpawnFailed
             | AgentErrorCode::StartupTimeout
+            | AgentErrorCode::IdleTimeout
+            | AgentErrorCode::TransferTimeout
             | AgentErrorCode::AbnormalExit
             | AgentErrorCode::ShutdownTimeout
     )
@@ -2420,6 +2422,12 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Condvar, Mutex as StdMutex, OnceLock};
     use tokio::sync::Notify;
+
+    #[test]
+    fn transport_timeouts_are_recoverable() {
+        assert!(is_retryable(AgentErrorCode::IdleTimeout));
+        assert!(is_retryable(AgentErrorCode::TransferTimeout));
+    }
 
     enum SpawnPlan {
         Running,

@@ -683,7 +683,7 @@ impl Session {
                     self.engine_conflict_resolved(message).await?
                 }
             };
-            self.enqueue_commands(commands)?;
+            self.enqueue_replayable_download_commands(commands)?;
         }
 
         self.drain_pending_queue(writer, &mut budget).await?;
@@ -910,6 +910,35 @@ impl Session {
             return Err(TransportError::new(TransportErrorCode::ResourceLimit, true));
         }
         self.pending_outbound.extend(commands);
+        Ok(())
+    }
+
+    // The engine retains these inbound downloads until apply and Ack complete.
+    fn enqueue_replayable_download_commands(
+        &mut self,
+        commands: Vec<SyncCommand>,
+    ) -> Result<(), TransportError> {
+        if !commands
+            .iter()
+            .all(|command| matches!(command, SyncCommand::DownloadBlob { .. }))
+        {
+            return self.enqueue_commands(commands);
+        }
+
+        let available = self
+            .limits
+            .pending_outbound_capacity
+            .saturating_sub(self.pending_outbound.len());
+        let deferred = commands.len().saturating_sub(available);
+        self.pending_outbound
+            .extend(commands.into_iter().take(available));
+        if deferred > 0 {
+            tracing::debug!(
+                deferred,
+                capacity = self.limits.pending_outbound_capacity,
+                "replayable blob downloads deferred until the outbound queue drains"
+            );
+        }
         Ok(())
     }
 
@@ -1340,7 +1369,7 @@ impl Session {
                     && let MessageBody::SnapshotEntry(entry) = body
                 {
                     let cmds = self.engine_pending_from_snapshot_entry(entry).await?;
-                    self.enqueue_commands(cmds)?;
+                    self.enqueue_replayable_download_commands(cmds)?;
                 }
             }
             WorkspaceAction::WorkspaceSnapshotEnd => {
@@ -1393,7 +1422,7 @@ impl Session {
                         self.defer_live_message(DeferredLiveMessage::Event(Box::new(event)))?;
                     } else {
                         let cmds = self.engine_workspace_event(event).await?;
-                        self.enqueue_commands(cmds)?;
+                        self.enqueue_replayable_download_commands(cmds)?;
                     }
                 }
             }
@@ -1457,7 +1486,7 @@ impl Session {
                         self.defer_live_message(DeferredLiveMessage::ConflictResolved(msg))?;
                     } else {
                         let commands = self.engine_conflict_resolved(msg).await?;
-                        self.enqueue_commands(commands)?;
+                        self.enqueue_replayable_download_commands(commands)?;
                     }
                 }
             }
@@ -1647,7 +1676,7 @@ impl Session {
                             .await?;
                         self.transfers.remove(&expected_end.transfer_id);
                         self.refresh_stream_completion().await?;
-                        self.enqueue_commands(commands)?;
+                        self.enqueue_replayable_download_commands(commands)?;
                         return Ok(());
                     }
 

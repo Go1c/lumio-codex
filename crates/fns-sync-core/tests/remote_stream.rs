@@ -3,7 +3,8 @@ mod support;
 use std::fs;
 
 use fns_protocol::{
-    RequiredNullable, WorkspaceConflictChoice, WorkspaceEventMessage, WorkspaceMutation,
+    RequiredNullable, WorkspaceConflictChoice, WorkspaceConflictCreatedMessage,
+    WorkspaceConflictKind, WorkspaceEventMessage, WorkspaceMutation,
     WorkspaceMutationAcceptedMessage, WorkspaceMutationKind, WorkspaceRevision,
 };
 use fns_sync_core::{
@@ -17,6 +18,72 @@ enum ReconnectBoundary {
     SnapshotEntry,
     Event,
     EndBeforeAck,
+}
+
+fn blocked_rename_conflict(
+    fixture: &support::EngineFixture,
+    conflict_id: &str,
+    mutation: &WorkspaceMutation,
+) -> WorkspaceConflictCreatedMessage {
+    let mut created = fixture.remote_conflict_created(conflict_id, "1", mutation.path.as_str());
+    created.kind = WorkspaceConflictKind::Rename;
+    created.created_by_operation_id = mutation.operation_id;
+    created.ancestor.path_revision = mutation.base_path_revision;
+    created.incoming.path = RequiredNullable::Value(
+        mutation
+            .new_path
+            .clone()
+            .expect("blocked rename target path"),
+    );
+    created.incoming.path_revision = mutation.target_base_path_revision.unwrap();
+    created.incoming.content_hash = mutation.content_hash.clone();
+    created.incoming.metadata = mutation.metadata.clone();
+    if mutation.content_hash.is_null() {
+        created.ancestor.content_hash = RequiredNullable::Null;
+        created.ancestor.metadata = support::zero_metadata();
+        created.current.content_hash = RequiredNullable::Null;
+        created.current.metadata = support::zero_metadata();
+    }
+    created.validate().unwrap();
+    created
+}
+
+fn fixture_with_blocked_file_rename(
+    source: &str,
+    target: &str,
+    conflict_id: &str,
+    bytes: &[u8],
+) -> (
+    support::EngineFixture,
+    WorkspaceMutation,
+    WorkspaceConflictCreatedMessage,
+) {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file(source, 8, bytes);
+    fixture.rename(source, target);
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path(source),
+            to: support::workspace_path(target),
+        })
+        .unwrap();
+    let blocked = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .pop()
+        .expect("blocked file rename")
+        .mutation()
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+    let old = blocked_rename_conflict(&fixture, conflict_id, &blocked);
+    fixture.engine.conflict_created(old.clone()).unwrap();
+    (fixture, blocked, old)
 }
 
 #[test]
@@ -2973,6 +3040,968 @@ fn authoritative_same_generation_reopens_an_unrepresentable_stale_conflict() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn authoritative_same_generation_preserves_merged_resolution_across_reconnects() {
+    let mut fixture = support::EngineFixture::new();
+    let conflict = fixture.remote_conflict_created(
+        "10000000-0000-4000-8000-000000000043",
+        "1",
+        "merged-snapshot.txt",
+    );
+    fixture.engine.conflict_created(conflict.clone()).unwrap();
+    let merged = b"locally merged candidate";
+    let merged_hash = support::hash(merged);
+    fixture.write(conflict.path.as_str(), merged);
+    let receipt = fixture
+        .engine
+        .resolve_conflict(
+            conflict.conflict_id,
+            conflict.conflict_revision,
+            WorkspaceConflictChoice::Merged,
+        )
+        .unwrap();
+    let durable_before = fixture
+        .engine
+        .state()
+        .conflict(conflict.conflict_id)
+        .unwrap()
+        .expect("durable merged conflict");
+    let outbox_before = fixture
+        .engine
+        .state()
+        .outbox_entry(receipt.operation_id)
+        .unwrap()
+        .expect("durable merged resolution");
+    assert_eq!(durable_before.status, ConflictStatus::Resolving);
+    assert_eq!(
+        durable_before.candidate_hash.as_deref(),
+        Some(merged_hash.as_str())
+    );
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 1))
+        .unwrap();
+    fixture.engine.conflict_created(conflict.clone()).unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 1))
+        .unwrap();
+
+    let mut fixture = fixture.reopen();
+    let after_first = fixture
+        .engine
+        .state()
+        .conflict(conflict.conflict_id)
+        .unwrap()
+        .expect("merged conflict retained after first reopen");
+    assert_eq!(after_first, durable_before);
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(receipt.operation_id)
+            .unwrap()
+            .expect("merged resolution retained after first reopen"),
+        outbox_before
+    );
+    let first_replay = fixture
+        .engine
+        .pending_commands(16)
+        .unwrap()
+        .into_iter()
+        .find_map(|command| match command {
+            SyncCommand::ResolveConflict(request)
+                if request.operation_id == receipt.operation_id =>
+            {
+                Some(request)
+            }
+            _ => None,
+        })
+        .expect("merged resolution replayed after first reopen");
+    assert_eq!(
+        fns_sync_core::canonical_json(&first_replay).unwrap(),
+        outbox_before.body_json
+    );
+    let dispatched_outbox = fixture
+        .engine
+        .state()
+        .outbox_entry(receipt.operation_id)
+        .unwrap()
+        .expect("merged resolution remains durable after replay");
+    assert_eq!(dispatched_outbox.stage, OutboxStage::Dispatched);
+    assert_eq!(dispatched_outbox.body_json, outbox_before.body_json);
+    assert_eq!(dispatched_outbox.body_digest, outbox_before.body_digest);
+
+    let second_stream_id = reconnect_stream_id(96);
+    let mut second_begin = fixture.incremental_begin(0, 0, 0, 1);
+    second_begin.stream_id = second_stream_id;
+    fixture.engine.snapshot_begin(second_begin).unwrap();
+    fixture.engine.conflict_created(conflict.clone()).unwrap();
+    let mut second_end = fixture.incremental_end(0, 0, 1);
+    second_end.stream_id = second_stream_id;
+    fixture.engine.snapshot_end(second_end).unwrap();
+
+    let mut fixture = fixture.reopen();
+    let after_second = fixture
+        .engine
+        .state()
+        .conflict(conflict.conflict_id)
+        .unwrap()
+        .expect("merged conflict retained after second reopen");
+    assert_eq!(after_second, durable_before);
+    assert_eq!(after_second.status, ConflictStatus::Resolving);
+    assert_eq!(
+        after_second.candidate_hash.as_deref(),
+        Some(merged_hash.as_str())
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(receipt.operation_id)
+            .unwrap()
+            .expect("merged resolution retained after second reopen"),
+        dispatched_outbox
+    );
+    let view = fixture.engine.list_conflicts().unwrap().pop().unwrap();
+    assert_eq!(
+        view.pending_resolution
+            .expect("merged pending resolution")
+            .content_hash,
+        Some(merged_hash)
+    );
+    let second_replay = fixture
+        .engine
+        .pending_commands(16)
+        .unwrap()
+        .into_iter()
+        .find_map(|command| match command {
+            SyncCommand::ResolveConflict(request)
+                if request.operation_id == receipt.operation_id =>
+            {
+                Some(request)
+            }
+            _ => None,
+        })
+        .expect("merged resolution replayed after second reopen");
+    assert_eq!(
+        fns_sync_core::canonical_json(&second_replay).unwrap(),
+        outbox_before.body_json
+    );
+}
+
+#[test]
+fn live_changed_origin_generation_preserves_newer_intent_without_materializing_it() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("changed-origin-live.txt", 0, b"base");
+    let old = fixture.remote_conflict_created(
+        "10000000-0000-4000-8000-000000000044",
+        "1",
+        "changed-origin-live.txt",
+    );
+    fixture.engine.conflict_created(old.clone()).unwrap();
+    let blocked = WorkspaceMutation {
+        workspace_id: fixture.engine.state().workspace_id(),
+        client_id: fixture.engine.state().client_id(),
+        operation_id: old.created_by_operation_id,
+        path: old.path.clone(),
+        base_path_revision: old.ancestor.path_revision,
+        kind: WorkspaceMutationKind::UpsertFile,
+        content_hash: old.incoming.content_hash.clone(),
+        metadata: old.incoming.metadata.clone(),
+        new_path: None,
+        target_base_path_revision: None,
+    };
+    fixture
+        .engine
+        .state_mut()
+        .enqueue_mutation(&blocked)
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+    fixture.write("changed-origin-live.txt", b"newer local value");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Update(support::workspace_path(
+            "changed-origin-live.txt",
+        )))
+        .unwrap();
+    let newer_intent = fixture
+        .engine
+        .state()
+        .local_intent("changed-origin-live.txt")
+        .unwrap()
+        .expect("newer local intent");
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(281);
+    refreshed.current.path_revision = WorkspaceRevision::new(2);
+    refreshed.validate().unwrap();
+    fixture.engine.conflict_created(refreshed.clone()).unwrap();
+
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .local_intent("changed-origin-live.txt")
+            .unwrap()
+            .expect("newer local intent retained"),
+        newer_intent
+    );
+    assert!(fixture.engine.pending_commands(16).unwrap().is_empty());
+    assert!(fixture.engine.state().outbox().unwrap().is_empty());
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .local_intent("changed-origin-live.txt")
+            .unwrap()
+            .expect("intent still blocked by active conflict"),
+        newer_intent
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .conflict(refreshed.conflict_id)
+            .unwrap()
+            .expect("new generation conflict")
+            .conflict_revision,
+        refreshed.conflict_revision
+    );
+}
+
+#[test]
+fn live_changed_origin_rename_preserves_both_local_endpoints() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("rename-source.txt", 8, b"base");
+    fixture.rename("rename-source.txt", "rename-target.txt");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path("rename-source.txt"),
+            to: support::workspace_path("rename-target.txt"),
+        })
+        .unwrap();
+    let blocked = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .pop()
+        .expect("local rename outbox")
+        .mutation()
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+
+    let old = blocked_rename_conflict(&fixture, "10000000-0000-4000-8000-000000000053", &blocked);
+    fixture.engine.conflict_created(old.clone()).unwrap();
+
+    fixture.write("rename-source.txt", b"new source");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Create(support::workspace_path(
+            "rename-source.txt",
+        )))
+        .unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("rename-source.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("rename-target.txt")
+            .unwrap()
+            .is_none()
+    );
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(281);
+    refreshed.current.path_revision = WorkspaceRevision::new(9);
+    refreshed.validate().unwrap();
+    fixture.engine.conflict_created(refreshed).unwrap();
+
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("rename-source.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("rename-target.txt")
+            .unwrap()
+            .is_some()
+    );
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 0))
+        .unwrap();
+
+    let mutations = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.mutation().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 2);
+    let source = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "rename-source.txt")
+        .expect("source upsert");
+    assert_eq!(source.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        source.content_hash,
+        RequiredNullable::Value(support::hash(b"new source"))
+    );
+    assert_eq!(source.metadata.size, b"new source".len() as u64);
+    let target = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "rename-target.txt")
+        .expect("target upsert");
+    assert_eq!(target.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        target.content_hash,
+        RequiredNullable::Value(support::hash(b"base"))
+    );
+    assert_eq!(target.metadata.size, b"base".len() as u64);
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
+fn live_changed_origin_flattens_chained_file_rename_across_restart() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("chain-a.txt", 8, b"chain bytes");
+    fixture.rename("chain-a.txt", "chain-b.txt");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path("chain-a.txt"),
+            to: support::workspace_path("chain-b.txt"),
+        })
+        .unwrap();
+    let blocked = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .pop()
+        .expect("blocked first rename")
+        .mutation()
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+    let old = blocked_rename_conflict(&fixture, "10000000-0000-4000-8000-000000000054", &blocked);
+    fixture.engine.conflict_created(old.clone()).unwrap();
+
+    fixture.rename("chain-b.txt", "chain-c.txt");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path("chain-b.txt"),
+            to: support::workspace_path("chain-c.txt"),
+        })
+        .unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-b.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-c.txt")
+            .unwrap()
+            .is_some()
+    );
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(282);
+    refreshed.current.path_revision = WorkspaceRevision::new(9);
+    refreshed.validate().unwrap();
+    fixture.engine.conflict_created(refreshed).unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-a.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-b.txt")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-c.txt")
+            .unwrap()
+            .is_some()
+    );
+
+    let mut fixture = fixture.reopen();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-a.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("chain-c.txt")
+            .unwrap()
+            .is_some()
+    );
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 0))
+        .unwrap();
+    let expected = fixture.engine.outbox().unwrap();
+    assert_eq!(expected.len(), 2);
+
+    let fixture = fixture.reopen();
+    assert_eq!(fixture.engine.outbox().unwrap(), expected);
+    let mutations = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.mutation().unwrap())
+        .collect::<Vec<_>>();
+    let source = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "chain-a.txt")
+        .expect("source delete");
+    assert_eq!(source.kind, WorkspaceMutationKind::Delete);
+    let target = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "chain-c.txt")
+        .expect("final target upsert");
+    assert_eq!(target.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        target.content_hash,
+        RequiredNullable::Value(support::hash(b"chain bytes"))
+    );
+    assert!(
+        mutations
+            .iter()
+            .all(|mutation| mutation.path.as_str() != "chain-b.txt")
+    );
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
+fn live_changed_origin_flattens_chained_directory_with_nested_files() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_directory("tree-a", 8);
+    fixture.seed_remote_directory("tree-a/nested", 8);
+    fixture.seed_remote_file("tree-a/nested/data.bin", 8, b"old nested bytes");
+    fixture.rename("tree-a", "tree-b");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path("tree-a"),
+            to: support::workspace_path("tree-b"),
+        })
+        .unwrap();
+    let blocked = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .pop()
+        .expect("blocked directory rename")
+        .mutation()
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+    let old = blocked_rename_conflict(&fixture, "10000000-0000-4000-8000-000000000055", &blocked);
+    fixture.engine.conflict_created(old.clone()).unwrap();
+
+    fixture.rename("tree-b", "tree-c");
+    fixture.write("tree-c/nested/data.bin", b"new nested bytes");
+    fixture.write("tree-c/nested/empty.bin", b"");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Rename {
+            from: support::workspace_path("tree-b"),
+            to: support::workspace_path("tree-c"),
+        })
+        .unwrap();
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(283);
+    refreshed.current.path_revision = WorkspaceRevision::new(9);
+    refreshed.validate().unwrap();
+    fixture.engine.conflict_created(refreshed).unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("tree-b")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("tree-c/nested/data.bin")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("tree-c/nested/empty.bin")
+            .unwrap()
+            .is_some()
+    );
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 0))
+        .unwrap();
+    let mutations = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.mutation().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 7);
+    for path in ["tree-a", "tree-a/nested", "tree-a/nested/data.bin"] {
+        assert_eq!(
+            mutations
+                .iter()
+                .find(|mutation| mutation.path.as_str() == path)
+                .expect("directory source delete")
+                .kind,
+            WorkspaceMutationKind::Delete
+        );
+    }
+    for path in ["tree-c", "tree-c/nested"] {
+        assert_eq!(
+            mutations
+                .iter()
+                .find(|mutation| mutation.path.as_str() == path)
+                .expect("directory target mkdir")
+                .kind,
+            WorkspaceMutationKind::Mkdir
+        );
+    }
+    let changed = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "tree-c/nested/data.bin")
+        .expect("changed nested file");
+    assert_eq!(changed.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        changed.content_hash,
+        RequiredNullable::Value(support::hash(b"new nested bytes"))
+    );
+    assert_eq!(changed.metadata.size, b"new nested bytes".len() as u64);
+    let empty = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "tree-c/nested/empty.bin")
+        .expect("empty nested file");
+    assert_eq!(empty.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        empty.content_hash,
+        RequiredNullable::Value(support::hash(b""))
+    );
+    assert_eq!(empty.metadata.size, 0);
+    assert!(
+        mutations
+            .iter()
+            .all(|mutation| !mutation.path.as_str().starts_with("tree-b"))
+    );
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
+fn authoritative_changed_origin_preserves_target_only_edit() {
+    let (mut fixture, blocked, old) = fixture_with_blocked_file_rename(
+        "target-edit-a.txt",
+        "target-edit-b.txt",
+        "10000000-0000-4000-8000-000000000056",
+        b"base target",
+    );
+    fixture.write("target-edit-b.txt", b"edited target");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Update(support::workspace_path(
+            "target-edit-b.txt",
+        )))
+        .unwrap();
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(284);
+    refreshed.current.path_revision = WorkspaceRevision::new(9);
+    refreshed.validate().unwrap();
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 1))
+        .unwrap();
+    fixture.engine.conflict_created(refreshed).unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 1))
+        .unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(fixture.engine.outbox().unwrap().is_empty());
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("target-edit-a.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("target-edit-b.txt")
+            .unwrap()
+            .is_some()
+    );
+
+    let next_stream_id = reconnect_stream_id(98);
+    let mut begin = fixture.incremental_begin(0, 0, 0, 0);
+    begin.stream_id = next_stream_id;
+    fixture.engine.snapshot_begin(begin).unwrap();
+    let mut end = fixture.incremental_end(0, 0, 0);
+    end.stream_id = next_stream_id;
+    fixture.engine.snapshot_end(end).unwrap();
+
+    let mutations = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.mutation().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(
+        mutations
+            .iter()
+            .find(|mutation| mutation.path.as_str() == "target-edit-a.txt")
+            .expect("source delete")
+            .kind,
+        WorkspaceMutationKind::Delete
+    );
+    let target = mutations
+        .iter()
+        .find(|mutation| mutation.path.as_str() == "target-edit-b.txt")
+        .expect("edited target upsert");
+    assert_eq!(target.kind, WorkspaceMutationKind::UpsertFile);
+    assert_eq!(
+        target.content_hash,
+        RequiredNullable::Value(support::hash(b"edited target"))
+    );
+    assert_eq!(target.metadata.size, b"edited target".len() as u64);
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
+fn live_changed_origin_preserves_delete_after_blocked_rename() {
+    let (mut fixture, blocked, old) = fixture_with_blocked_file_rename(
+        "delete-a.txt",
+        "delete-b.txt",
+        "10000000-0000-4000-8000-000000000057",
+        b"delete me",
+    );
+    fixture.remove("delete-b.txt");
+    fixture
+        .engine
+        .record_local_change(fns_fs::FsChange::Delete(support::workspace_path(
+            "delete-b.txt",
+        )))
+        .unwrap();
+
+    let mut refreshed = old;
+    refreshed.conflict_revision = support::conflict_revision("2");
+    refreshed.created_by_operation_id = support::operation_id(285);
+    refreshed.current.path_revision = WorkspaceRevision::new(9);
+    refreshed.validate().unwrap();
+    fixture.engine.conflict_created(refreshed).unwrap();
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("delete-a.txt")
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        fixture
+            .engine
+            .state()
+            .local_intent("delete-b.txt")
+            .unwrap()
+            .is_none()
+    );
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 0))
+        .unwrap();
+    let mutations = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.mutation().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(mutations.len(), 1);
+    assert_eq!(mutations[0].path.as_str(), "delete-a.txt");
+    assert_eq!(mutations[0].kind, WorkspaceMutationKind::Delete);
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+}
+
+#[test]
+fn authoritative_absent_conflict_requeues_exact_blocked_desired_state() {
+    let mut fixture = support::EngineFixture::new();
+    fixture.seed_remote_file("absent-conflict.txt", 0, b"base");
+    let old = fixture.remote_conflict_created(
+        "10000000-0000-4000-8000-000000000045",
+        "1",
+        "absent-conflict.txt",
+    );
+    fixture.engine.conflict_created(old.clone()).unwrap();
+    let blocked = WorkspaceMutation {
+        workspace_id: fixture.engine.state().workspace_id(),
+        client_id: fixture.engine.state().client_id(),
+        operation_id: old.created_by_operation_id,
+        path: old.path.clone(),
+        base_path_revision: old.ancestor.path_revision,
+        kind: WorkspaceMutationKind::UpsertFile,
+        content_hash: old.incoming.content_hash.clone(),
+        metadata: old.incoming.metadata.clone(),
+        new_path: None,
+        target_base_path_revision: None,
+    };
+    fixture
+        .engine
+        .state_mut()
+        .enqueue_mutation(&blocked)
+        .unwrap();
+    fixture
+        .engine
+        .state_mut()
+        .set_outbox_stage(blocked.operation_id, OutboxStage::BlockedConflict)
+        .unwrap();
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 0))
+        .unwrap();
+    fixture
+        .engine
+        .snapshot_end(fixture.incremental_end(0, 0, 0))
+        .unwrap();
+
+    assert!(fixture.engine.state().conflicts().unwrap().is_empty());
+    assert!(fixture.engine.state().local_intents().unwrap().is_empty());
+    assert!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(blocked.operation_id)
+            .unwrap()
+            .is_none()
+    );
+    let replacement = fixture
+        .engine
+        .outbox()
+        .unwrap()
+        .into_iter()
+        .next()
+        .expect("replacement mutation")
+        .mutation()
+        .unwrap();
+    assert_ne!(replacement.operation_id, blocked.operation_id);
+    assert_eq!(replacement.path, blocked.path);
+    assert_eq!(replacement.kind, blocked.kind);
+    assert_eq!(replacement.content_hash, blocked.content_hash);
+    assert_eq!(replacement.metadata, blocked.metadata);
+    assert_eq!(replacement.base_path_revision, WorkspaceRevision::ZERO);
+}
+
+#[test]
+fn authoritative_same_generation_rejects_changed_body_without_mutating_durable_state() {
+    let mut fixture = support::EngineFixture::new();
+    let original = fixture.remote_conflict_created(
+        "10000000-0000-4000-8000-000000000042",
+        "1",
+        "changed-generation.txt",
+    );
+    fixture.engine.conflict_created(original.clone()).unwrap();
+    let resolution = fixture
+        .engine
+        .resolve_conflict(
+            original.conflict_id,
+            original.conflict_revision,
+            WorkspaceConflictChoice::Current,
+        )
+        .unwrap();
+    let durable_before = fixture
+        .engine
+        .state()
+        .conflict(original.conflict_id)
+        .unwrap()
+        .expect("durable conflict");
+    let outbox_before = fixture
+        .engine
+        .state()
+        .outbox_entry(resolution.operation_id)
+        .unwrap()
+        .expect("durable resolution");
+    let cursor_before = fixture.engine.cursor().unwrap();
+
+    fixture
+        .engine
+        .snapshot_begin(fixture.incremental_begin(0, 0, 0, 1))
+        .unwrap();
+    let mut changed = original.clone();
+    changed.incoming.metadata.modified_at_ms += 1;
+    changed.validate().unwrap();
+    fixture.engine.conflict_created(changed).unwrap();
+
+    assert_eq!(
+        fixture
+            .engine
+            .snapshot_end(fixture.incremental_end(0, 0, 1))
+            .unwrap_err(),
+        SyncError::OperationChanged
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .conflict(original.conflict_id)
+            .unwrap()
+            .expect("original conflict retained"),
+        durable_before
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .state()
+            .outbox_entry(resolution.operation_id)
+            .unwrap()
+            .expect("resolution retained"),
+        outbox_before
+    );
+    assert_eq!(fixture.engine.cursor().unwrap(), cursor_before);
 }
 
 #[test]

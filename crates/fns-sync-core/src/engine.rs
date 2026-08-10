@@ -10,10 +10,10 @@ use fns_fs::{
 };
 use fns_protocol::{
     OperationId, RequiredNullable, StreamId, WorkspaceAckRequest, WorkspaceConflictCreatedMessage,
-    WorkspaceConflictResolvedMessage, WorkspaceConflictResolvedRequest, WorkspaceEntryKind,
-    WorkspaceEventMessage, WorkspaceMutation, WorkspaceMutationAcceptedMessage,
-    WorkspaceMutationRejectReason, WorkspaceMutationRejectedMessage, WorkspacePath,
-    WorkspacePathState, WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage,
+    WorkspaceConflictResolvedMessage, WorkspaceConflictResolvedRequest, WorkspaceConflictSide,
+    WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceMutation, WorkspaceMutationAcceptedMessage,
+    WorkspaceMutationKind, WorkspaceMutationRejectReason, WorkspaceMutationRejectedMessage,
+    WorkspacePath, WorkspacePathState, WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage,
     WorkspaceSnapshotEntryMessage, WorkspaceSnapshotMode, WorkspaceV2ErrorCode,
 };
 
@@ -326,6 +326,23 @@ fn decode_pending_resolution(
 struct ConflictCleanup {
     resolution_operation_id: Option<OperationId>,
     originating_operation_id: Option<OperationId>,
+    remove_conflict: bool,
+    preserve_newer_generation: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct LocalConflictResolutionWitness {
+    matching_outbox_operation_id: Option<OperationId>,
+    exact: bool,
+    preserve_newer_generation: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConflictGenerationReplacementPlan {
+    blocked_operation_id: OperationId,
+    remove_intent_paths: Vec<WorkspacePath>,
+    replacement_intents: Vec<(WorkspacePath, Vec<u8>)>,
+    updated_at_ms: i64,
 }
 
 fn cleanup_conflict_resolution(
@@ -339,7 +356,24 @@ fn cleanup_conflict_resolution(
     if let Some(operation_id) = cleanup.originating_operation_id {
         tx.remove_outbox(operation_id)?;
     }
-    tx.remove_conflict(conflict_id)
+    if cleanup.remove_conflict {
+        tx.remove_conflict(conflict_id)?;
+    }
+    Ok(())
+}
+
+fn apply_conflict_generation_replacement(
+    tx: &mut crate::StateTransaction<'_>,
+    plan: &ConflictGenerationReplacementPlan,
+) -> Result<(), SyncError> {
+    tx.remove_outbox(plan.blocked_operation_id)?;
+    for path in &plan.remove_intent_paths {
+        tx.remove_local_intent(path)?;
+    }
+    for (path, intent_json) in &plan.replacement_intents {
+        tx.put_local_intent(path.as_str(), intent_json, plan.updated_at_ms)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1088,6 +1122,198 @@ impl SyncEngine {
         })
     }
 
+    fn conflict_generation_replacement_plan(
+        &mut self,
+        old: &WorkspaceConflictCreatedMessage,
+        replacement: Option<&WorkspaceConflictCreatedMessage>,
+    ) -> Result<Option<ConflictGenerationReplacementPlan>, SyncError> {
+        if replacement.is_some_and(|new| {
+            new.conflict_revision == old.conflict_revision
+                || new.created_by_operation_id == old.created_by_operation_id
+        }) {
+            return Ok(None);
+        }
+        let Some(outbox) = self
+            .runtime
+            .state
+            .outbox_entry(old.created_by_operation_id)?
+        else {
+            return Ok(None);
+        };
+        if outbox.stage != OutboxStage::BlockedConflict {
+            return Ok(None);
+        }
+        let OutboxBody::Mutation(mutation) =
+            outbox.decoded_body().map_err(|_| SyncError::CorruptState {
+                table: "outbox",
+                field: "body_json",
+            })?
+        else {
+            return Ok(None);
+        };
+        if !mutation_matches_conflict_origin(&mutation, old) {
+            return Ok(None);
+        }
+
+        let rename_kind = (mutation.kind == WorkspaceMutationKind::Rename).then(|| {
+            if old.current.content_hash.is_null() {
+                WorkspaceEntryKind::Directory
+            } else {
+                WorkspaceEntryKind::File
+            }
+        });
+        let desired = desired_from_mutation(&mutation, rename_kind);
+        let intent_paths = desired.paths().into_iter().cloned().collect::<Vec<_>>();
+        let existing_intents = self.runtime.state.local_intents()?;
+        let existing_desired = existing_intents
+            .iter()
+            .map(|record| {
+                decode_intent(&record.intent_json)
+                    .map(|intent| (record.path.clone(), desired_from_intent(&intent)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_newer_intent = existing_desired.iter().any(|(_, existing)| {
+            existing.paths().into_iter().any(|path| {
+                intent_paths
+                    .iter()
+                    .any(|candidate| paths_intersect(path, candidate))
+            })
+        });
+        let (remove_intent_paths, replacement_intents) =
+            if has_newer_intent && mutation.kind == WorkspaceMutationKind::Rename {
+                let (closure, remove_intent_paths) =
+                    rename_intent_closure(&intent_paths, &existing_desired);
+                (
+                    remove_intent_paths,
+                    self.independent_intents_for_rename_scope(&closure)?,
+                )
+            } else if has_newer_intent {
+                (Vec::new(), Vec::new())
+            } else {
+                let intent_json = encode_intent(&desired.intent_for_path(&intent_paths[0]))?;
+                (
+                    Vec::new(),
+                    intent_paths
+                        .iter()
+                        .cloned()
+                        .map(|path| (path, intent_json.clone()))
+                        .collect(),
+                )
+            };
+        Ok(Some(ConflictGenerationReplacementPlan {
+            blocked_operation_id: mutation.operation_id,
+            remove_intent_paths,
+            replacement_intents,
+            updated_at_ms: self.next_timestamp(),
+        }))
+    }
+
+    fn independent_intents_for_rename_scope(
+        &mut self,
+        scopes: &[WorkspacePath],
+    ) -> Result<Vec<(WorkspacePath, Vec<u8>)>, SyncError> {
+        let scan = self
+            .runtime
+            .system
+            .workspace
+            .scan(&self.runtime.system.rules)?;
+        if !scan.issues.is_empty() {
+            return Err(SyncError::ScanIncomplete);
+        }
+        let mut current = BTreeMap::new();
+        for observed in scan.entries {
+            if path_is_in_scopes(&observed.path, scopes) {
+                let entry = self.desired_entry_from_observed(&observed)?;
+                current.insert(observed.path, entry);
+            }
+        }
+        let remote = self
+            .runtime
+            .state
+            .path_states()?
+            .into_iter()
+            .filter(|record| path_is_in_scopes(&record.path, scopes))
+            .map(|record| (record.path, record.state))
+            .collect::<BTreeMap<_, _>>();
+        let mut paths = current
+            .keys()
+            .chain(remote.keys())
+            .cloned()
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+
+        let mut intents = Vec::new();
+        for path in paths {
+            let desired = match (current.get(&path), remote.get(&path)) {
+                (Some(entry), Some(state)) if remote_matches_entry(state, entry) => continue,
+                (Some(entry), _) => DesiredOperation::Upsert {
+                    entry: entry.clone(),
+                },
+                (None, Some(state))
+                    if state.kind != WorkspaceEntryKind::Tombstone && !state.tombstone =>
+                {
+                    DesiredOperation::Delete { path: path.clone() }
+                }
+                (None, _) => continue,
+            };
+            intents.push((
+                path.clone(),
+                encode_intent(&desired.intent_for_path(&path))?,
+            ));
+        }
+        Ok(intents)
+    }
+
+    fn authoritative_conflict_generation_replacement_plans(
+        &mut self,
+        stream_id: StreamId,
+        expected_conflict_count: u32,
+    ) -> Result<Vec<ConflictGenerationReplacementPlan>, SyncError> {
+        let staged = self
+            .runtime
+            .state
+            .stream_conflicts_bounded(stream_id, expected_conflict_count)?;
+        let mut staged_by_id = BTreeMap::new();
+        for record in staged {
+            let created: WorkspaceConflictCreatedMessage =
+                serde_json::from_slice(&record.created_json).map_err(|_| {
+                    SyncError::CorruptState {
+                        table: "stream_conflicts",
+                        field: "created_json",
+                    }
+                })?;
+            created.validate().map_err(|_| SyncError::CorruptState {
+                table: "stream_conflicts",
+                field: "created_json",
+            })?;
+            if created.workspace_id != record.workspace_id
+                || created.conflict_id != record.conflict_id
+                || created.conflict_revision != record.conflict_revision
+                || canonical_json(&created)? != record.created_json
+            {
+                return Err(SyncError::CorruptState {
+                    table: "stream_conflicts",
+                    field: "created_json",
+                });
+            }
+            staged_by_id.insert(created.conflict_id, created);
+        }
+
+        let mut plans = Vec::new();
+        for conflict in self.runtime.state.conflicts()? {
+            let old = decode_conflict_created(&conflict)?;
+            let replacement = staged_by_id.get(&old.conflict_id);
+            if replacement.is_none() && conflict.resolution_json.is_some() {
+                continue;
+            }
+            if let Some(plan) = self.conflict_generation_replacement_plan(&old, replacement)? {
+                plans.push(plan);
+            }
+        }
+        Ok(plans)
+    }
+
     fn conflict_resolution_proposal(
         &mut self,
         created: &WorkspaceConflictCreatedMessage,
@@ -1270,7 +1496,8 @@ impl SyncEngine {
                 table: "conflicts",
                 field: "resolution_json",
             })?;
-        if !resolved_matches_request(&message, &request) {
+        let created = decode_conflict_created(&conflict)?;
+        if !resolved_matches_request(&message, &request, Some(&created)) {
             return Err(SyncError::OperationChanged);
         }
         match self.runtime.state.outbox_entry(request.operation_id)? {
@@ -1872,21 +2099,21 @@ impl SyncEngine {
                     Err(SyncError::OperationChanged)
                 };
             }
-            if existing.status != ConflictStatus::RefreshRequired {
+            let existing_created = decode_conflict_created(&existing)?;
+            let prior_resolution = decode_pending_resolution(
+                &existing,
+                &existing_created,
+                self.runtime.state.client_id(),
+            )?;
+            let replacement_plan =
+                self.conflict_generation_replacement_plan(&existing_created, Some(&message))?;
+            if let Some(resolution) = &prior_resolution
+                && let Some(outbox) = self.runtime.state.outbox_entry(resolution.operation_id)?
+                && (Some(outbox.body_json.as_slice()) != existing.resolution_json.as_deref()
+                    || Some(outbox.body_digest) != existing.resolution_digest)
+            {
                 return Err(SyncError::OperationChanged);
             }
-            let prior_resolution = existing
-                .resolution_json
-                .as_deref()
-                .map(|json| {
-                    serde_json::from_slice::<WorkspaceConflictResolvedRequest>(json).map_err(|_| {
-                        SyncError::CorruptState {
-                            table: "conflicts",
-                            field: "resolution_json",
-                        }
-                    })
-                })
-                .transpose()?;
             let replacement = ConflictRecord {
                 conflict_id: message.conflict_id,
                 workspace_id: message.workspace_id,
@@ -1900,6 +2127,9 @@ impl SyncEngine {
             self.runtime.state.transaction(|tx| {
                 if let Some(resolution) = &prior_resolution {
                     tx.remove_outbox(resolution.operation_id)?;
+                }
+                if let Some(plan) = &replacement_plan {
+                    apply_conflict_generation_replacement(tx, plan)?;
                 }
                 tx.put_conflict(&replacement)
             })?;
@@ -1928,16 +2158,30 @@ impl SyncEngine {
         }
         let Some(active) = self.runtime.state.stream_state()? else {
             let body_digest = crate::body_digest(&canonical_json(&message)?);
-            let receipt_match = self.conflict_resolution_receipt_match(&message, body_digest)?;
+            let receipt_match =
+                self.inbound_conflict_resolution_receipt_match(&message, body_digest)?;
             if receipt_match == AppliedReceiptMatch::Exact
                 && !self.pending_live_revision_precedes_or_matches(message.revision)
             {
-                self.mark_live_event_applied(message.revision)?;
+                self.settle_exact_conflict_resolution_replay(
+                    &message,
+                    ConflictResolutionSource::Live,
+                )?;
                 return Ok(Vec::new());
             }
             if receipt_match == AppliedReceiptMatch::Missing
                 && message.revision <= self.runtime.state.cursor()?.last_applied_revision
             {
+                let cleanup = self.conflict_cleanup_operations(&message)?;
+                if cleanup.preserve_newer_generation {
+                    self.commit_superseded_live_conflict_resolution(
+                        &message,
+                        body_digest,
+                        None,
+                        cleanup,
+                    )?;
+                    return Ok(Vec::new());
+                }
                 return Err(SyncError::StreamInvariant {
                     reason: "live_revision_regression",
                 });
@@ -1955,20 +2199,29 @@ impl SyncEngine {
             if existing.body_digest != crate::body_digest(&body) {
                 return Err(SyncError::OperationChanged);
             }
-            if existing.status == StreamItemStatus::Applied
-                || existing.status == StreamItemStatus::Preserved
-            {
+            if existing.status == StreamItemStatus::Applied {
+                let body_digest = crate::body_digest(&canonical_json(&message)?);
+                if self.inbound_conflict_resolution_receipt_match(&message, body_digest)?
+                    == AppliedReceiptMatch::Exact
+                {
+                    self.settle_exact_conflict_resolution_replay(
+                        &message,
+                        ConflictResolutionSource::Stream,
+                    )?;
+                }
+                return Ok(Vec::new());
+            }
+            if existing.status == StreamItemStatus::Preserved {
                 return Ok(Vec::new());
             }
         }
         let body_digest = crate::body_digest(&canonical_json(&message)?);
-        if self.conflict_resolution_receipt_match(&message, body_digest)?
+        if self.inbound_conflict_resolution_receipt_match(&message, body_digest)?
             == AppliedReceiptMatch::Exact
         {
-            self.runtime.state.put_stream_conflict_resolved(
+            self.settle_exact_conflict_resolution_replay(
                 &message,
-                None,
-                StreamItemStatus::Applied,
+                ConflictResolutionSource::Stream,
             )?;
             return self.resume_inbound_work(self.inbound_work_limits.max_items_per_call, false);
         }
@@ -2718,15 +2971,33 @@ impl SyncEngine {
         if intents.is_empty() {
             return Ok(());
         }
+        let mut conflict_paths = Vec::new();
+        for conflict in self.runtime.state.conflicts()? {
+            let created = decode_conflict_created(&conflict)?;
+            conflict_paths.push(created.path);
+            if let Some(path) = created.current.path.into_option() {
+                conflict_paths.push(path);
+            }
+            if let Some(path) = created.incoming.path.into_option() {
+                conflict_paths.push(path);
+            }
+        }
         let states = self.path_state_map()?;
         for record in intents {
             let intent = decode_intent(&record.intent_json)?;
             let desired = desired_from_intent(&intent);
+            let touched = desired.paths();
+            if touched.iter().any(|path| {
+                conflict_paths
+                    .iter()
+                    .any(|conflict_path| paths_intersect(path, conflict_path))
+            }) {
+                continue;
+            }
             if desired_matches_remote(&desired, &states) {
                 self.runtime.state.remove_local_intent(&record.path)?;
                 continue;
             }
-            let touched = desired.paths();
             let has_outbox = self.runtime.state.outbox()?.into_iter().any(|outbox| {
                 outbox
                     .mutation()
@@ -3210,13 +3481,12 @@ impl SyncEngine {
                                 }
                             })?;
                         let body_digest = crate::body_digest(&canonical_json(&message)?);
-                        if self.conflict_resolution_receipt_match(&message, body_digest)?
+                        if self.inbound_conflict_resolution_receipt_match(&message, body_digest)?
                             == AppliedReceiptMatch::Exact
                         {
-                            self.runtime.state.put_stream_conflict_resolved(
+                            self.settle_exact_conflict_resolution_replay(
                                 &message,
-                                None,
-                                StreamItemStatus::Applied,
+                                ConflictResolutionSource::Stream,
                             )?;
                         } else {
                             if let Some((hash, size)) = required_content(&message.path_state)
@@ -3418,9 +3688,16 @@ impl SyncEngine {
         if active.mode == WorkspaceSnapshotMode::Snapshot {
             self.reconcile_full_snapshot(active.stream_id)?;
         }
+        let replacement_plans = self.authoritative_conflict_generation_replacement_plans(
+            active.stream_id,
+            active.expected_conflict_count,
+        )?;
         let cursor = self.runtime.state.cursor()?;
         let needs_ack = active.final_revision > cursor.last_ack_revision;
         self.runtime.state.transaction(|tx| {
+            for plan in &replacement_plans {
+                apply_conflict_generation_replacement(tx, plan)?;
+            }
             tx.replace_authoritative_conflicts(active.stream_id)?;
             tx.set_last_applied_revision(active.final_revision)?;
             if needs_ack {
@@ -3669,43 +3946,47 @@ impl SyncEngine {
         source: ConflictResolutionSource,
     ) -> Result<(), SyncError> {
         let body_digest = crate::body_digest(&canonical_json(&message)?);
-        let receipt_match = self.conflict_resolution_receipt_match(&message, body_digest)?;
+        let receipt_match =
+            self.inbound_conflict_resolution_receipt_match(&message, body_digest)?;
         if receipt_match == AppliedReceiptMatch::Exact {
-            return match source {
-                ConflictResolutionSource::Stream => self
-                    .runtime
-                    .state
-                    .put_stream_conflict_resolved(&message, None, StreamItemStatus::Applied)
-                    .map(|_| ()),
-                ConflictResolutionSource::Live => self.mark_live_event_applied(message.revision),
-            };
+            return self.settle_exact_conflict_resolution_replay(&message, source);
         }
-        if source == ConflictResolutionSource::Live
-            && receipt_match == AppliedReceiptMatch::Missing
-            && message.revision <= self.runtime.state.cursor()?.last_applied_revision
-        {
-            return Err(SyncError::StreamInvariant {
-                reason: "live_revision_regression",
-            });
-        }
-        if let AppliedReceiptMatch::Legacy {
-            body_digest: legacy_body_digest,
-        } = receipt_match
-            && self.runtime.state.cursor()?.last_applied_revision > message.revision
+        let cleanup = self.conflict_cleanup_operations(&message)?;
+        let cursor = self.runtime.state.cursor()?;
+        let legacy_body_digest = match receipt_match {
+            AppliedReceiptMatch::Legacy { body_digest } => Some(body_digest),
+            AppliedReceiptMatch::Missing => None,
+            AppliedReceiptMatch::Exact => unreachable!("exact receipt returned above"),
+        };
+        if cleanup.preserve_newer_generation
+            || (legacy_body_digest.is_some() && cursor.last_applied_revision > message.revision)
         {
             return match source {
                 ConflictResolutionSource::Stream => self.commit_superseded_conflict_resolution(
                     &message,
                     body_digest,
                     legacy_body_digest,
+                    cleanup,
                 ),
                 ConflictResolutionSource::Live => self.commit_superseded_live_conflict_resolution(
                     &message,
                     body_digest,
                     legacy_body_digest,
+                    cleanup,
                 ),
             };
         }
+        if source == ConflictResolutionSource::Live
+            && receipt_match == AppliedReceiptMatch::Missing
+            && message.revision <= cursor.last_applied_revision
+        {
+            return Err(SyncError::StreamInvariant {
+                reason: "live_revision_regression",
+            });
+        }
+        // Reject reuse of a locally outstanding operation ID before any
+        // filesystem work. A different client resolving a newer generation is
+        // authoritative, but one immutable operation ID cannot change bodies.
         let path = message.path_state.path.clone();
         let previous = self
             .runtime
@@ -3933,6 +4214,26 @@ impl SyncEngine {
         }
     }
 
+    fn inbound_conflict_resolution_receipt_match(
+        &self,
+        message: &WorkspaceConflictResolvedMessage,
+        body_digest: [u8; 32],
+    ) -> Result<AppliedReceiptMatch, SyncError> {
+        let receipt_match = self.conflict_resolution_receipt_match(message, body_digest)?;
+        if receipt_match == AppliedReceiptMatch::Exact {
+            return Ok(receipt_match);
+        }
+        let witness = self.validate_local_conflict_resolution_operation(message)?;
+        if message.resolved_by_client_id == self.runtime.state.client_id()
+            && receipt_match == AppliedReceiptMatch::Missing
+            && !witness.exact
+            && !witness.preserve_newer_generation
+        {
+            return Err(SyncError::OperationChanged);
+        }
+        Ok(receipt_match)
+    }
+
     fn mutation_from_receipt(
         &self,
         receipt: &AppliedOperationRecord,
@@ -4054,16 +4355,16 @@ impl SyncEngine {
         &mut self,
         message: &WorkspaceConflictResolvedMessage,
         body_digest: [u8; 32],
-        legacy_body_digest: [u8; 32],
+        legacy_body_digest: Option<[u8; 32]>,
+        cleanup: ConflictCleanup,
     ) -> Result<(), SyncError> {
-        let cleanup = self.conflict_cleanup_operations(message)?;
         self.runtime.state.transaction(|tx| {
             tx.record_conflict_applied_operation(
                 message.resolved_by_client_id,
                 message.operation_id,
                 message.revision,
                 body_digest,
-                Some(legacy_body_digest),
+                legacy_body_digest,
             )?;
             cleanup_conflict_resolution(tx, message.conflict_id, cleanup)?;
             tx.put_stream_conflict_resolved(message, StreamItemStatus::Applied)?;
@@ -4075,18 +4376,30 @@ impl SyncEngine {
         &mut self,
         message: &WorkspaceConflictResolvedMessage,
         body_digest: [u8; 32],
-        legacy_body_digest: [u8; 32],
+        legacy_body_digest: Option<[u8; 32]>,
+        cleanup: ConflictCleanup,
     ) -> Result<(), SyncError> {
-        let cleanup = self.conflict_cleanup_operations(message)?;
+        let cursor = self.runtime.state.cursor()?;
         self.runtime.state.transaction(|tx| {
             tx.record_conflict_applied_operation(
                 message.resolved_by_client_id,
                 message.operation_id,
                 message.revision,
                 body_digest,
-                Some(legacy_body_digest),
+                legacy_body_digest,
             )?;
-            cleanup_conflict_resolution(tx, message.conflict_id, cleanup)
+            cleanup_conflict_resolution(tx, message.conflict_id, cleanup)?;
+            if message.revision > cursor.last_applied_revision {
+                tx.set_last_applied_revision(message.revision)?;
+            }
+            if message.revision > cursor.last_ack_revision
+                && cursor
+                    .pending_ack_revision
+                    .is_none_or(|pending| message.revision > pending)
+            {
+                tx.set_pending_ack(message.revision)?;
+            }
+            Ok(())
         })
     }
 
@@ -4198,6 +4511,79 @@ impl SyncEngine {
         self.commit_conflict_resolved_with_journal(message, status, source, None)
     }
 
+    fn settle_exact_conflict_resolution_replay(
+        &mut self,
+        message: &WorkspaceConflictResolvedMessage,
+        source: ConflictResolutionSource,
+    ) -> Result<(), SyncError> {
+        let matching_conflict = self
+            .runtime
+            .state
+            .conflict(message.conflict_id)?
+            .is_some_and(|conflict| conflict.conflict_revision == message.conflict_revision);
+        let cleanup = if matching_conflict {
+            self.conflict_cleanup_operations(message)?
+        } else {
+            self.exact_conflict_resolution_replay_cleanup(message)?
+        };
+        let cursor = self.runtime.state.cursor()?;
+        self.runtime.state.transaction(|tx| {
+            if matching_conflict {
+                cleanup_conflict_resolution(tx, message.conflict_id, cleanup)?;
+            } else if let Some(operation_id) = cleanup.resolution_operation_id {
+                tx.remove_outbox(operation_id)?;
+            }
+            match source {
+                ConflictResolutionSource::Stream => {
+                    tx.put_stream_conflict_resolved(message, StreamItemStatus::Applied)?;
+                }
+                ConflictResolutionSource::Live if message.revision > cursor.last_ack_revision => {
+                    if message.revision > cursor.last_applied_revision {
+                        tx.set_last_applied_revision(message.revision)?;
+                    }
+                    if cursor
+                        .pending_ack_revision
+                        .is_none_or(|pending| message.revision > pending)
+                    {
+                        tx.set_pending_ack(message.revision)?;
+                    }
+                }
+                ConflictResolutionSource::Live => {}
+            }
+            Ok(())
+        })
+    }
+
+    fn exact_conflict_resolution_replay_cleanup(
+        &self,
+        message: &WorkspaceConflictResolvedMessage,
+    ) -> Result<ConflictCleanup, SyncError> {
+        if message.resolved_by_client_id != self.runtime.state.client_id() {
+            return Ok(ConflictCleanup::default());
+        }
+        let Some(outbox) = self.runtime.state.outbox_entry(message.operation_id)? else {
+            return Ok(ConflictCleanup::default());
+        };
+        match outbox.decoded_body().map_err(|_| SyncError::CorruptState {
+            table: "outbox",
+            field: "body_json",
+        })? {
+            OutboxBody::ConflictResolution(request)
+                if resolution_identity_matches_request(message, &request) =>
+            {
+                Ok(ConflictCleanup {
+                    resolution_operation_id: Some(message.operation_id),
+                    originating_operation_id: None,
+                    remove_conflict: false,
+                    preserve_newer_generation: false,
+                })
+            }
+            OutboxBody::Mutation(_) | OutboxBody::ConflictResolution(_) => {
+                Err(SyncError::OperationChanged)
+            }
+        }
+    }
+
     fn commit_conflict_resolved_with_journal(
         &mut self,
         message: &WorkspaceConflictResolvedMessage,
@@ -4213,7 +4599,9 @@ impl SyncEngine {
             };
         let cleanup = self.conflict_cleanup_operations(message)?;
         self.runtime.state.transaction(|tx| {
-            tx.put_path_state(&message.path_state)?;
+            if !cleanup.preserve_newer_generation {
+                tx.put_path_state(&message.path_state)?;
+            }
             tx.record_conflict_applied_operation(
                 message.resolved_by_client_id,
                 message.operation_id,
@@ -4224,15 +4612,16 @@ impl SyncEngine {
             cleanup_conflict_resolution(tx, message.conflict_id, cleanup)?;
             match source {
                 ConflictResolutionSource::Stream => {
-                    if status == StreamItemStatus::Applied {
+                    if status == StreamItemStatus::Applied && !cleanup.preserve_newer_generation {
                         tx.set_last_applied_revision(message.revision)?;
                     }
                     tx.put_stream_conflict_resolved(message, status)?;
                 }
-                ConflictResolutionSource::Live => {
+                ConflictResolutionSource::Live if !cleanup.preserve_newer_generation => {
                     tx.set_last_applied_revision(message.revision)?;
                     tx.set_pending_ack(message.revision)?;
                 }
+                ConflictResolutionSource::Live => {}
             }
             if let Some(apply_id) = apply_id {
                 tx.set_apply_stage(apply_id, ApplyStage::DatabaseCommitted)?;
@@ -4249,40 +4638,177 @@ impl SyncEngine {
         &self,
         message: &WorkspaceConflictResolvedMessage,
     ) -> Result<ConflictCleanup, SyncError> {
+        let local_witness = self.validate_local_conflict_resolution_operation(message)?;
         let Some(conflict) = self.runtime.state.conflict(message.conflict_id)? else {
-            return Ok(ConflictCleanup::default());
+            return Ok(ConflictCleanup {
+                resolution_operation_id: local_witness.matching_outbox_operation_id,
+                originating_operation_id: None,
+                remove_conflict: false,
+                preserve_newer_generation: false,
+            });
         };
-        if conflict.conflict_revision != message.conflict_revision {
+        let created = decode_conflict_created(&conflict)?;
+        if local_witness.preserve_newer_generation {
+            return Ok(ConflictCleanup {
+                resolution_operation_id: local_witness.matching_outbox_operation_id,
+                originating_operation_id: None,
+                remove_conflict: false,
+                preserve_newer_generation: true,
+            });
+        }
+        let pending_resolution =
+            decode_pending_resolution(&conflict, &created, self.runtime.state.client_id())?;
+        if let Some(request) = &pending_resolution
+            && request.client_id == message.resolved_by_client_id
+            && request.operation_id == message.operation_id
+            && !resolved_matches_request(message, request, Some(&created))
+        {
             return Err(SyncError::OperationChanged);
         }
-        let created: WorkspaceConflictCreatedMessage =
-            serde_json::from_slice(&conflict.created_json).map_err(|_| {
-                SyncError::CorruptState {
-                    table: "conflicts",
-                    field: "created_json",
-                }
-            })?;
-        let resolution_operation_id = conflict
-            .resolution_json
-            .as_deref()
-            .map(|json| {
-                serde_json::from_slice::<WorkspaceConflictResolvedRequest>(json)
-                    .map(|request| request.operation_id)
-                    .map_err(|_| SyncError::CorruptState {
-                        table: "conflicts",
-                        field: "resolution_json",
-                    })
-            })
-            .transpose()?;
-        let originating_operation_id = self
+        if let Some(request) = &pending_resolution
+            && let Some(outbox) = self.runtime.state.outbox_entry(request.operation_id)?
+            && (Some(outbox.body_json.as_slice()) != conflict.resolution_json.as_deref()
+                || Some(outbox.body_digest) != conflict.resolution_digest)
+        {
+            return Err(SyncError::OperationChanged);
+        }
+        let pending_resolution_operation_id = pending_resolution
+            .as_ref()
+            .map(|request| request.operation_id);
+        let resolution_operation_id =
+            pending_resolution_operation_id.or(local_witness.matching_outbox_operation_id);
+        if let (Some(pending), Some(outbox)) = (
+            pending_resolution_operation_id,
+            local_witness.matching_outbox_operation_id,
+        ) && pending != outbox
+        {
+            return Err(SyncError::OperationChanged);
+        }
+        let originating_operation_id = match self
             .runtime
             .state
             .outbox_entry(created.created_by_operation_id)?
-            .filter(|record| record.stage == OutboxStage::BlockedConflict)
-            .map(|_| created.created_by_operation_id);
+        {
+            Some(record) if record.stage == OutboxStage::BlockedConflict => {
+                match record.decoded_body().map_err(|_| SyncError::CorruptState {
+                    table: "outbox",
+                    field: "body_json",
+                })? {
+                    OutboxBody::Mutation(mutation)
+                        if mutation_matches_conflict_origin(&mutation, &created) =>
+                    {
+                        Some(created.created_by_operation_id)
+                    }
+                    OutboxBody::Mutation(_) | OutboxBody::ConflictResolution(_) => None,
+                }
+            }
+            Some(_) | None => None,
+        };
         Ok(ConflictCleanup {
             resolution_operation_id,
             originating_operation_id,
+            remove_conflict: true,
+            preserve_newer_generation: false,
+        })
+    }
+
+    fn conflict_resolution_is_covered_by_newer_generation(
+        &self,
+        message: &WorkspaceConflictResolvedMessage,
+    ) -> Result<bool, SyncError> {
+        let Some(conflict) = self.runtime.state.conflict(message.conflict_id)? else {
+            return Ok(false);
+        };
+        if conflict.conflict_revision == message.conflict_revision {
+            return Ok(false);
+        }
+        let created = decode_conflict_created(&conflict)?;
+        let cursor = self.runtime.state.cursor()?;
+        Ok(message.revision <= cursor.last_applied_revision
+            || message.revision <= created.current.path_revision)
+    }
+
+    fn validate_local_conflict_resolution_operation(
+        &self,
+        message: &WorkspaceConflictResolvedMessage,
+    ) -> Result<LocalConflictResolutionWitness, SyncError> {
+        let preserve_newer_generation =
+            self.conflict_resolution_is_covered_by_newer_generation(message)?;
+        if message.resolved_by_client_id != self.runtime.state.client_id() {
+            return Ok(LocalConflictResolutionWitness {
+                preserve_newer_generation,
+                ..LocalConflictResolutionWitness::default()
+            });
+        }
+
+        let conflicts = self
+            .runtime
+            .state
+            .conflicts()?
+            .into_iter()
+            .map(|conflict| -> Result<_, SyncError> {
+                let created = decode_conflict_created(&conflict)?;
+                Ok((conflict, created))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let matching_outbox_operation_id = if let Some(outbox) =
+            self.runtime.state.outbox_entry(message.operation_id)?
+        {
+            match outbox.decoded_body().map_err(|_| SyncError::CorruptState {
+                table: "outbox",
+                field: "body_json",
+            })? {
+                OutboxBody::ConflictResolution(request) => {
+                    let created = conflicts
+                        .iter()
+                        .map(|(_, created)| created)
+                        .find(|created| {
+                            created.conflict_id == request.conflict_id
+                                && created.conflict_revision == request.conflict_revision
+                        });
+                    if !resolved_matches_request(message, &request, created) {
+                        return Err(SyncError::OperationChanged);
+                    }
+                    Some(request.operation_id)
+                }
+                OutboxBody::Mutation(_) => {
+                    return Err(SyncError::OperationChanged);
+                }
+            }
+        } else {
+            None
+        };
+        let mut exact = matching_outbox_operation_id.is_some();
+
+        for (conflict, created) in &conflicts {
+            let Some(request) =
+                decode_pending_resolution(conflict, created, self.runtime.state.client_id())?
+            else {
+                continue;
+            };
+            if request.operation_id == message.operation_id {
+                if !resolved_matches_request(message, &request, Some(created)) {
+                    return Err(SyncError::OperationChanged);
+                }
+                exact = true;
+            } else if request.conflict_id == message.conflict_id {
+                if preserve_newer_generation
+                    && request.conflict_revision != message.conflict_revision
+                {
+                    continue;
+                }
+                if !resolved_matches_request(message, &request, Some(created)) {
+                    return Err(SyncError::OperationChanged);
+                }
+                exact = true;
+            }
+        }
+
+        Ok(LocalConflictResolutionWitness {
+            matching_outbox_operation_id,
+            exact,
+            preserve_newer_generation,
         })
     }
 
@@ -5292,6 +5818,58 @@ fn paths_intersect(left: &WorkspacePath, right: &WorkspacePath) -> bool {
     left == right || path_is_descendant(left, right) || path_is_descendant(right, left)
 }
 
+fn path_is_in_scopes(path: &WorkspacePath, scopes: &[WorkspacePath]) -> bool {
+    scopes
+        .iter()
+        .any(|scope| path == scope || path_is_descendant(path, scope))
+}
+
+fn rename_intent_closure(
+    initial_paths: &[WorkspacePath],
+    existing: &[(WorkspacePath, DesiredOperation)],
+) -> (Vec<WorkspacePath>, Vec<WorkspacePath>) {
+    let mut closure = initial_paths.to_vec();
+    loop {
+        let mut changed = false;
+        for (_, desired) in existing {
+            let desired_paths = desired.paths();
+            if !desired_paths.iter().any(|path| {
+                closure
+                    .iter()
+                    .any(|candidate| paths_intersect(path, candidate))
+            }) {
+                continue;
+            }
+            for path in desired_paths {
+                if !closure.iter().any(|candidate| candidate == path) {
+                    closure.push(path.clone());
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    closure.sort();
+    closure.dedup();
+
+    let mut remove_intent_paths = existing
+        .iter()
+        .filter(|(_, desired)| {
+            desired.paths().iter().any(|path| {
+                closure
+                    .iter()
+                    .any(|candidate| paths_intersect(path, candidate))
+            })
+        })
+        .map(|(record_path, _)| record_path.clone())
+        .collect::<Vec<_>>();
+    remove_intent_paths.sort();
+    remove_intent_paths.dedup();
+    (closure, remove_intent_paths)
+}
+
 fn desired_operation_covers_path(desired: &DesiredOperation, path: &WorkspacePath) -> bool {
     match desired {
         DesiredOperation::Rename {
@@ -5602,20 +6180,114 @@ fn mutation_paths(mutation: &WorkspaceMutation) -> Vec<WorkspacePath> {
 fn resolved_matches_request(
     message: &WorkspaceConflictResolvedMessage,
     request: &WorkspaceConflictResolvedRequest,
+    created: Option<&WorkspaceConflictCreatedMessage>,
 ) -> bool {
-    let identity_matches = message.workspace_id == request.workspace_id
+    if !resolution_identity_matches_request(message, request) {
+        return false;
+    }
+    let expected_kind = if request.choice == fns_protocol::WorkspaceConflictChoice::Delete {
+        WorkspaceEntryKind::Tombstone
+    } else if request.content_hash.is_null() {
+        WorkspaceEntryKind::Directory
+    } else {
+        WorkspaceEntryKind::File
+    };
+    let exact_body = message.path_state.kind == expected_kind
+        && message.path_state.content_hash == request.content_hash
+        && message.path_state.metadata == request.metadata
+        && message.path_state.tombstone
+            == (request.choice == fns_protocol::WorkspaceConflictChoice::Delete);
+    exact_body || rename_current_resolved_as_authoritative_tombstone(message, request, created)
+}
+
+fn resolution_identity_matches_request(
+    message: &WorkspaceConflictResolvedMessage,
+    request: &WorkspaceConflictResolvedRequest,
+) -> bool {
+    message.workspace_id == request.workspace_id
         && message.conflict_id == request.conflict_id
         && message.conflict_revision == request.conflict_revision
         && message.operation_id == request.operation_id
         && message.resolved_by_client_id == request.client_id
         && message.choice == request.choice
-        && message.path_state.path == request.path;
-    identity_matches
-        && (request.choice == fns_protocol::WorkspaceConflictChoice::Current
-            || (message.path_state.content_hash == request.content_hash
-                && message.path_state.metadata == request.metadata
-                && message.path_state.tombstone
-                    == (request.choice == fns_protocol::WorkspaceConflictChoice::Delete)))
+        && message.path_state.path == request.path
+}
+
+fn rename_current_resolved_as_authoritative_tombstone(
+    message: &WorkspaceConflictResolvedMessage,
+    request: &WorkspaceConflictResolvedRequest,
+    created: Option<&WorkspaceConflictCreatedMessage>,
+) -> bool {
+    let Some(created) = created else {
+        return false;
+    };
+    created.workspace_id == request.workspace_id
+        && created.conflict_id == request.conflict_id
+        && created.conflict_revision == request.conflict_revision
+        && created.kind == fns_protocol::WorkspaceConflictKind::Rename
+        && request.choice == fns_protocol::WorkspaceConflictChoice::Current
+        && created.path == request.path
+        && created.current.path == RequiredNullable::Value(request.path.clone())
+        && message.path_state.kind == WorkspaceEntryKind::Tombstone
+        && message.path_state.content_hash.is_null()
+        && message.path_state.metadata == zero_metadata()
+        && message.path_state.tombstone
+}
+
+fn mutation_matches_conflict_origin(
+    mutation: &WorkspaceMutation,
+    created: &WorkspaceConflictCreatedMessage,
+) -> bool {
+    if mutation.workspace_id != created.workspace_id
+        || mutation.operation_id != created.created_by_operation_id
+        || mutation.path != created.path
+        || mutation.base_path_revision != created.ancestor.path_revision
+    {
+        return false;
+    }
+
+    let (path, path_revision, tombstone) = match mutation.kind {
+        WorkspaceMutationKind::UpsertFile
+            if created.kind != fns_protocol::WorkspaceConflictKind::Rename =>
+        {
+            (
+                RequiredNullable::Value(mutation.path.clone()),
+                mutation.base_path_revision,
+                false,
+            )
+        }
+        WorkspaceMutationKind::Delete
+            if created.kind != fns_protocol::WorkspaceConflictKind::Rename =>
+        {
+            (RequiredNullable::Null, mutation.base_path_revision, true)
+        }
+        WorkspaceMutationKind::Rename
+            if created.kind == fns_protocol::WorkspaceConflictKind::Rename =>
+        {
+            let Some(new_path) = mutation.new_path.clone() else {
+                return false;
+            };
+            (
+                RequiredNullable::Value(new_path),
+                mutation
+                    .target_base_path_revision
+                    .unwrap_or(mutation.base_path_revision),
+                false,
+            )
+        }
+        WorkspaceMutationKind::UpsertFile
+        | WorkspaceMutationKind::Mkdir
+        | WorkspaceMutationKind::UpsertSymlink
+        | WorkspaceMutationKind::Delete
+        | WorkspaceMutationKind::Rename => return false,
+    };
+    WorkspaceConflictSide {
+        path,
+        path_revision,
+        content_hash: mutation.content_hash.clone(),
+        metadata: mutation.metadata.clone(),
+        tombstone,
+    } == created.incoming
 }
 
 fn live_apply_stream_id() -> StreamId {

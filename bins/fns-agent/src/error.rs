@@ -47,6 +47,8 @@ pub enum AgentErrorCode {
     SpawnFailed,
     StartupTimeout,
     RequestTimeout,
+    IdleTimeout,
+    TransferTimeout,
     ResourceLimit,
     AbnormalExit,
     ShutdownTimeout,
@@ -91,6 +93,8 @@ impl AgentError {
             | AgentErrorCode::SpawnFailed
             | AgentErrorCode::StartupTimeout
             | AgentErrorCode::RequestTimeout
+            | AgentErrorCode::IdleTimeout
+            | AgentErrorCode::TransferTimeout
             | AgentErrorCode::ResourceLimit
             | AgentErrorCode::AbnormalExit => 6,
             AgentErrorCode::Protocol => 6,
@@ -131,3 +135,20 @@ impl fmt::Display for AgentError {
 }
 
 impl std::error::Error for AgentError {}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentErrorCode;
+
+    #[test]
+    fn transport_timeout_codes_have_stable_json_names() {
+        assert_eq!(
+            serde_json::to_string(&AgentErrorCode::IdleTimeout).unwrap(),
+            "\"idle_timeout\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AgentErrorCode::TransferTimeout).unwrap(),
+            "\"transfer_timeout\""
+        );
+    }
+}

@@ -253,10 +253,10 @@ fn map_transport_error_code(code: fns_transport::TransportErrorCode) -> AgentErr
             AgentErrorCode::AuthenticationRejected
         }
         fns_transport::TransportErrorCode::Forbidden => AgentErrorCode::Forbidden,
-        fns_transport::TransportErrorCode::Network
-        | fns_transport::TransportErrorCode::IdleTimeout
-        | fns_transport::TransportErrorCode::TransferTimeout => AgentErrorCode::Network,
+        fns_transport::TransportErrorCode::Network => AgentErrorCode::Network,
         fns_transport::TransportErrorCode::RequestTimeout => AgentErrorCode::RequestTimeout,
+        fns_transport::TransportErrorCode::IdleTimeout => AgentErrorCode::IdleTimeout,
+        fns_transport::TransportErrorCode::TransferTimeout => AgentErrorCode::TransferTimeout,
         fns_transport::TransportErrorCode::Protocol => AgentErrorCode::Protocol,
         fns_transport::TransportErrorCode::Core => AgentErrorCode::Core,
         fns_transport::TransportErrorCode::Filesystem => AgentErrorCode::Filesystem,
@@ -386,5 +386,23 @@ impl ShutdownWatchdog {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_transport_error_code;
+    use crate::AgentErrorCode;
+
+    #[test]
+    fn transport_timeouts_keep_their_stable_worker_codes() {
+        assert_eq!(
+            map_transport_error_code(fns_transport::TransportErrorCode::IdleTimeout),
+            AgentErrorCode::IdleTimeout
+        );
+        assert_eq!(
+            map_transport_error_code(fns_transport::TransportErrorCode::TransferTimeout),
+            AgentErrorCode::TransferTimeout
+        );
     }
 }

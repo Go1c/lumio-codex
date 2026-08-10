@@ -77,6 +77,13 @@ struct TestEngine {
     worker: EngineWorker,
 }
 
+#[derive(Clone)]
+struct ExpectedDownload {
+    path: String,
+    bytes: Vec<u8>,
+    hash: WorkspaceContentHash,
+}
+
 impl TestEngine {
     fn new(local_file: Option<(&str, &[u8])>) -> Self {
         let area = tempfile::tempdir().unwrap();
@@ -395,6 +402,766 @@ async fn download_empty_binary_and_chunk_boundaries_are_streamed_and_acked() {
     for (index, (name, bytes)) in cases.into_iter().enumerate() {
         run_download_case(name, bytes, 1_000 + index as u128 * 10).await;
     }
+}
+
+#[tokio::test]
+async fn snapshot_downloads_larger_than_outbound_queue_are_drained_from_durable_state() {
+    const FILE_COUNT: usize = 12;
+    const ENTRY_COUNT: usize = FILE_COUNT + 1;
+    const QUEUE_CAPACITY: usize = 8;
+
+    let engine = TestEngine::new(None);
+    let files = (0..FILE_COUNT)
+        .map(|index| {
+            let path = format!("nested/remote-{index:02}.bin");
+            let bytes = vec![index as u8, 0, 255, (index as u8).wrapping_mul(17), 128];
+            let hash = content_hash(&bytes);
+            (path, bytes, hash)
+        })
+        .collect::<Vec<_>>();
+    let server_files = files.clone();
+
+    let server =
+        support::fake_server::ScriptedWorkspaceServer::start(move |mut socket| async move {
+            answer_hello_and_subscribe(&mut socket).await;
+            let stream = stream_id(40_000);
+            let final_revision = WorkspaceRevision::new(FILE_COUNT as u64);
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceSnapshotBegin,
+                WorkspaceFlow::ServerPush,
+                None,
+                MessageBody::SnapshotBegin(WorkspaceSnapshotBeginMessage {
+                    workspace_id: workspace_id(),
+                    stream_id: stream,
+                    mode: WorkspaceSnapshotMode::Snapshot,
+                    from_revision: WorkspaceRevision::ZERO,
+                    final_revision,
+                    entry_count: ENTRY_COUNT as u32,
+                    event_count: 0,
+                    conflict_count: 0,
+                }),
+            )
+            .await;
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceSnapshotEntry,
+                WorkspaceFlow::ServerPush,
+                None,
+                MessageBody::SnapshotEntry(WorkspaceSnapshotEntryMessage {
+                    workspace_id: workspace_id(),
+                    stream_id: stream,
+                    index: 0,
+                    entry: WorkspacePathState {
+                        path: WorkspacePath::parse("nested").unwrap(),
+                        path_revision: final_revision,
+                        kind: WorkspaceEntryKind::Directory,
+                        content_hash: RequiredNullable::Null,
+                        metadata: WorkspaceFileMetadata {
+                            size: 0,
+                            modified_at_ms: 0,
+                            executable: false,
+                        },
+                        tombstone: false,
+                    },
+                }),
+            )
+            .await;
+            for (index, (path, bytes, hash)) in server_files.iter().enumerate() {
+                send_success(
+                    &mut socket,
+                    WorkspaceAction::WorkspaceSnapshotEntry,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::SnapshotEntry(WorkspaceSnapshotEntryMessage {
+                        workspace_id: workspace_id(),
+                        stream_id: stream,
+                        index: index as u32 + 1,
+                        entry: WorkspacePathState {
+                            path: WorkspacePath::parse(path).unwrap(),
+                            path_revision: final_revision,
+                            kind: WorkspaceEntryKind::File,
+                            content_hash: RequiredNullable::Value(hash.clone()),
+                            metadata: WorkspaceFileMetadata {
+                                size: bytes.len() as u64,
+                                modified_at_ms: index as i64 + 1,
+                                executable: false,
+                            },
+                            tombstone: false,
+                        },
+                    }),
+                )
+                .await;
+            }
+            // Match the real service: finish the snapshot before reading any BlobNeed.
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceSnapshotEnd,
+                WorkspaceFlow::ServerPush,
+                None,
+                MessageBody::SnapshotEnd(WorkspaceSnapshotEndMessage {
+                    workspace_id: workspace_id(),
+                    stream_id: stream,
+                    mode: WorkspaceSnapshotMode::Snapshot,
+                    delivered_count: ENTRY_COUNT as u32,
+                    final_revision,
+                }),
+            )
+            .await;
+
+            let mut requested = [false; FILE_COUNT];
+            let mut completed = [false; FILE_COUNT];
+            let mut transfer_ends = Vec::new();
+            while completed.iter().any(|done| !done) {
+                let request = next_request(&mut socket).await;
+                match &request.envelope {
+                    DecodedEnvelope::Request {
+                        body: MessageBody::BlobNeedDownloadRequest(body),
+                        ..
+                    } => {
+                        assert_eq!(request.action, WorkspaceAction::WorkspaceBlobNeed);
+                        assert_eq!(body.operation_id, RequiredNullable::Null);
+                        assert_eq!(body.size, RequiredNullable::Null);
+                        let index = server_files
+                            .iter()
+                            .position(|(_, _, hash)| *hash == body.content_hash)
+                            .expect("BlobNeed requested an unknown hash");
+                        assert!(!requested[index], "duplicate BlobNeed for index {index}");
+                        requested[index] = true;
+                        let (_, bytes, hash) = &server_files[index];
+                        send_success(
+                            &mut socket,
+                            WorkspaceAction::WorkspaceBlobNeed,
+                            WorkspaceFlow::ServerResponse,
+                            Some(request_id(&request)),
+                            MessageBody::BlobNeedDownloadResponse(
+                                fns_protocol::WorkspaceBlobNeedDownloadResponse {
+                                    workspace_id: workspace_id(),
+                                    direction: WorkspaceBlobDirection::Download,
+                                    operation_id: RequiredNullable::Null,
+                                    content_hash: hash.clone(),
+                                    size: bytes.len() as u64,
+                                },
+                            ),
+                        )
+                        .await;
+                        let transfer = transfer_id(41_000 + index as u128);
+                        let end = WorkspaceBlobEndMessage {
+                            workspace_id: workspace_id(),
+                            transfer_id: transfer,
+                            direction: WorkspaceBlobDirection::Download,
+                            content_hash: hash.clone(),
+                            size: bytes.len() as u64,
+                            chunk_count: 1,
+                        };
+                        send_success(
+                            &mut socket,
+                            WorkspaceAction::WorkspaceBlobBegin,
+                            WorkspaceFlow::ServerPush,
+                            None,
+                            MessageBody::BlobBegin(WorkspaceBlobBeginMessage {
+                                workspace_id: workspace_id(),
+                                transfer_id: transfer,
+                                direction: WorkspaceBlobDirection::Download,
+                                content_hash: hash.clone(),
+                                size: bytes.len() as u64,
+                                chunk_size: fns_protocol::BLOB_CHUNK_BYTES,
+                                chunk_count: 1,
+                            }),
+                        )
+                        .await;
+                        socket
+                            .send(Message::Binary(
+                                encode_binary_frame(
+                                    WorkspaceBlobDirection::Download,
+                                    true,
+                                    transfer,
+                                    0,
+                                    0,
+                                    bytes,
+                                )
+                                .unwrap()
+                                .into(),
+                            ))
+                            .await
+                            .unwrap();
+                        send_success(
+                            &mut socket,
+                            WorkspaceAction::WorkspaceBlobEnd,
+                            WorkspaceFlow::ServerPush,
+                            None,
+                            MessageBody::BlobEnd(end.clone()),
+                        )
+                        .await;
+                        transfer_ends.push((index, end));
+                    }
+                    DecodedEnvelope::Request {
+                        body: MessageBody::BlobEnd(body),
+                        ..
+                    } => {
+                        assert_eq!(request.action, WorkspaceAction::WorkspaceBlobEnd);
+                        let (index, expected) = transfer_ends
+                            .iter()
+                            .find(|(_, end)| end.transfer_id == body.transfer_id)
+                            .expect("BlobEnd referenced an unknown transfer");
+                        assert_eq!(body, expected);
+                        assert!(!completed[*index], "duplicate BlobEnd for index {index}");
+                        completed[*index] = true;
+                        send_success(
+                            &mut socket,
+                            WorkspaceAction::WorkspaceBlobEnd,
+                            WorkspaceFlow::ServerResponse,
+                            Some(request_id(&request)),
+                            MessageBody::BlobEnd(expected.clone()),
+                        )
+                        .await;
+                    }
+                    DecodedEnvelope::Request {
+                        body: MessageBody::Ack(_),
+                        ..
+                    } => panic!("stream Ack arrived before every Blob was committed"),
+                    _ => panic!("unexpected request while draining snapshot blobs: {request:?}"),
+                }
+            }
+            assert!(requested.into_iter().all(|value| value));
+
+            let ack = next_request(&mut socket).await;
+            let ack_body = match &ack.envelope {
+                DecodedEnvelope::Request {
+                    body: MessageBody::Ack(body),
+                    ..
+                } => body.clone(),
+                _ => panic!("expected final stream Ack"),
+            };
+            assert_eq!(ack.action, WorkspaceAction::WorkspaceAck);
+            assert_eq!(ack_body.revision, final_revision);
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceAck,
+                WorkspaceFlow::ServerResponse,
+                Some(request_id(&ack)),
+                MessageBody::Ack(ack_body),
+            )
+            .await;
+            socket.close(None).await.unwrap();
+        })
+        .await;
+
+    let mut bounded_limits = limits();
+    bounded_limits.drain_interval = Duration::from_millis(200);
+    bounded_limits.pending_outbound_capacity = QUEUE_CAPACITY;
+    let (session, mut writer) =
+        connected_session_with_limits(server.endpoint(), engine.handle.clone(), bounded_limits)
+            .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(12),
+        session.run(&mut writer, CancellationToken::new()),
+    )
+    .await
+    .expect("session timeout");
+    server.finish().await;
+    assert!(matches!(result, SessionResult::Closed), "{result:?}");
+
+    for (path, expected, expected_hash) in files {
+        let actual = std::fs::read(engine.workspace.join(path)).unwrap();
+        assert_eq!(actual.len(), expected.len());
+        assert_eq!(actual, expected);
+        assert_eq!(content_hash(&actual), expected_hash);
+    }
+    let cursor = engine.handle.cursor().await.unwrap();
+    assert_eq!(
+        cursor.last_ack_revision,
+        WorkspaceRevision::new(FILE_COUNT as u64)
+    );
+    assert_eq!(
+        cursor.last_applied_revision,
+        WorkspaceRevision::new(FILE_COUNT as u64)
+    );
+    assert_eq!(cursor.pending_ack_revision, None);
+    assert!(engine.handle.active_stream_mode().await.unwrap().is_none());
+    let pending = engine.handle.pending_commands(32).await.unwrap();
+    assert!(
+        pending.is_empty(),
+        "pending commands after Ack: {pending:?}"
+    );
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn incremental_downloads_larger_than_outbound_queue_are_drained_without_reconnect() {
+    const EVENT_COUNT: usize = 10;
+    const RESOLUTION_COUNT: usize = 2;
+    const FILE_COUNT: usize = EVENT_COUNT + RESOLUTION_COUNT;
+    const QUEUE_CAPACITY: usize = 8;
+
+    let engine = TestEngine::new(None);
+    let stream = stream_id(42_000);
+    let files = (0..FILE_COUNT)
+        .map(|index| {
+            let path = if index < EVENT_COUNT {
+                format!("incremental-event-{index:02}.bin")
+            } else {
+                format!("incremental-resolved-{:02}.bin", index - EVENT_COUNT)
+            };
+            let bytes = vec![
+                0x40_u8.wrapping_add(index as u8),
+                0,
+                255,
+                (index as u8).wrapping_mul(19),
+                128,
+            ];
+            let hash = content_hash(&bytes);
+            ExpectedDownload { path, bytes, hash }
+        })
+        .collect::<Vec<_>>();
+    let events = files[..EVENT_COUNT]
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            remote_file_event(
+                stream,
+                index as u32,
+                index as u64 + 1,
+                &file.path,
+                &file.bytes,
+                42_100 + index as u128,
+            )
+        })
+        .collect::<Vec<_>>();
+    let resolutions = files[EVENT_COUNT..]
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            remote_file_resolution(
+                EVENT_COUNT as u64 + index as u64 + 1,
+                &file.path,
+                &file.bytes,
+                42_200 + index as u128,
+            )
+        })
+        .collect::<Vec<_>>();
+    let server_files = files.clone();
+
+    let server =
+        support::fake_server::ScriptedWorkspaceServer::start(move |mut socket| async move {
+            answer_hello_and_subscribe(&mut socket).await;
+            let final_revision = WorkspaceRevision::new(FILE_COUNT as u64);
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceSnapshotBegin,
+                WorkspaceFlow::ServerPush,
+                None,
+                MessageBody::SnapshotBegin(WorkspaceSnapshotBeginMessage {
+                    workspace_id: workspace_id(),
+                    stream_id: stream,
+                    mode: WorkspaceSnapshotMode::Incremental,
+                    from_revision: WorkspaceRevision::ZERO,
+                    final_revision,
+                    entry_count: 0,
+                    event_count: FILE_COUNT as u32,
+                    conflict_count: 0,
+                }),
+            )
+            .await;
+            for event in events {
+                send_success(
+                    &mut socket,
+                    WorkspaceAction::WorkspaceEvent,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::Event(event),
+                )
+                .await;
+            }
+            for resolution in resolutions {
+                send_success(
+                    &mut socket,
+                    WorkspaceAction::WorkspaceConflictResolved,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::ConflictResolved(resolution),
+                )
+                .await;
+            }
+            // Match the real service: finish the stream before reading BlobNeed.
+            send_success(
+                &mut socket,
+                WorkspaceAction::WorkspaceSnapshotEnd,
+                WorkspaceFlow::ServerPush,
+                None,
+                MessageBody::SnapshotEnd(WorkspaceSnapshotEndMessage {
+                    workspace_id: workspace_id(),
+                    stream_id: stream,
+                    mode: WorkspaceSnapshotMode::Incremental,
+                    delivered_count: FILE_COUNT as u32,
+                    final_revision,
+                }),
+            )
+            .await;
+
+            service_downloads_before_ack(&mut socket, &server_files, 42_300, false).await;
+            answer_final_ack(&mut socket, final_revision).await;
+            socket.close(None).await.unwrap();
+        })
+        .await;
+
+    let mut bounded_limits = limits();
+    bounded_limits.drain_interval = Duration::from_millis(200);
+    bounded_limits.pending_outbound_capacity = QUEUE_CAPACITY;
+    let (session, mut writer) =
+        connected_session_with_limits(server.endpoint(), engine.handle.clone(), bounded_limits)
+            .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(12),
+        session.run(&mut writer, CancellationToken::new()),
+    )
+    .await
+    .expect("session timeout");
+    server.finish().await;
+    assert!(matches!(result, SessionResult::Closed), "{result:?}");
+
+    assert_downloads_applied(&engine, &files).await;
+    engine.stop().await;
+}
+
+#[tokio::test]
+async fn online_event_burst_larger_than_outbound_queue_drains_without_reconnect() {
+    const FILE_COUNT: usize = 12;
+    const QUEUE_CAPACITY: usize = 8;
+
+    let engine = TestEngine::new(None);
+    let stream = stream_id(43_000);
+    let files = (0..FILE_COUNT)
+        .map(|index| {
+            let path = format!("live-event-{index:02}.bin");
+            let bytes = vec![
+                0x80_u8.wrapping_add(index as u8),
+                0,
+                255,
+                (index as u8).wrapping_mul(23),
+                64,
+            ];
+            let hash = content_hash(&bytes);
+            ExpectedDownload { path, bytes, hash }
+        })
+        .collect::<Vec<_>>();
+    let events = files
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            remote_file_event(
+                stream,
+                index as u32,
+                index as u64 + 1,
+                &file.path,
+                &file.bytes,
+                43_100 + index as u128,
+            )
+        })
+        .collect::<Vec<_>>();
+    let server_files = files.clone();
+
+    let server =
+        support::fake_server::ScriptedWorkspaceServer::start(move |mut socket| async move {
+            answer_hello_and_subscribe(&mut socket).await;
+            send_empty_snapshot(&mut socket, stream).await;
+            for event in events {
+                send_success(
+                    &mut socket,
+                    WorkspaceAction::WorkspaceEvent,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::Event(event),
+                )
+                .await;
+            }
+
+            service_downloads_before_ack(&mut socket, &server_files, 43_300, true).await;
+            answer_final_ack(&mut socket, WorkspaceRevision::new(FILE_COUNT as u64)).await;
+            socket.close(None).await.unwrap();
+        })
+        .await;
+
+    let mut bounded_limits = limits();
+    bounded_limits.drain_interval = Duration::from_millis(200);
+    bounded_limits.pending_outbound_capacity = QUEUE_CAPACITY;
+    let (session, mut writer) =
+        connected_session_with_limits(server.endpoint(), engine.handle.clone(), bounded_limits)
+            .await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(12),
+        session.run(&mut writer, CancellationToken::new()),
+    )
+    .await
+    .expect("session timeout");
+    server.finish().await;
+    assert!(matches!(result, SessionResult::Closed), "{result:?}");
+
+    assert_downloads_applied(&engine, &files).await;
+    engine.stop().await;
+}
+
+fn remote_file_event(
+    stream_id: StreamId,
+    index: u32,
+    revision: u64,
+    path: &str,
+    bytes: &[u8],
+    operation_seed: u128,
+) -> WorkspaceEventMessage {
+    let operation_id = operation_id(operation_seed);
+    let path = WorkspacePath::parse(path).unwrap();
+    let hash = content_hash(bytes);
+    let metadata = WorkspaceFileMetadata {
+        size: bytes.len() as u64,
+        modified_at_ms: 1_900_000_000_000 + revision as i64,
+        executable: false,
+    };
+    let message = WorkspaceEventMessage {
+        workspace_id: workspace_id(),
+        stream_id,
+        index,
+        revision: WorkspaceRevision::new(revision),
+        operation_id,
+        origin_client_id: remote_client_id(),
+        mutation: WorkspaceMutation {
+            workspace_id: workspace_id(),
+            client_id: remote_client_id(),
+            operation_id,
+            path: path.clone(),
+            base_path_revision: WorkspaceRevision::ZERO,
+            kind: WorkspaceMutationKind::UpsertFile,
+            content_hash: RequiredNullable::Value(hash.clone()),
+            metadata: metadata.clone(),
+            new_path: None,
+            target_base_path_revision: None,
+        },
+        path_state: WorkspacePathState {
+            path,
+            path_revision: WorkspaceRevision::new(revision),
+            kind: WorkspaceEntryKind::File,
+            content_hash: RequiredNullable::Value(hash),
+            metadata,
+            tombstone: false,
+        },
+        old_path_state: None,
+        new_path_state: None,
+    };
+    message.validate().unwrap();
+    message
+}
+
+fn remote_file_resolution(
+    revision: u64,
+    path: &str,
+    bytes: &[u8],
+    seed: u128,
+) -> WorkspaceConflictResolvedMessage {
+    let hash = content_hash(bytes);
+    let message = WorkspaceConflictResolvedMessage {
+        workspace_id: workspace_id(),
+        conflict_id: ConflictId::parse(&uuid::Uuid::from_u128(seed).to_string()).unwrap(),
+        conflict_revision: fns_protocol::revision::WorkspaceConflictRevision::parse("1").unwrap(),
+        operation_id: operation_id(seed + 100),
+        revision: WorkspaceRevision::new(revision),
+        choice: WorkspaceConflictChoice::Current,
+        path_state: WorkspacePathState {
+            path: WorkspacePath::parse(path).unwrap(),
+            path_revision: WorkspaceRevision::new(revision),
+            kind: WorkspaceEntryKind::File,
+            content_hash: RequiredNullable::Value(hash),
+            metadata: WorkspaceFileMetadata {
+                size: bytes.len() as u64,
+                modified_at_ms: 1_900_000_000_000 + revision as i64,
+                executable: false,
+            },
+            tombstone: false,
+        },
+        resolved_by_client_id: remote_client_id(),
+    };
+    message.validate().unwrap();
+    message
+}
+
+async fn service_downloads_before_ack(
+    socket: &mut ServerSocket,
+    files: &[ExpectedDownload],
+    transfer_seed: u128,
+    allow_progress_acks: bool,
+) {
+    let mut requested = vec![false; files.len()];
+    let mut completed = vec![false; files.len()];
+    let mut transfer_ends = Vec::new();
+    while completed.iter().any(|done| !done) {
+        let request = next_request(socket).await;
+        match &request.envelope {
+            DecodedEnvelope::Request {
+                body: MessageBody::BlobNeedDownloadRequest(body),
+                ..
+            } => {
+                assert_eq!(request.action, WorkspaceAction::WorkspaceBlobNeed);
+                assert_eq!(body.operation_id, RequiredNullable::Null);
+                assert_eq!(body.size, RequiredNullable::Null);
+                let index = files
+                    .iter()
+                    .position(|file| file.hash == body.content_hash)
+                    .expect("BlobNeed requested an unknown hash");
+                assert!(!requested[index], "duplicate BlobNeed for index {index}");
+                requested[index] = true;
+                let file = &files[index];
+                send_success(
+                    socket,
+                    WorkspaceAction::WorkspaceBlobNeed,
+                    WorkspaceFlow::ServerResponse,
+                    Some(request_id(&request)),
+                    MessageBody::BlobNeedDownloadResponse(
+                        fns_protocol::WorkspaceBlobNeedDownloadResponse {
+                            workspace_id: workspace_id(),
+                            direction: WorkspaceBlobDirection::Download,
+                            operation_id: RequiredNullable::Null,
+                            content_hash: file.hash.clone(),
+                            size: file.bytes.len() as u64,
+                        },
+                    ),
+                )
+                .await;
+                let transfer = transfer_id(transfer_seed + index as u128);
+                let end = WorkspaceBlobEndMessage {
+                    workspace_id: workspace_id(),
+                    transfer_id: transfer,
+                    direction: WorkspaceBlobDirection::Download,
+                    content_hash: file.hash.clone(),
+                    size: file.bytes.len() as u64,
+                    chunk_count: 1,
+                };
+                send_success(
+                    socket,
+                    WorkspaceAction::WorkspaceBlobBegin,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::BlobBegin(WorkspaceBlobBeginMessage {
+                        workspace_id: workspace_id(),
+                        transfer_id: transfer,
+                        direction: WorkspaceBlobDirection::Download,
+                        content_hash: file.hash.clone(),
+                        size: file.bytes.len() as u64,
+                        chunk_size: fns_protocol::BLOB_CHUNK_BYTES,
+                        chunk_count: 1,
+                    }),
+                )
+                .await;
+                socket
+                    .send(Message::Binary(
+                        encode_binary_frame(
+                            WorkspaceBlobDirection::Download,
+                            true,
+                            transfer,
+                            0,
+                            0,
+                            &file.bytes,
+                        )
+                        .unwrap()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+                send_success(
+                    socket,
+                    WorkspaceAction::WorkspaceBlobEnd,
+                    WorkspaceFlow::ServerPush,
+                    None,
+                    MessageBody::BlobEnd(end.clone()),
+                )
+                .await;
+                transfer_ends.push((index, end));
+            }
+            DecodedEnvelope::Request {
+                body: MessageBody::BlobEnd(body),
+                ..
+            } => {
+                assert_eq!(request.action, WorkspaceAction::WorkspaceBlobEnd);
+                let (index, expected) = transfer_ends
+                    .iter()
+                    .find(|(_, end)| end.transfer_id == body.transfer_id)
+                    .expect("BlobEnd referenced an unknown transfer");
+                assert_eq!(body, expected);
+                assert!(!completed[*index], "duplicate BlobEnd for index {index}");
+                completed[*index] = true;
+                send_success(
+                    socket,
+                    WorkspaceAction::WorkspaceBlobEnd,
+                    WorkspaceFlow::ServerResponse,
+                    Some(request_id(&request)),
+                    MessageBody::BlobEnd(expected.clone()),
+                )
+                .await;
+            }
+            DecodedEnvelope::Request {
+                body: MessageBody::Ack(body),
+                ..
+            } if allow_progress_acks => {
+                assert!(
+                    body.revision < WorkspaceRevision::new(files.len() as u64),
+                    "final Ack arrived before every Blob was committed"
+                );
+                send_success(
+                    socket,
+                    WorkspaceAction::WorkspaceAck,
+                    WorkspaceFlow::ServerResponse,
+                    Some(request_id(&request)),
+                    MessageBody::Ack(body.clone()),
+                )
+                .await;
+            }
+            DecodedEnvelope::Request {
+                body: MessageBody::Ack(_),
+                ..
+            } => panic!("stream Ack arrived before every Blob was committed"),
+            _ => panic!("unexpected request while draining blobs: {request:?}"),
+        }
+    }
+    assert!(requested.into_iter().all(|value| value));
+}
+
+async fn answer_final_ack(socket: &mut ServerSocket, final_revision: WorkspaceRevision) {
+    let ack = next_request(socket).await;
+    let ack_body = match &ack.envelope {
+        DecodedEnvelope::Request {
+            body: MessageBody::Ack(body),
+            ..
+        } => body.clone(),
+        _ => panic!("expected final Ack"),
+    };
+    assert_eq!(ack.action, WorkspaceAction::WorkspaceAck);
+    assert_eq!(ack_body.revision, final_revision);
+    send_success(
+        socket,
+        WorkspaceAction::WorkspaceAck,
+        WorkspaceFlow::ServerResponse,
+        Some(request_id(&ack)),
+        MessageBody::Ack(ack_body),
+    )
+    .await;
+}
+
+async fn assert_downloads_applied(engine: &TestEngine, files: &[ExpectedDownload]) {
+    for file in files {
+        let actual = std::fs::read(engine.workspace.join(&file.path)).unwrap();
+        assert_eq!(actual.len(), file.bytes.len());
+        assert_eq!(actual, file.bytes);
+        assert_eq!(content_hash(&actual), file.hash);
+    }
+    let final_revision = WorkspaceRevision::new(files.len() as u64);
+    let cursor = engine.handle.cursor().await.unwrap();
+    assert_eq!(cursor.last_ack_revision, final_revision);
+    assert_eq!(cursor.last_applied_revision, final_revision);
+    assert_eq!(cursor.pending_ack_revision, None);
+    assert!(engine.handle.active_stream_mode().await.unwrap().is_none());
+    let pending = engine.handle.pending_commands(32).await.unwrap();
+    assert!(
+        pending.is_empty(),
+        "pending commands after Ack: {pending:?}"
+    );
 }
 
 fn request_id(frame: &DecodedFrame) -> RequestId {

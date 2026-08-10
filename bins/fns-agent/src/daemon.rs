@@ -214,7 +214,7 @@ async fn run_transport_loop(
             res = fns_transport::socket::connect(endpoint, token, "0.1.0") => res,
         };
 
-        match connect_result {
+        let reconnect_error_code = match connect_result {
             Ok(stream) => {
                 let (session, mut writer, mut session_status_rx) =
                     fns_transport::session::Session::new_observed(
@@ -286,20 +286,25 @@ async fn run_transport_loop(
                         if shutdown.is_cancelled() {
                             return Ok(());
                         }
+                        AgentErrorCode::Network
                     }
                     fns_transport::session::SessionResult::Error(e) => {
+                        let error = map_transport_error(e.code());
                         if !e.retryable() {
-                            return Err(map_transport_error(e.code()));
+                            return Err(error);
                         }
+                        error.code()
                     }
                 }
             }
             Err(e) => {
+                let error = map_transport_error(e.code());
                 if !e.retryable() {
-                    return Err(map_transport_error(e.code()));
+                    return Err(error);
                 }
+                error.code()
             }
-        }
+        };
 
         let delay = schedule.next_delay();
         write_reconnect_status(
@@ -308,6 +313,7 @@ async fn run_transport_loop(
             handle,
             &queued_watcher_batches,
             schedule.attempt(),
+            reconnect_error_code,
         )
         .await?;
         tokio::select! {
@@ -407,23 +413,67 @@ where
 
 fn map_transport_error(code: fns_transport::TransportErrorCode) -> AgentError {
     match code {
+        fns_transport::TransportErrorCode::InvalidConfiguration => {
+            AgentError::new(AgentErrorCode::InvalidConfiguration)
+        }
         fns_transport::TransportErrorCode::AuthenticationRejected => {
             AgentError::new(AgentErrorCode::AuthenticationRejected)
         }
         fns_transport::TransportErrorCode::Forbidden => AgentError::new(AgentErrorCode::Forbidden),
         fns_transport::TransportErrorCode::Network => AgentError::new(AgentErrorCode::Network),
+        fns_transport::TransportErrorCode::RequestTimeout => {
+            AgentError::new(AgentErrorCode::RequestTimeout)
+        }
+        fns_transport::TransportErrorCode::IdleTimeout => {
+            AgentError::new(AgentErrorCode::IdleTimeout)
+        }
+        fns_transport::TransportErrorCode::TransferTimeout => {
+            AgentError::new(AgentErrorCode::TransferTimeout)
+        }
         fns_transport::TransportErrorCode::Protocol => AgentError::new(AgentErrorCode::Protocol),
         fns_transport::TransportErrorCode::Core => AgentError::new(AgentErrorCode::Core),
         fns_transport::TransportErrorCode::Filesystem => {
             AgentError::new(AgentErrorCode::Filesystem)
         }
-        fns_transport::TransportErrorCode::InvalidConfiguration => {
-            AgentError::new(AgentErrorCode::InvalidConfiguration)
+        fns_transport::TransportErrorCode::StateCorrupt => {
+            AgentError::new(AgentErrorCode::StateCorrupt)
+        }
+        fns_transport::TransportErrorCode::ConflictUnavailable => {
+            AgentError::new(AgentErrorCode::ConflictUnavailable)
+        }
+        fns_transport::TransportErrorCode::ConflictRevisionStale => {
+            AgentError::new(AgentErrorCode::ConflictRevisionStale)
+        }
+        fns_transport::TransportErrorCode::ConflictResolutionChanged => {
+            AgentError::new(AgentErrorCode::ConflictResolutionChanged)
+        }
+        fns_transport::TransportErrorCode::ConflictWaitingBlobs => {
+            AgentError::new(AgentErrorCode::ConflictWaitingBlobs)
+        }
+        fns_transport::TransportErrorCode::ConflictAutomaticResolutionPending => {
+            AgentError::new(AgentErrorCode::ConflictAutomaticResolutionPending)
+        }
+        fns_transport::TransportErrorCode::ConflictResolutionPending => {
+            AgentError::new(AgentErrorCode::ConflictResolutionPending)
+        }
+        fns_transport::TransportErrorCode::ConflictRefreshRequired => {
+            AgentError::new(AgentErrorCode::ConflictRefreshRequired)
+        }
+        fns_transport::TransportErrorCode::ConflictSelectedSideDeleted => {
+            AgentError::new(AgentErrorCode::ConflictSelectedSideDeleted)
+        }
+        fns_transport::TransportErrorCode::MergeFileRequired => {
+            AgentError::new(AgentErrorCode::MergeFileRequired)
+        }
+        fns_transport::TransportErrorCode::MergeContentUnavailable => {
+            AgentError::new(AgentErrorCode::MergeContentUnavailable)
+        }
+        fns_transport::TransportErrorCode::ResourceLimit => {
+            AgentError::new(AgentErrorCode::ResourceLimit)
         }
         fns_transport::TransportErrorCode::ShutdownTimeout => {
             AgentError::new(AgentErrorCode::ShutdownTimeout)
         }
-        _ => AgentError::new(AgentErrorCode::Network),
     }
 }
 
@@ -775,6 +825,7 @@ async fn write_reconnect_status(
     handle: &fns_transport::EngineHandle,
     queued_watcher_batches: &StdArc<StdAtomicUsize>,
     reconnect_attempt: u32,
+    last_error_code: AgentErrorCode,
 ) -> Result<(), AgentError> {
     write_runtime_status(
         state_dir,
@@ -785,7 +836,7 @@ async fn write_reconnect_status(
         false,
         0,
         reconnect_attempt,
-        Some(AgentErrorCode::Network),
+        Some(last_error_code),
     )
     .await
 }
@@ -1294,6 +1345,76 @@ mod tests {
             SessionConnectionPhase::Online,
         );
         assert_eq!(schedule.attempt(), 1);
+    }
+
+    #[test]
+    fn transport_errors_keep_their_observable_category() {
+        assert_eq!(
+            map_transport_error(fns_transport::TransportErrorCode::ResourceLimit).code(),
+            AgentErrorCode::ResourceLimit
+        );
+        assert_eq!(
+            map_transport_error(fns_transport::TransportErrorCode::Network).code(),
+            AgentErrorCode::Network
+        );
+        assert_eq!(
+            map_transport_error(fns_transport::TransportErrorCode::IdleTimeout).code(),
+            AgentErrorCode::IdleTimeout
+        );
+        assert_eq!(
+            map_transport_error(fns_transport::TransportErrorCode::TransferTimeout).code(),
+            AgentErrorCode::TransferTimeout
+        );
+    }
+
+    #[tokio::test]
+    async fn reconnect_status_records_the_actual_retryable_error() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let (worker, handle) = engine(workspace.path(), state.path(), rules_config());
+        let queued = StdArc::new(StdAtomicUsize::new(0));
+        let workspace_id = agent_config(workspace.path(), state.path()).workspace_id;
+
+        write_reconnect_status(
+            state.path(),
+            workspace_id,
+            &handle,
+            &queued,
+            3,
+            AgentErrorCode::ResourceLimit,
+        )
+        .await
+        .unwrap();
+        let status: AgentStatus = serde_json::from_slice(
+            &std::fs::read(state.path().join("runtime-status.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status.phase, AgentPhase::Connecting);
+        assert!(!status.connected);
+        assert_eq!(status.reconnect_attempt, 3);
+        assert_eq!(status.last_error_code, Some(AgentErrorCode::ResourceLimit));
+
+        write_reconnect_status(
+            state.path(),
+            workspace_id,
+            &handle,
+            &queued,
+            4,
+            AgentErrorCode::TransferTimeout,
+        )
+        .await
+        .unwrap();
+        let status: AgentStatus = serde_json::from_slice(
+            &std::fs::read(state.path().join("runtime-status.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status.reconnect_attempt, 4);
+        assert_eq!(
+            status.last_error_code,
+            Some(AgentErrorCode::TransferTimeout)
+        );
+
+        stop_engine(worker, &handle).await;
     }
 
     #[tokio::test]

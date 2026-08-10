@@ -22,6 +22,18 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 const SSH_TIMEOUT: Duration = Duration::from_secs(20);
+const AGENT_SYSTEMD_STOP_TIMEOUT_SECONDS: u64 = 35;
+const SERVER_SYSTEMD_STOP_TIMEOUT_SECONDS: u64 = 35;
+const SYSTEMD_LIFECYCLE_TIMEOUT_MARGIN_SECONDS: u64 = 30;
+const SYSTEMD_MAX_STOP_TIMEOUT_SECONDS: u64 =
+    if AGENT_SYSTEMD_STOP_TIMEOUT_SECONDS > SERVER_SYSTEMD_STOP_TIMEOUT_SECONDS {
+        AGENT_SYSTEMD_STOP_TIMEOUT_SECONDS
+    } else {
+        SERVER_SYSTEMD_STOP_TIMEOUT_SECONDS
+    };
+const SYSTEMD_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(
+    SYSTEMD_MAX_STOP_TIMEOUT_SECONDS + SYSTEMD_LIFECYCLE_TIMEOUT_MARGIN_SECONDS,
+);
 const SCP_TIMEOUT: Duration = Duration::from_secs(180);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(120);
 const PREVIEW_LIFETIME: Duration = Duration::from_secs(15 * 60);
@@ -47,6 +59,34 @@ if command -v systemctl >/dev/null 2>&1; then
   then
     user_manager=1
   fi
+fi
+agent_load_state=unavailable
+agent_unit_file_state=unavailable
+agent_active_state=unavailable
+if [ "$system_manager" = "1" ]; then
+  agent_load_state=$(systemctl show --property LoadState --value "$agent_unit" 2>/dev/null || true)
+  case "$agent_load_state" in
+    loaded)
+      agent_unit_file_state=$(systemctl show --property UnitFileState --value "$agent_unit" 2>/dev/null || true)
+      agent_active_state=$(systemctl show --property ActiveState --value "$agent_unit" 2>/dev/null || true)
+      ;;
+    not-found)
+      agent_unit_file_state=not-found
+      agent_active_state=not-found
+      ;;
+  esac
+elif [ "$user_manager" = "1" ]; then
+  agent_load_state=$(systemctl --user show --property LoadState --value "$agent_unit" 2>/dev/null || true)
+  case "$agent_load_state" in
+    loaded)
+      agent_unit_file_state=$(systemctl --user show --property UnitFileState --value "$agent_unit" 2>/dev/null || true)
+      agent_active_state=$(systemctl --user show --property ActiveState --value "$agent_unit" 2>/dev/null || true)
+      ;;
+    not-found)
+      agent_unit_file_state=not-found
+      agent_active_state=not-found
+      ;;
+  esac
 fi
 config=""
 workdir=""
@@ -95,6 +135,9 @@ printf 'arch=%s\n' "$arch"
 printf 'uid=%s\n' "$uid"
 printf 'system_manager=%s\n' "$system_manager"
 printf 'user_manager=%s\n' "$user_manager"
+printf 'agent_load_state=%s\n' "$agent_load_state"
+printf 'agent_unit_file_state=%s\n' "$agent_unit_file_state"
+printf 'agent_active_state=%s\n' "$agent_active_state"
 printf 'available_kb=%s\n' "$available_kb"
 printf 'home_b64=%s\n' "$(encode "$home")"
 printf 'config_b64=%s\n' "$(encode "$config")"
@@ -356,6 +399,13 @@ struct RemoteProbe {
     current_target: Option<String>,
     existing_pid: Option<u32>,
     existing_executable: Option<String>,
+    agent_unit_state: Option<RemoteAgentUnitState>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RemoteAgentUnitState {
+    Absent,
+    Present { enabled: bool, active: bool },
 }
 
 #[derive(Clone)]
@@ -808,14 +858,23 @@ async fn inspect_artifact_bounded(
     }
 }
 
+fn remote_probe_script(project_id: &str) -> String {
+    let agent_unit = format!("fns-workspace-agent-{project_id}.service");
+    format!(
+        "agent_unit={}\n{REMOTE_PROBE_SCRIPT}",
+        shell_quote(&agent_unit)
+    )
+}
+
 async fn probe_remote(
     runner: &dyn ProcessRunner,
     request: &DeploymentRequest,
     cancellation: CancellationToken,
 ) -> Result<RemoteProbe, DeployFailure> {
+    let probe_script = remote_probe_script(&request.project_id);
     let stdout = run_checked(
         runner,
-        ssh_spec(&request.ssh_host_alias, REMOTE_PROBE_SCRIPT),
+        ssh_spec(&request.ssh_host_alias, probe_script),
         None,
         SSH_TIMEOUT,
         cancellation.clone(),
@@ -882,6 +941,40 @@ async fn probe_remote(
                 .map_err(|_| DeployErrorCode::MalformedResponse)?,
         ),
     };
+    let agent_unit_state = match service_manager {
+        None => {
+            if fields.get("agent_load_state").map(String::as_str) != Some("unavailable")
+                || fields.get("agent_unit_file_state").map(String::as_str) != Some("unavailable")
+                || fields.get("agent_active_state").map(String::as_str) != Some("unavailable")
+            {
+                return Err(DeployErrorCode::MalformedResponse.into());
+            }
+            None
+        }
+        Some(_) => match (
+            fields.get("agent_load_state").map(String::as_str),
+            fields.get("agent_unit_file_state").map(String::as_str),
+            fields.get("agent_active_state").map(String::as_str),
+        ) {
+            (Some("not-found"), Some("not-found"), Some("not-found")) => {
+                Some(RemoteAgentUnitState::Absent)
+            }
+            (Some("loaded"), Some(unit_file_state), Some(active_state)) => {
+                let enabled = match unit_file_state {
+                    "enabled" => true,
+                    "disabled" => false,
+                    _ => return Err(DeployErrorCode::MalformedResponse.into()),
+                };
+                let active = match active_state {
+                    "active" => true,
+                    "inactive" => false,
+                    _ => return Err(DeployErrorCode::MalformedResponse.into()),
+                };
+                Some(RemoteAgentUnitState::Present { enabled, active })
+            }
+            _ => return Err(DeployErrorCode::MalformedResponse.into()),
+        },
+    };
 
     let root_command = format!(
         "if [ -e {root} ]; then [ -d {root} ] && readlink -f -- {root}; else printf '%s\\n' '__FNS_MISSING__'; fi",
@@ -911,6 +1004,7 @@ async fn probe_remote(
         current_target,
         existing_pid,
         existing_executable: decode_optional("exe_b64")?,
+        agent_unit_state,
     })
 }
 
@@ -1032,6 +1126,7 @@ async fn build_preview(
 struct RemotePaths {
     share: String,
     release: String,
+    release_target: String,
     current: String,
     previous: String,
     config_dir: String,
@@ -1053,11 +1148,13 @@ fn remote_paths(
     manager: ServiceManager,
 ) -> RemotePaths {
     let share = format!("{}/.local/share/fns-workspace", remote.home);
+    let release_target = format!("releases/{version}");
     let config_dir = format!("{}/.config/fns-workspace", remote.home);
     let unit_dir = manager.unit_directory(&remote.home);
     RemotePaths {
         share: share.clone(),
-        release: format!("{share}/releases/{version}"),
+        release: format!("{share}/{release_target}"),
+        release_target,
         current: format!("{share}/current"),
         previous: format!("{share}/previous"),
         config_dir: config_dir.clone(),
@@ -1088,6 +1185,15 @@ fn derived_remote_client_id(project_id: &str) -> Result<String, DeployFailure> {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     Ok(uuid::Uuid::from_bytes(bytes).to_string())
+}
+
+fn legacy_release_target(executable: &str) -> String {
+    let digest = Sha256::digest(executable.as_bytes());
+    let suffix = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("releases/legacy-{suffix}")
 }
 
 fn token_user_id(token: &fns_platform::SecretToken) -> Result<i64, DeployFailure> {
@@ -1235,7 +1341,8 @@ fn server_unit(
         ServiceManager::User => "default.target",
     };
     Ok(format!(
-        "[Unit]\nDescription=FNS Workspace Server\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={}\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\n\n[Install]\nWantedBy={target}\n",
+        "[Unit]\nDescription=FNS Workspace Server\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nTimeoutStopSec={}s\nWorkingDirectory={}\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\n\n[Install]\nWantedBy={target}\n",
+        SERVER_SYSTEMD_STOP_TIMEOUT_SECONDS,
         systemd_quote(workdir)?,
         systemd_quote(&format!("{}/fns-server", paths.current))?,
         systemd_quote(&paths.server_config)?,
@@ -1253,13 +1360,31 @@ fn agent_unit_for_manager(
         ServiceManager::User => "default.target",
     };
     Ok(format!(
-        "[Unit]\nDescription=FNS Workspace Remote Agent ({})\nAfter=fns-workspace-server.service\nRequires=fns-workspace-server.service\n\n[Service]\nType=simple\nWorkingDirectory={}\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\n\n[Install]\nWantedBy={target}\n",
+        "[Unit]\nDescription=FNS Workspace Remote Agent ({})\nAfter=fns-workspace-server.service\nRequires=fns-workspace-server.service\n\n[Service]\nType=simple\nKillMode=mixed\nTimeoutStopSec={}s\nWorkingDirectory={}\nExecStart={} run --config {}\nRestart=on-failure\nRestartSec=2\nNoNewPrivileges=true\n\n[Install]\nWantedBy={target}\n",
         request.project_id,
+        AGENT_SYSTEMD_STOP_TIMEOUT_SECONDS,
         systemd_quote(&request.remote_root)?,
         systemd_quote(&format!("{}/fns-agent", paths.current))?,
         systemd_quote(&paths.agent_config)?,
     )
     .into_bytes())
+}
+
+async fn run_systemd_lifecycle_command(
+    runner: &dyn ProcessRunner,
+    alias: &str,
+    command: String,
+    cancellation: CancellationToken,
+) -> Result<(), DeployFailure> {
+    run_checked(
+        runner,
+        ssh_spec(alias, command),
+        None,
+        SYSTEMD_LIFECYCLE_TIMEOUT,
+        cancellation,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn write_remote_file(
@@ -1375,6 +1500,7 @@ async fn execute_plan<T: FnMut(DeployProgress)>(
                     || agent.sha256 != preview.agent.sha256
                     || remote.service_manager != preview.remote.service_manager
                     || remote.server_config != preview.remote.server_config
+                    || remote.agent_unit_state != preview.remote.agent_unit_state
                 {
                     return Err(DeployErrorCode::ArtifactChanged.into());
                 }
@@ -1593,21 +1719,12 @@ async fn execute_plan<T: FnMut(DeployProgress)>(
             || async {
                 let temporary = format!("{}.tmp-{}", paths.current, request.project_id);
                 let previous = preview.remote.current_target.as_deref().unwrap_or("");
-                let legacy = format!(
-                    "releases/legacy-{}",
-                    preview
-                        .remote
-                        .existing_executable
-                        .as_deref()
-                        .map(|value| {
-                            let digest = Sha256::digest(value.as_bytes());
-                            digest[..6]
-                                .iter()
-                                .map(|byte| format!("{byte:02x}"))
-                                .collect::<String>()
-                        })
-                        .unwrap_or_else(|| "unknown".to_owned())
-                );
+                let legacy = preview
+                    .remote
+                    .existing_executable
+                    .as_deref()
+                    .map(legacy_release_target)
+                    .unwrap_or_else(|| "releases/legacy-unknown".to_owned());
                 let legacy_absolute = format!("{}/{}", paths.share, legacy);
                 let legacy_command = match preview.remote.existing_executable.as_deref() {
                     Some(executable) if previous.is_empty() => format!(
@@ -1621,7 +1738,7 @@ async fn execute_plan<T: FnMut(DeployProgress)>(
                 let command = format!(
                     "set -eu; {legacy_command}; if [ -n \"$old\" ]; then ln -sfn -- \"$old\" {previous}; fi; ln -sfn -- {target} {temporary}; mv -Tf -- {temporary} {current}",
                     previous = shell_quote(&paths.previous),
-                    target = shell_quote(&format!("releases/{}", preview.version)),
+                    target = shell_quote(&paths.release_target),
                     temporary = shell_quote(&temporary),
                     current = shell_quote(&paths.current),
                 );
@@ -1700,11 +1817,10 @@ async fn execute_plan<T: FnMut(DeployProgress)>(
                         manager.command(),
                         legacy_unit
                     );
-                    run_checked(
+                    run_systemd_lifecycle_command(
                         runner,
-                        ssh_spec(&request.ssh_host_alias, command),
-                        None,
-                        SSH_TIMEOUT,
+                        &request.ssh_host_alias,
+                        command,
                         cancellation.clone(),
                     )
                     .await?;
@@ -1730,14 +1846,24 @@ async fn execute_plan<T: FnMut(DeployProgress)>(
                 for command in [
                     format!("{} enable fns-workspace-server.service", manager.command()),
                     format!("{} enable {}", manager.command(), agent_name),
-                    format!("{} restart fns-workspace-server.service", manager.command()),
-                    format!("{} restart {}", manager.command(), agent_name),
                 ] {
                     run_checked(
                         runner,
                         ssh_spec(&request.ssh_host_alias, command),
                         None,
                         SSH_TIMEOUT,
+                        cancellation.clone(),
+                    )
+                    .await?;
+                }
+                for command in [
+                    format!("{} restart fns-workspace-server.service", manager.command()),
+                    format!("{} restart {}", manager.command(), agent_name),
+                ] {
+                    run_systemd_lifecycle_command(
+                        runner,
+                        &request.ssh_host_alias,
+                        command,
                         cancellation.clone(),
                     )
                     .await?;
@@ -1941,6 +2067,13 @@ async fn rollback_remote(
 ) -> Result<(), DeployFailure> {
     let temporary = format!("{}.rollback-{}", paths.current, request.project_id);
     let agent_name = format!("fns-workspace-agent-{}.service", request.project_id);
+    let systemd_action_if_loaded = |action: &str, unit: &str| {
+        format!(
+            "set -eu; load_state=$({manager} show --property LoadState --value {unit}); case \"$load_state\" in loaded) {manager} {action} {unit} ;; not-found) ;; *) exit 42 ;; esac",
+            manager = manager.command(),
+        )
+    };
+    let stop_agent = systemd_action_if_loaded("stop", &agent_name);
     let existing_alive = remote
         .existing_pid
         .zip(remote.existing_executable.as_deref());
@@ -1954,24 +2087,110 @@ async fn rollback_remote(
             )
         },
     );
-    let command = format!(
-        "set -eu; {manager} stop {agent} >/dev/null 2>&1 || true; if [ -L {previous} ]; then target=$(readlink {previous}); ln -sfn -- \"$target\" {temporary}; mv -Tf -- {temporary} {current}; fi; {server_recovery}",
-        manager = manager.command(),
-        agent = agent_name,
-        previous = shell_quote(&paths.previous),
-        temporary = shell_quote(&temporary),
-        current = shell_quote(&paths.current),
-    );
-    run_checked(
-        runner,
-        ssh_spec(&request.ssh_host_alias, command),
-        None,
-        SSH_TIMEOUT,
-        cancellation,
-    )
-    .await
-    .map(|_| ())
-    .map_err(|_| DeployErrorCode::RollbackFailed.into())
+    let previous_target = remote.current_target.clone().or_else(|| {
+        remote
+            .existing_executable
+            .as_deref()
+            .map(legacy_release_target)
+    });
+    let prior_agent_state = remote
+        .agent_unit_state
+        .ok_or(DeployErrorCode::RollbackFailed)?;
+
+    let result: Result<(), DeployFailure> = async {
+        run_systemd_lifecycle_command(
+            runner,
+            &request.ssh_host_alias,
+            stop_agent,
+            cancellation.clone(),
+        )
+        .await?;
+        if let Some(previous_target) = previous_target {
+            let switch_previous = format!(
+                "set -eu; [ -L {previous} ]; target=$(readlink {previous}); [ \"$target\" = {expected} ]; ln -sfn -- \"$target\" {temporary}; mv -Tf -- {temporary} {current}; [ -L {current} ]; [ \"$(readlink {current})\" = \"$target\" ]",
+                previous = shell_quote(&paths.previous),
+                expected = shell_quote(&previous_target),
+                temporary = shell_quote(&temporary),
+                current = shell_quote(&paths.current),
+            );
+            run_checked(
+                runner,
+                ssh_spec(&request.ssh_host_alias, switch_previous),
+                None,
+                SSH_TIMEOUT,
+                cancellation.clone(),
+            )
+            .await?;
+            run_systemd_lifecycle_command(
+                runner,
+                &request.ssh_host_alias,
+                server_recovery,
+                cancellation.clone(),
+            )
+            .await?;
+            let restore_agent_commands = match prior_agent_state {
+                RemoteAgentUnitState::Absent => {
+                    vec![systemd_action_if_loaded("disable", &agent_name)]
+                }
+                RemoteAgentUnitState::Present { enabled, active } => vec![
+                    format!(
+                        "{} {} {agent_name}",
+                        manager.command(),
+                        if enabled { "enable" } else { "disable" }
+                    ),
+                    format!(
+                        "{} {} {agent_name}",
+                        manager.command(),
+                        match (enabled, active) {
+                            (true, true) => "restart",
+                            (false, true) => "start",
+                            (_, false) => "stop",
+                        }
+                    ),
+                ],
+            };
+            for command in restore_agent_commands {
+                run_systemd_lifecycle_command(
+                    runner,
+                    &request.ssh_host_alias,
+                    command,
+                    cancellation.clone(),
+                )
+                .await?;
+            }
+            Ok(())
+        } else {
+            for command in [
+                systemd_action_if_loaded("disable", &agent_name),
+                systemd_action_if_loaded("stop", "fns-workspace-server.service"),
+                systemd_action_if_loaded("disable", "fns-workspace-server.service"),
+            ] {
+                run_systemd_lifecycle_command(
+                    runner,
+                    &request.ssh_host_alias,
+                    command,
+                    cancellation.clone(),
+                )
+                .await?;
+            }
+            let remove_current = format!(
+                "set -eu; if [ -L {current} ]; then target=$(readlink {current}); [ \"$target\" = {expected} ]; rm -f -- {current}; elif [ -e {current} ]; then exit 42; fi; [ ! -e {current} ]; [ ! -L {current} ]",
+                current = shell_quote(&paths.current),
+                expected = shell_quote(&paths.release_target),
+            );
+            run_checked(
+                runner,
+                ssh_spec(&request.ssh_host_alias, remove_current),
+                None,
+                SSH_TIMEOUT,
+                cancellation,
+            )
+            .await
+            .map(|_| ())
+        }
+    }
+    .await;
+    result.map_err(|_| DeployErrorCode::RollbackFailed.into())
 }
 
 #[tauri::command]
@@ -2058,6 +2277,7 @@ mod tests {
         kind: ProcessKind,
         args: Vec<String>,
         input: Option<Vec<u8>>,
+        timeout: Duration,
     }
 
     struct FakeRunner {
@@ -2066,6 +2286,7 @@ mod tests {
         agent_hash: String,
         checksum_mismatch: bool,
         service_manager: bool,
+        fail_command: Option<String>,
     }
 
     impl FakeRunner {
@@ -2076,6 +2297,7 @@ mod tests {
                 agent_hash,
                 checksum_mismatch: false,
                 service_manager: true,
+                fail_command: None,
             }
         }
 
@@ -2095,7 +2317,7 @@ mod tests {
                 .last()
                 .map(|value| value.to_string_lossy())
                 .unwrap_or_default();
-            let stdout = if command.as_ref() == REMOTE_PROBE_SCRIPT {
+            let stdout = if command.ends_with(REMOTE_PROBE_SCRIPT) {
                 probe_output(self.service_manager)
             } else if command.contains("__FNS_MISSING__") {
                 b"/srv/work\n".to_vec()
@@ -2119,10 +2341,12 @@ mod tests {
             } else {
                 Vec::new()
             };
-            ProcessOutput {
-                success: true,
-                stdout,
-            }
+            let success = self
+                .fail_command
+                .as_ref()
+                .map(|needle| !command.contains(needle.as_str()))
+                .unwrap_or(true);
+            ProcessOutput { success, stdout }
         }
     }
 
@@ -2131,7 +2355,7 @@ mod tests {
             &'a self,
             spec: ProcessSpec,
             input: Option<ProcessInput>,
-            _timeout: Duration,
+            timeout: Duration,
             cancellation: CancellationToken,
         ) -> ProcessFuture<'a> {
             let input = input.map(|value| value.0.to_vec());
@@ -2143,6 +2367,7 @@ mod tests {
                     .map(|value| value.to_string_lossy().into_owned())
                     .collect(),
                 input,
+                timeout,
             });
             let output = self.response(&spec);
             Box::pin(async move {
@@ -2165,6 +2390,327 @@ mod tests {
             excludes: vec![".git/**".to_owned()],
             protect_secrets: true,
         }
+    }
+
+    #[test]
+    fn agent_units_allow_the_supervisor_to_shut_down_its_worker() {
+        let request = request();
+        let remote = RemoteProbe {
+            home: "/home/fns".to_owned(),
+            service_manager: Some(ServiceManager::System),
+            available_bytes: 1024 * 1024 * 1024,
+            server_config: Some("/opt/fns/config/config.yaml".to_owned()),
+            server_workdir: Some("/opt/fns".to_owned()),
+            current_target: None,
+            existing_pid: None,
+            existing_executable: None,
+            agent_unit_state: Some(RemoteAgentUnitState::Absent),
+        };
+
+        for manager in [ServiceManager::System, ServiceManager::User] {
+            let paths = remote_paths(&request, &remote, "test-version", manager);
+            let unit = String::from_utf8(
+                agent_unit_for_manager(&request, &paths, manager).expect("agent unit"),
+            )
+            .expect("utf-8 unit");
+
+            for directive in [
+                "KillMode=mixed",
+                "TimeoutStopSec=35s",
+                "Restart=on-failure",
+                "RestartSec=2",
+            ] {
+                assert!(
+                    unit.lines().any(|line| line == directive),
+                    "missing {directive} in {manager:?} agent unit:\n{unit}"
+                );
+            }
+
+            let stop_seconds = unit
+                .lines()
+                .find_map(|line| line.strip_prefix("TimeoutStopSec="))
+                .and_then(|value| value.strip_suffix('s'))
+                .and_then(|value| value.parse::<u64>().ok())
+                .expect("numeric TimeoutStopSec");
+            assert_eq!(stop_seconds, AGENT_SYSTEMD_STOP_TIMEOUT_SECONDS);
+            assert!(
+                SYSTEMD_LIFECYCLE_TIMEOUT
+                    >= Duration::from_secs(stop_seconds + SYSTEMD_LIFECYCLE_TIMEOUT_MARGIN_SECONDS),
+                "systemd lifecycle timeout must exceed TimeoutStopSec with cancellation margin"
+            );
+        }
+    }
+
+    #[test]
+    fn server_units_bound_systemd_shutdown() {
+        let request = request();
+        let remote = RemoteProbe {
+            home: "/home/fns".to_owned(),
+            service_manager: Some(ServiceManager::System),
+            available_bytes: 1024 * 1024 * 1024,
+            server_config: Some("/opt/fns/config/config.yaml".to_owned()),
+            server_workdir: Some("/opt/fns".to_owned()),
+            current_target: None,
+            existing_pid: None,
+            existing_executable: None,
+            agent_unit_state: Some(RemoteAgentUnitState::Absent),
+        };
+
+        for manager in [ServiceManager::System, ServiceManager::User] {
+            let paths = remote_paths(&request, &remote, "test-version", manager);
+            let unit =
+                String::from_utf8(server_unit(&paths, "/opt/fns", manager).expect("server unit"))
+                    .expect("utf-8 unit");
+            assert!(
+                unit.lines().any(|line| line == "TimeoutStopSec=35s"),
+                "missing bounded TimeoutStopSec in {manager:?} server unit:\n{unit}"
+            );
+            assert!(
+                SYSTEMD_LIFECYCLE_TIMEOUT
+                    >= Duration::from_secs(
+                        SERVER_SYSTEMD_STOP_TIMEOUT_SECONDS
+                            + SYSTEMD_LIFECYCLE_TIMEOUT_MARGIN_SECONDS
+                    ),
+                "systemd lifecycle timeout must exceed the server stop timeout"
+            );
+        }
+    }
+
+    fn rollback_remote_probe(current_target: Option<&str>) -> RemoteProbe {
+        RemoteProbe {
+            home: "/home/fns".to_owned(),
+            service_manager: Some(ServiceManager::System),
+            available_bytes: 1024 * 1024 * 1024,
+            server_config: Some("/opt/fns/config/config.yaml".to_owned()),
+            server_workdir: Some("/opt/fns".to_owned()),
+            current_target: current_target.map(str::to_owned),
+            existing_pid: current_target.is_none().then_some(4_200),
+            existing_executable: current_target
+                .is_none()
+                .then(|| "/opt/legacy/fns-server".to_owned()),
+            agent_unit_state: Some(if current_target.is_some() {
+                RemoteAgentUnitState::Present {
+                    enabled: true,
+                    active: true,
+                }
+            } else {
+                RemoteAgentUnitState::Absent
+            }),
+        }
+    }
+
+    fn fresh_rollback_remote_probe() -> RemoteProbe {
+        let mut remote = rollback_remote_probe(None);
+        remote.existing_pid = None;
+        remote.existing_executable = None;
+        remote
+    }
+
+    async fn run_rollback_fixture(
+        runner: &FakeRunner,
+        remote: &RemoteProbe,
+    ) -> Result<(), DeployFailure> {
+        let request = request();
+        let paths = remote_paths(&request, remote, "failed-version", ServiceManager::System);
+        rollback_remote(
+            runner,
+            &request,
+            &paths,
+            ServiceManager::System,
+            remote,
+            CancellationToken::new(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn managed_rollback_restores_server_and_agent_in_independent_steps() {
+        let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        let remote = rollback_remote_probe(Some("releases/previous"));
+
+        run_rollback_fixture(&runner, &remote).await.unwrap();
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 5);
+        let commands = calls
+            .iter()
+            .map(|call| call.args.last().expect("remote command").as_str())
+            .collect::<Vec<_>>();
+        assert!(commands[0].contains("show --property LoadState --value"));
+        assert!(commands[0].contains(" stop fns-workspace-agent-"));
+        assert!(commands[0].contains("not-found)"));
+        assert!(commands[0].contains("*) exit 42"));
+        assert!(!commands[0].contains("|| true"));
+        assert!(commands[1].contains(".rollback-"));
+        assert!(commands[1].contains("[ -L"));
+        assert!(commands[1].contains("releases/previous"));
+        assert!(commands[2].contains("restart fns-workspace-server.service"));
+        assert!(commands[3].contains("enable fns-workspace-agent-"));
+        assert!(commands[4].contains("restart fns-workspace-agent-"));
+        assert_eq!(calls[0].timeout, SYSTEMD_LIFECYCLE_TIMEOUT);
+        assert_eq!(calls[1].timeout, SSH_TIMEOUT);
+        assert_eq!(calls[2].timeout, SYSTEMD_LIFECYCLE_TIMEOUT);
+        assert_eq!(calls[3].timeout, SYSTEMD_LIFECYCLE_TIMEOUT);
+        assert_eq!(calls[4].timeout, SYSTEMD_LIFECYCLE_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn managed_first_project_rollback_keeps_absent_agent_stopped_and_disabled() {
+        let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        let mut remote = rollback_remote_probe(Some("releases/previous"));
+        remote.agent_unit_state = Some(RemoteAgentUnitState::Absent);
+
+        run_rollback_fixture(&runner, &remote).await.unwrap();
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 4);
+        let commands = calls
+            .iter()
+            .map(|call| call.args.last().expect("remote command").as_str())
+            .collect::<Vec<_>>();
+        assert!(commands[0].contains(" stop fns-workspace-agent-"));
+        assert!(commands[3].contains(" disable fns-workspace-agent-"));
+        assert!(commands.iter().all(|command| {
+            !command.contains(" restart fns-workspace-agent-")
+                && !command.contains(" start fns-workspace-agent-")
+        }));
+    }
+
+    #[tokio::test]
+    async fn managed_rollback_restores_disabled_inactive_agent() {
+        let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        let mut remote = rollback_remote_probe(Some("releases/previous"));
+        remote.agent_unit_state = Some(RemoteAgentUnitState::Present {
+            enabled: false,
+            active: false,
+        });
+
+        run_rollback_fixture(&runner, &remote).await.unwrap();
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 5);
+        let enablement = calls[3].args.last().expect("agent enablement");
+        let lifecycle = calls[4].args.last().expect("agent lifecycle");
+        assert!(enablement.contains("disable fns-workspace-agent-"));
+        assert!(lifecycle.contains("stop fns-workspace-agent-"));
+        assert!(!lifecycle.contains("restart fns-workspace-agent-"));
+    }
+
+    #[tokio::test]
+    async fn managed_rollback_restores_mixed_agent_enablement_and_activity() {
+        for (enabled, active, expected_enablement, expected_lifecycle) in [
+            (true, false, "enable", "stop"),
+            (false, true, "disable", "start"),
+        ] {
+            let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+            let mut remote = rollback_remote_probe(Some("releases/previous"));
+            remote.agent_unit_state = Some(RemoteAgentUnitState::Present { enabled, active });
+
+            run_rollback_fixture(&runner, &remote).await.unwrap();
+
+            let calls = runner.calls();
+            assert_eq!(calls.len(), 5);
+            assert!(
+                calls[3]
+                    .args
+                    .last()
+                    .expect("agent enablement")
+                    .contains(&format!("{expected_enablement} fns-workspace-agent-"))
+            );
+            assert!(
+                calls[4]
+                    .args
+                    .last()
+                    .expect("agent lifecycle")
+                    .contains(&format!("{expected_lifecycle} fns-workspace-agent-"))
+            );
+            assert!(
+                !calls[4]
+                    .args
+                    .last()
+                    .expect("agent lifecycle")
+                    .contains("restart fns-workspace-agent-")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_rollback_disables_new_agent_instead_of_restarting_it() {
+        let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        let remote = rollback_remote_probe(None);
+
+        run_rollback_fixture(&runner, &remote).await.unwrap();
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 4);
+        let server_recovery = calls[2].args.last().expect("server recovery command");
+        let agent_restore = calls[3].args.last().expect("agent restore command");
+        let switch_previous = calls[1].args.last().expect("switch previous command");
+        assert!(switch_previous.contains(&legacy_release_target(
+            remote.existing_executable.as_deref().unwrap()
+        )));
+        assert!(server_recovery.contains("/proc/4200/exe"));
+        assert!(server_recovery.contains("restart fns-workspace-server.service"));
+        assert!(agent_restore.contains("show --property LoadState --value"));
+        assert!(agent_restore.contains("disable fns-workspace-agent-"));
+        assert!(!agent_restore.contains("restart fns-workspace-agent-"));
+        assert!(!agent_restore.contains("|| true"));
+    }
+
+    #[tokio::test]
+    async fn fresh_install_rollback_disables_services_and_removes_current() {
+        let runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        let remote = fresh_rollback_remote_probe();
+
+        run_rollback_fixture(&runner, &remote).await.unwrap();
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 5);
+        let commands = calls
+            .iter()
+            .map(|call| call.args.last().expect("remote command").as_str())
+            .collect::<Vec<_>>();
+        assert!(commands[0].contains(" stop fns-workspace-agent-"));
+        assert!(commands[1].contains(" disable fns-workspace-agent-"));
+        assert!(commands[2].contains(" stop fns-workspace-server.service"));
+        assert!(commands[3].contains(" disable fns-workspace-server.service"));
+        assert!(commands[4].contains("releases/failed-version"));
+        assert!(commands[4].contains("rm -f --"));
+        assert!(
+            commands
+                .iter()
+                .all(|command| !command.contains(" restart "))
+        );
+        assert!(
+            calls[..4]
+                .iter()
+                .all(|call| call.timeout == SYSTEMD_LIFECYCLE_TIMEOUT)
+        );
+        assert_eq!(calls[4].timeout, SSH_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn missing_or_changed_previous_is_an_observable_rollback_failure() {
+        let mut runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        runner.fail_command = Some("[ -L".to_owned());
+        let remote = rollback_remote_probe(Some("releases/previous"));
+
+        let failure = run_rollback_fixture(&runner, &remote).await.unwrap_err();
+
+        assert_eq!(failure.primary, DeployErrorCode::RollbackFailed);
+        assert_eq!(runner.calls().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn rollback_stop_failure_is_observable_and_blocks_later_steps() {
+        let mut runner = FakeRunner::new("a".repeat(64), "b".repeat(64));
+        runner.fail_command = Some(" stop fns-workspace-agent-".to_owned());
+        let remote = rollback_remote_probe(Some("releases/previous"));
+
+        let failure = run_rollback_fixture(&runner, &remote).await.unwrap_err();
+
+        assert_eq!(failure.primary, DeployErrorCode::RollbackFailed);
+        assert_eq!(runner.calls().len(), 1);
     }
 
     fn write_elf(path: &Path, marker: u8) {
@@ -2190,8 +2736,13 @@ mod tests {
     }
 
     fn probe_output(service_manager: bool) -> Vec<u8> {
+        let (agent_load_state, agent_unit_file_state, agent_active_state) = if service_manager {
+            ("not-found", "not-found", "not-found")
+        } else {
+            ("unavailable", "unavailable", "unavailable")
+        };
         format!(
-            "system=Linux\narch=x86_64\nuid=0\nsystem_manager={}\nuser_manager=0\navailable_kb=1048576\nhome_b64={}\nconfig_b64={}\nworkdir_b64={}\ncurrent_b64={}\npid=\nexe_b64=\ncwd_b64=\n",
+            "system=Linux\narch=x86_64\nuid=0\nsystem_manager={}\nuser_manager=0\nagent_load_state={agent_load_state}\nagent_unit_file_state={agent_unit_file_state}\nagent_active_state={agent_active_state}\navailable_kb=1048576\nhome_b64={}\nconfig_b64={}\nworkdir_b64={}\ncurrent_b64={}\npid=\nexe_b64=\ncwd_b64=\n",
             u8::from(service_manager),
             encode_path("/home/fns"),
             encode_path("/opt/fns/config/config.yaml"),
@@ -2464,6 +3015,21 @@ mod tests {
                 .filter(|call| call.input.as_deref() == Some(TOKEN_SENTINEL.as_bytes()))
                 .count(),
             1
+        );
+        let lifecycle_calls = calls
+            .iter()
+            .filter(|call| {
+                call.kind == ProcessKind::Ssh
+                    && call.args.last().is_some_and(|command| {
+                        command.contains(" stop ") || command.contains(" restart ")
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert!(!lifecycle_calls.is_empty());
+        assert!(
+            lifecycle_calls
+                .iter()
+                .all(|call| call.timeout == SYSTEMD_LIFECYCLE_TIMEOUT)
         );
     }
 

@@ -33,6 +33,8 @@ function stableFailureLabel(code: string) {
     conflict_request_changed: "This request ID was already used for another resolution",
     request_cancelled: "The resolution was cancelled before it was sent",
     request_timeout: "The resolution is still awaiting confirmation",
+    idle_timeout: "The sync connection stopped responding",
+    transfer_timeout: "The file transfer stopped making progress",
     abnormal_exit: "The sync process stopped before confirming the resolution",
     filesystem: "The workspace file could not be read",
   };
