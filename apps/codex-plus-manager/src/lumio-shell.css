@@ -1,0 +1,991 @@
+:root {
+  color: #f6f7fb;
+  background: #090b14;
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 0;
+  overflow: hidden;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid #9a8cff;
+  outline-offset: 3px;
+}
+
+.lumio-app {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: 68px minmax(0, 1fr) 36px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgb(11 13 24 / 96%), rgb(7 9 17 / 99%)),
+    #090b14;
+}
+
+.lumio-app::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 2%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 2%) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+  content: "";
+  pointer-events: none;
+}
+
+.lumio-aurora {
+  position: absolute;
+  z-index: -1;
+  width: 460px;
+  height: 460px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.16;
+  pointer-events: none;
+}
+
+.lumio-aurora-one {
+  top: -280px;
+  left: 16%;
+  background: #6758ff;
+}
+
+.lumio-aurora-two {
+  right: -260px;
+  bottom: -280px;
+  background: #2ad7c5;
+}
+
+.lumio-topbar {
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 0 28px;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(8 10 19 / 72%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 14%);
+  backdrop-filter: blur(18px);
+}
+
+.lumio-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 11px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lumio-logo-wrap {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 11px;
+  background: linear-gradient(145deg, rgb(127 105 255 / 32%), rgb(31 35 61 / 72%));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    0 8px 22px rgb(74 60 190 / 24%);
+}
+
+.lumio-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lumio-brand > span:last-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lumio-brand strong {
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.lumio-brand small,
+.lumio-footer,
+.lumio-eyebrow,
+.lumio-kicker,
+.lumio-orbit-card > small,
+.lumio-orbit-card > p {
+  font-family: "JetBrains Mono", monospace;
+}
+
+.lumio-brand small {
+  color: #7f849c;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+}
+
+.lumio-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 3%);
+}
+
+.lumio-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 94px;
+  padding: 8px 15px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #85899e;
+  cursor: pointer;
+  font-size: 13px;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.lumio-nav button:hover {
+  color: #d9dbea;
+}
+
+.lumio-nav button.is-active {
+  background: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%);
+  color: #fff;
+}
+
+.lumio-phase {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  color: #898da2;
+  font-size: 12px;
+}
+
+.lumio-phase > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #767b91;
+  box-shadow: 0 0 0 4px rgb(118 123 145 / 10%);
+}
+
+.lumio-phase.is-online > span {
+  background: #3ee6b4;
+  box-shadow: 0 0 0 4px rgb(62 230 180 / 10%);
+}
+
+.lumio-phase.is-offline > span {
+  background: #f3bd63;
+  box-shadow: 0 0 0 4px rgb(243 189 99 / 10%);
+}
+
+.lumio-main {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: rgb(255 255 255 / 12%) transparent;
+}
+
+.lumio-signed-out,
+.lumio-dashboard,
+.lumio-settings-page,
+.lumio-loading,
+.lumio-repair-panel {
+  width: min(1180px, calc(100% - 56px));
+  margin: 0 auto;
+}
+
+.lumio-signed-out {
+  display: grid;
+  align-content: center;
+  min-height: 100%;
+  padding: 42px 0 36px;
+}
+
+.lumio-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  align-items: center;
+  gap: clamp(42px, 7vw, 100px);
+  min-height: 360px;
+}
+
+.lumio-hero-copy {
+  max-width: 650px;
+}
+
+.lumio-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgb(144 126 255 / 22%);
+  border-radius: 999px;
+  background: rgb(127 104 255 / 8%);
+  color: #a99dff;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.lumio-hero h1 {
+  margin: 25px 0 18px;
+  color: #f7f7fb;
+  font-size: clamp(40px, 5vw, 65px);
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  line-height: 1.07;
+}
+
+.lumio-hero h1 span {
+  background: linear-gradient(92deg, #9c8cff 10%, #7bdcd3 88%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+.lumio-hero-copy > p {
+  max-width: 570px;
+  margin: 0 0 27px;
+  color: #969aaf;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.lumio-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+
+.lumio-button:not(:disabled) {
+  cursor: pointer;
+}
+
+.lumio-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.lumio-button.is-large {
+  min-height: 48px;
+  padding: 0 21px;
+}
+
+.lumio-button.is-primary {
+  background: linear-gradient(135deg, #7865f5, #6553da);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    0 10px 28px rgb(99 77 221 / 22%);
+  color: #fff;
+}
+
+.lumio-button.is-secondary {
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 5%);
+  color: #d8d9e4;
+}
+
+.lumio-button:disabled,
+.lumio-small-button:disabled,
+.lumio-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.lumio-inline-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  color: #72778d;
+  font-size: 11px;
+}
+
+.lumio-orbit-card {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(340px, 100%);
+  aspect-ratio: 1;
+  justify-self: center;
+}
+
+.lumio-orbit-glow {
+  position: absolute;
+  width: 54%;
+  height: 54%;
+  border-radius: 50%;
+  background: #7867ef;
+  filter: blur(70px);
+  opacity: 0.22;
+}
+
+.lumio-orbit-logo {
+  z-index: 2;
+  width: 104px;
+  height: 104px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 26px;
+  background: linear-gradient(145deg, #24223a, #121523);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    0 26px 70px rgb(0 0 0 / 46%),
+    0 0 50px rgb(110 91 239 / 18%);
+  transform: rotate(-3deg);
+}
+
+.lumio-orbit-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lumio-orbit-ring {
+  position: absolute;
+  border: 1px solid rgb(154 141 255 / 18%);
+  border-radius: 50%;
+}
+
+.lumio-orbit-ring::before {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a798ff;
+  box-shadow: 0 0 14px #8f7fff;
+  content: "";
+}
+
+.lumio-orbit-ring.ring-one {
+  width: 66%;
+  height: 66%;
+  animation: lumio-spin 18s linear infinite;
+}
+
+.lumio-orbit-ring.ring-two {
+  width: 88%;
+  height: 88%;
+  border-color: rgb(96 216 205 / 13%);
+  animation: lumio-spin-reverse 28s linear infinite;
+}
+
+.lumio-orbit-node {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 11px;
+  background: rgb(20 23 38 / 88%);
+  box-shadow: 0 14px 30px rgb(0 0 0 / 28%);
+  color: #8ee0d5;
+  backdrop-filter: blur(12px);
+}
+
+.lumio-orbit-node.node-one {
+  top: 20%;
+  right: 9%;
+}
+
+.lumio-orbit-node.node-two {
+  bottom: 18%;
+  left: 8%;
+  color: #aa9eff;
+}
+
+.lumio-orbit-card > p,
+.lumio-orbit-card > small {
+  position: absolute;
+  bottom: 21px;
+  margin: 0;
+  color: #6e7388;
+  font-size: 9px;
+  letter-spacing: 0.13em;
+}
+
+.lumio-orbit-card > small {
+  bottom: 7px;
+  color: #4e5368;
+  font-size: 7px;
+}
+
+@keyframes lumio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lumio-spin-reverse {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.lumio-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-top: 34px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 15px;
+  background: rgb(255 255 255 / 2.5%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
+}
+
+.lumio-status-strip article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 17px 20px;
+}
+
+.lumio-status-strip article + article {
+  border-left: 1px solid rgb(255 255 255 / 7%);
+}
+
+.lumio-status-strip article > svg {
+  color: #555a70;
+}
+
+.lumio-status-strip small,
+.lumio-status-strip strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-status-strip small {
+  margin-bottom: 3px;
+  color: #666b80;
+  font-size: 10px;
+}
+
+.lumio-status-strip strong {
+  color: #c7c9d7;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.lumio-status-icon,
+.lumio-card-icon,
+.lumio-setting-icon,
+.lumio-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  color: #777d93;
+}
+
+.lumio-status-icon.is-success {
+  border-color: rgb(73 211 176 / 14%);
+  background: rgb(73 211 176 / 7%);
+  color: #72d9c0;
+}
+
+.lumio-dashboard,
+.lumio-settings-page {
+  padding: 52px 0 48px;
+}
+
+.lumio-welcome-row,
+.lumio-page-heading {
+  margin-bottom: 30px;
+}
+
+.lumio-welcome-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.lumio-eyebrow {
+  margin: 0 0 9px;
+  color: #8d80ef;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.lumio-welcome-row h1,
+.lumio-page-heading h1,
+.lumio-repair-panel h1 {
+  margin: 0;
+  color: #f4f4f8;
+  font-size: 30px;
+  font-weight: 620;
+  letter-spacing: -0.035em;
+}
+
+.lumio-welcome-row > div > p:last-child,
+.lumio-page-heading > p:last-child,
+.lumio-repair-panel p {
+  margin: 8px 0 0;
+  color: #85899e;
+  font-size: 13px;
+}
+
+.lumio-secure-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid rgb(79 209 177 / 13%);
+  border-radius: 9px;
+  background: rgb(79 209 177 / 5%);
+  color: #7ed7c2;
+  font-size: 11px;
+}
+
+.lumio-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.lumio-card,
+.lumio-action-panel,
+.lumio-settings-list,
+.lumio-repair-panel {
+  border: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(255 255 255 / 3.2%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 3%),
+    0 18px 45px rgb(0 0 0 / 12%);
+}
+
+.lumio-card {
+  min-height: 184px;
+  padding: 21px;
+  border-radius: 14px;
+}
+
+.lumio-card > p {
+  margin: 22px 0 7px;
+  color: #777b90;
+  font-size: 11px;
+}
+
+.lumio-card > strong {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 7px;
+  color: #ececf2;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-balance-card > strong {
+  color: #a89aff;
+  font-size: 30px;
+}
+
+.lumio-card > small {
+  color: #5f6479;
+  font-size: 10px;
+}
+
+.lumio-card-icon {
+  color: #9a8df5;
+}
+
+.lumio-action-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 15px;
+  padding: 24px;
+  border-radius: 14px;
+}
+
+.lumio-action-panel h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 580;
+}
+
+.lumio-action-panel div > p:last-child {
+  margin: 7px 0 0;
+  color: #74798e;
+  font-size: 11px;
+}
+
+.lumio-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.lumio-settings-page {
+  max-width: 920px;
+}
+
+.lumio-page-heading > p:last-child {
+  font-size: 13px;
+}
+
+.lumio-settings-list {
+  overflow: hidden;
+  border-radius: 15px;
+}
+
+.lumio-setting-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  min-height: 82px;
+  padding: 15px 18px;
+}
+
+.lumio-setting-row + .lumio-setting-row {
+  border-top: 1px solid rgb(255 255 255 / 6%);
+}
+
+.lumio-setting-row strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #d9dbe5;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.lumio-setting-row p {
+  max-width: 650px;
+  margin: 0;
+  overflow: hidden;
+  color: #74798e;
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-setting-icon {
+  color: #8f84e9;
+}
+
+.lumio-setting-icon.is-warning {
+  color: #d4a96c;
+}
+
+.lumio-toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 999px;
+  background: #272a38;
+}
+
+.lumio-toggle span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #82869a;
+  transition: transform 160ms ease;
+}
+
+.lumio-toggle.is-on {
+  border-color: rgb(131 112 245 / 45%);
+  background: #5947ca;
+}
+
+.lumio-toggle.is-on span {
+  background: #fff;
+  transform: translateX(16px);
+}
+
+.lumio-small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 4%);
+  color: #b5b8c7;
+  font-size: 11px;
+}
+
+.lumio-small-button.is-warning {
+  border-color: rgb(219 168 92 / 14%);
+  color: #c9a878;
+}
+
+.lumio-path-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px !important;
+}
+
+.lumio-settings-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 15px 2px 0;
+  color: #5f6478;
+  font-size: 10px;
+}
+
+.lumio-loading {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100%;
+  color: #8b8fa3;
+}
+
+.lumio-loading-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgb(142 126 247 / 18%);
+  border-radius: 16px;
+  background: rgb(128 106 242 / 7%);
+  color: #998cf0;
+}
+
+.lumio-loading-mark svg {
+  animation: lumio-spin 1.8s linear infinite;
+}
+
+.lumio-loading p {
+  margin-top: 15px;
+  font-size: 12px;
+}
+
+.lumio-repair-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  max-width: 720px;
+  margin-top: 11vh;
+  padding: 28px;
+  border-radius: 16px;
+}
+
+.lumio-panel-icon.is-warning {
+  border-color: rgb(229 176 96 / 15%);
+  background: rgb(229 176 96 / 7%);
+  color: #d7aa69;
+}
+
+.lumio-repair-panel code {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  color: #8a8fa4;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.lumio-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
+  color: #494e62;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.lumio-footer-version {
+  position: absolute;
+  right: 22px;
+}
+
+.lumio-footer-separator {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #44495d;
+}
+
+@media (max-width: 900px) {
+  .lumio-topbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .lumio-phase {
+    display: none;
+  }
+
+  .lumio-nav {
+    justify-self: end;
+  }
+
+  .lumio-hero {
+    grid-template-columns: minmax(0, 1.25fr) minmax(250px, 0.75fr);
+    gap: 32px;
+  }
+
+  .lumio-status-strip article {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 760px) {
+  .lumio-app {
+    grid-template-rows: 62px minmax(0, 1fr) 32px;
+  }
+
+  .lumio-topbar {
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .lumio-brand small {
+    display: none;
+  }
+
+  .lumio-nav button {
+    min-width: auto;
+    padding: 7px 10px;
+  }
+
+  .lumio-signed-out,
+  .lumio-dashboard,
+  .lumio-settings-page,
+  .lumio-loading,
+  .lumio-repair-panel {
+    width: min(100% - 30px, 1180px);
+  }
+
+  .lumio-signed-out {
+    align-content: start;
+    padding-top: 30px;
+  }
+
+  .lumio-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .lumio-orbit-card {
+    display: none;
+  }
+
+  .lumio-status-strip,
+  .lumio-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lumio-status-strip article + article {
+    border-top: 1px solid rgb(255 255 255 / 7%);
+    border-left: 0;
+  }
+
+  .lumio-action-panel,
+  .lumio-welcome-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lumio-actions {
+    width: 100%;
+  }
+
+  .lumio-actions .lumio-button {
+    flex: 1;
+  }
+
+  .lumio-setting-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .lumio-setting-row > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .lumio-footer-version {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
