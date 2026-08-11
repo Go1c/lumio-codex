@@ -4,7 +4,12 @@ import TerminalPane from "./Terminal";
 import FileTree from "./FileTree";
 import ConflictsPane from "./ConflictsPane";
 import { DiagnosticsPane } from "../features/diagnostics";
+import {
+  ClaudeSessionsPane,
+  ServerStatusPane,
+} from "../features/remote-monitor";
 import { createInvokeDiagnosticsClient } from "../lib/diagnosticsApi";
+import { createRemoteMonitorClient } from "../lib/remoteMonitorApi";
 import {
   accountConnectionFailureMessage,
   isAuthenticationFailure,
@@ -39,7 +44,13 @@ interface WorkspaceViewProps {
   onRetryStart: () => Promise<unknown | null>;
 }
 
-type Tab = "terminal" | "files" | "conflicts" | "logs";
+type Tab =
+  | "terminal"
+  | "files"
+  | "conflicts"
+  | "logs"
+  | "server-status"
+  | "claude-sessions";
 type Action = "start" | "stop";
 
 const SYNC_POLL_INTERVAL_MS = 2000;
@@ -119,6 +130,10 @@ export default function WorkspaceView({
   const connectionInFlight = useRef(false);
   const diagnosticsClient = useMemo(
     () => createInvokeDiagnosticsClient(invoke),
+    [],
+  );
+  const remoteMonitorClient = useMemo(
+    () => createRemoteMonitorClient(invoke),
     [],
   );
 
@@ -278,6 +293,8 @@ export default function WorkspaceView({
     { key: "files", label: "Files" },
     { key: "conflicts", label: "Conflicts" },
     { key: "logs", label: "Logs" },
+    { key: "server-status", label: "Server Status" },
+    { key: "claude-sessions", label: "Claude Sessions" },
   ];
   const hasFailure = Boolean(
     startupFailure || statusFailure || actionFailure || status?.error,
@@ -442,6 +459,19 @@ export default function WorkspaceView({
           <DiagnosticsPane
             projectId={project.id}
             client={diagnosticsClient}
+          />
+        )}
+        {activeTab === "server-status" && (
+          <ServerStatusPane
+            projectId={project.id}
+            client={remoteMonitorClient}
+          />
+        )}
+        {activeTab === "claude-sessions" && (
+          <ClaudeSessionsPane
+            projectId={project.id}
+            client={remoteMonitorClient}
+            onRequestTerminalTab={() => setActiveTab("terminal")}
           />
         )}
       </div>
