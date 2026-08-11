@@ -711,6 +711,122 @@ fn run_ssh_capture(alias: &str, remote_command: &str) -> Result<SshCapture, Remo
     }
 }
 
+fn load_project(project_id: &str) -> Result<ProjectConfig, RemoteMonitorError> {
+    ProjectConfig::find_by_id(project_id).map_err(|_| RemoteMonitorError {
+        code: "project_not_found".into(),
+        message: "Project not found".into(),
+    })
+}
+
+fn tmux_target(session: &str, window_index: u32) -> Result<String, String> {
+    if window_index > 10_000 {
+        return Err("window index out of range".into());
+    }
+    let session = validate_tmux_session_name(session)?;
+    // session is charset-safe; index is numeric — form session:index inside quotes as 'sess:0'
+    let target = format!("{session}:{window_index}");
+    Ok(TerminalManager::posix_shell_single_quote(&target))
+}
+
+/// Tauri command: list tmux windows for this project's session.
+#[tauri::command]
+pub fn list_claude_sessions(project_id: String) -> ClaudeSessionsSnapshot {
+    let captured_at = chrono::Utc::now().to_rfc3339();
+    let project = match load_project(&project_id) {
+        Ok(p) => p,
+        Err(e) => {
+            return sessions_error(
+                &project_id,
+                "",
+                "",
+                &captured_at,
+                false,
+                &e.code,
+                &e.message,
+            );
+        }
+    };
+
+    let session = match validate_tmux_session_name(&project.tmux_session) {
+        Ok(s) => s,
+        Err(_) => {
+            return sessions_error(
+                &project_id,
+                &project.ssh_host_alias,
+                &project.tmux_session,
+                &captured_at,
+                false,
+                "invalid_session_name",
+                "Invalid tmux session name",
+            );
+        }
+    };
+
+    let quoted = TerminalManager::posix_shell_single_quote(&session);
+    let cmd = format!(
+        "tmux list-windows -t {quoted} -F '#{{window_index}}\t#{{window_name}}\t#{{window_active}}\t#{{window_panes}}\t#{{window_id}}'"
+    );
+
+    match run_ssh_capture(&project.ssh_host_alias, &cmd) {
+        Ok(capture) => {
+            if capture.exit_code != 0 {
+                // tmux returns non-zero when session is missing
+                return sessions_error(
+                    &project_id,
+                    &project.ssh_host_alias,
+                    &session,
+                    &captured_at,
+                    false,
+                    "tmux_session_missing",
+                    "tmux session not found on remote host",
+                );
+            }
+            parse_tmux_list_windows(
+                &capture.stdout,
+                &project_id,
+                &project.ssh_host_alias,
+                &session,
+                &captured_at,
+            )
+        }
+        Err(e) => sessions_error(
+            &project_id,
+            &project.ssh_host_alias,
+            &session,
+            &captured_at,
+            false,
+            &e.code,
+            &e.message,
+        ),
+    }
+}
+
+/// Select a tmux window for this project's session.
+#[tauri::command]
+pub fn switch_claude_session(project_id: String, window_index: u32) -> Result<(), String> {
+    let project = load_project(&project_id).map_err(|e| e.message)?;
+    let target = tmux_target(&project.tmux_session, window_index)?;
+    let cmd = format!("tmux select-window -t {target}");
+    let capture = run_ssh_capture(&project.ssh_host_alias, &cmd).map_err(|e| e.message)?;
+    if capture.exit_code != 0 {
+        return Err("window_not_found".into());
+    }
+    Ok(())
+}
+
+/// Kill a single tmux window for this project's session (not global pkill).
+#[tauri::command]
+pub fn kill_claude_session(project_id: String, window_index: u32) -> Result<(), String> {
+    let project = load_project(&project_id).map_err(|e| e.message)?;
+    let target = tmux_target(&project.tmux_session, window_index)?;
+    let cmd = format!("tmux kill-window -t {target}");
+    let capture = run_ssh_capture(&project.ssh_host_alias, &cmd).map_err(|e| e.message)?;
+    if capture.exit_code != 0 {
+        return Err("window_not_found".into());
+    }
+    Ok(())
+}
+
 /// Tauri command: remote host CPU/memory/disk + service process RSS.
 #[tauri::command]
 pub fn get_server_status(project_id: String) -> ServerStatusSnapshot {
@@ -851,5 +967,26 @@ mod tests {
         // Injection in root must remain inside single quotes after escaping.
         let evil = build_host_probe_script("/tmp/x'$(id)");
         assert!(evil.contains("'\\''"));
+    }
+
+    #[test]
+    fn parse_tmux_empty_stdout_is_existing_session_zero_windows() {
+        let snap = parse_tmux_list_windows(
+            "",
+            "proj-1",
+            "host",
+            "sess",
+            "2026-08-11T00:00:00Z",
+        );
+        assert!(snap.ok);
+        assert!(snap.session_exists);
+        assert!(snap.windows.is_empty());
+    }
+
+    #[test]
+    fn tmux_target_quotes_session_index() {
+        let t = tmux_target("good_sess", 2).unwrap();
+        assert_eq!(t, "'good_sess:2'");
+        assert!(tmux_target("bad;sess", 1).is_err());
     }
 }

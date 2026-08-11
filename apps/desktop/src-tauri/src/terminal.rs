@@ -338,11 +338,11 @@ pub fn kill_all_sessions(
         (session.ssh_alias.clone(), session.tmux_session.clone())
     };
 
-    // Spawn a fresh SSH process to kill the specific tmux session.
-    // This works even if the main PTY is stuck.
-    let kill_cmd = format!(
-        "tmux kill-session -t {tmux_session} 2>/dev/null; pkill -f claude 2>/dev/null; echo done"
-    );
+    // Kill only this project's tmux session — never global pkill claude
+    // (other projects on the same host must keep their Claude windows).
+    let safe_session = TerminalManager::sanitize_session_name(&tmux_session);
+    let quoted = TerminalManager::posix_shell_single_quote(&safe_session);
+    let kill_cmd = format!("tmux kill-session -t {quoted} 2>/dev/null; echo done");
     let _ = std::process::Command::new("ssh")
         .arg("-o")
         .arg("BatchMode=yes")
