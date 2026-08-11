@@ -46,18 +46,43 @@ impl TerminalManager {
             .collect()
     }
 
-    /// Build the SSH command argv for connecting to a tmux session.
-    fn build_ssh_cmd(ssh_alias: &str, remote_root: &str, tmux_session: &str) -> CommandBuilder {
+    /// Escape a string for safe inclusion in a single-quoted POSIX shell string.
+    /// Result is wrapped in single quotes; internal `'` become `'\''`.
+    pub fn posix_shell_single_quote(value: &str) -> String {
+        let mut out = String::with_capacity(value.len() + 2);
+        out.push('\'');
+        for ch in value.chars() {
+            if ch == '\'' {
+                out.push_str("'\\''");
+            } else {
+                out.push(ch);
+            }
+        }
+        out.push('\'');
+        out
+    }
+
+    /// Build the remote command string (single ssh remote argument).
+    /// `remote_root` and session name are shell-escaped / sanitized.
+    pub fn build_remote_tmux_cmd(remote_root: &str, tmux_session: &str) -> String {
         let safe_session = Self::sanitize_session_name(tmux_session);
+        let safe_root = Self::posix_shell_single_quote(remote_root);
+        // Session is already restricted to [A-Za-z0-9_-]; still quote for defense in depth.
+        let safe_session_quoted = Self::posix_shell_single_quote(&safe_session);
         // Wrap tmux with env to ensure TERM is properly inherited inside tmux.
         // We export TERM=xterm-256color so the outer SSH pty matches xterm.js,
         // then tmux propagates terminal modes (including cursor key mode) from
         // the outer terminal to its panes.
-        let remote_cmd = format!(
+        format!(
             "env TERM=xterm-256color tmux new-session -A -s {session} -c {root}",
-            session = safe_session,
-            root = remote_root
-        );
+            session = safe_session_quoted,
+            root = safe_root
+        )
+    }
+
+    /// Build the SSH command argv for connecting to a tmux session.
+    fn build_ssh_cmd(ssh_alias: &str, remote_root: &str, tmux_session: &str) -> CommandBuilder {
+        let remote_cmd = Self::build_remote_tmux_cmd(remote_root, tmux_session);
 
         let mut cmd = CommandBuilder::new("ssh");
         cmd.arg("-tt");
@@ -371,5 +396,56 @@ mod tests {
     fn sanitize_preserves_alphanumeric() {
         let name = "ClaudeCode2026";
         assert_eq!(TerminalManager::sanitize_session_name(name), name);
+    }
+
+    #[test]
+    fn terminal_remote_root_is_shell_escaped() {
+        let injection = "/tmp/proj; touch /tmp/pwned; #";
+        let cmd = TerminalManager::build_remote_tmux_cmd(injection, "my-session");
+
+        // POSIX single-quoted form wraps the entire root so `;` is data, not syntax.
+        let expected_root = TerminalManager::posix_shell_single_quote(injection);
+        assert!(
+            cmd.contains(&expected_root),
+            "escaped root missing from cmd: {cmd}"
+        );
+        assert!(
+            cmd.contains(&format!("-c {expected_root}")),
+            "root must be a single quoted -c argument: {cmd}"
+        );
+        // Unescaped form would put shell metacharacters outside quotes.
+        assert!(
+            !cmd.contains("-c /tmp/proj;"),
+            "unescaped remote_root must not appear: {cmd}"
+        );
+        assert!(cmd.contains("tmux new-session"));
+    }
+
+    #[test]
+    fn posix_shell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(
+            TerminalManager::posix_shell_single_quote("it's"),
+            "'it'\\''s'"
+        );
+        assert_eq!(
+            TerminalManager::posix_shell_single_quote("plain"),
+            "'plain'"
+        );
+        assert_eq!(TerminalManager::posix_shell_single_quote("a;b"), "'a;b'");
+    }
+
+    #[test]
+    fn session_name_is_sanitized_and_quoted_in_remote_cmd() {
+        let session = "evil;rm -rf /";
+        let sanitized = TerminalManager::sanitize_session_name(session);
+        let cmd = TerminalManager::build_remote_tmux_cmd("/home/u/p", session);
+        let quoted = TerminalManager::posix_shell_single_quote(&sanitized);
+        // Session chars are sanitized before quoting.
+        assert!(
+            cmd.contains(&quoted),
+            "expected quoted sanitized session {quoted:?} in {cmd}"
+        );
+        assert!(!cmd.contains("evil;rm"));
+        assert_eq!(sanitized, "evil-rm--rf--");
     }
 }

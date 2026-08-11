@@ -3,6 +3,7 @@ pub mod engine;
 pub mod error;
 mod ids;
 pub mod model;
+pub mod obs;
 pub mod reconcile;
 pub mod state;
 pub mod store;
@@ -22,5 +23,6 @@ pub use model::{
     StreamRevisionItemKind, StreamRevisionItemRecord, StreamRevisionItemStatus, StreamState,
     StreamStateRecord, WorkspaceCursor,
 };
+pub use obs::SyncDiagnostics;
 pub use state::{PersistedIdentity, SqliteState, StateTransaction, read_persisted_identity};
 pub use store::{apply_journal_immutable_digest, body_digest, canonical_json, digest};

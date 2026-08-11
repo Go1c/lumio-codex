@@ -9,6 +9,7 @@ pub mod config;
 pub mod daemon;
 pub mod diagnose;
 pub mod error;
+pub mod obs;
 pub mod protocol;
 pub mod status;
 pub mod supervisor;

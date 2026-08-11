@@ -10,7 +10,7 @@ interface FileNode {
   target?: string | null;
 }
 
-export default function FileTree({ localRoot }: { localRoot: string }) {
+export default function FileTree({ projectId }: { projectId: string }) {
   const [tree, setTree] = useState<FileNode | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>("");
@@ -25,11 +25,12 @@ export default function FileTree({ localRoot }: { localRoot: string }) {
 
   useEffect(() => {
     setLoading(true);
-    invoke<FileNode>("browse_files", { localRoot })
+    setError("");
+    invoke<FileNode>("browse_files", { projectId })
       .then((t) => setTree(t))
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [localRoot]);
+  }, [projectId]);
 
   // Close context menu on any click outside.
   useEffect(() => {
@@ -44,8 +45,8 @@ export default function FileTree({ localRoot }: { localRoot: string }) {
     setFileContent("");
     try {
       const content = await invoke<string>("read_file", {
-        path,
-        baseDir: localRoot,
+        projectId,
+        relativePath: path,
       });
       setFileContent(content);
     } catch (e) {
@@ -54,13 +55,14 @@ export default function FileTree({ localRoot }: { localRoot: string }) {
   }
 
   function openInFinder(path: string) {
-    invoke("open_in_finder", { path, baseDir: localRoot }).catch((e) =>
-      console.error("Failed to open in Finder:", e)
-    );
+    invoke("open_in_finder", {
+      projectId,
+      relativePath: path || null,
+    }).catch((e) => console.error("Failed to open in Finder:", e));
   }
 
   function openRootInFinder() {
-    invoke("open_in_finder", { path: "", baseDir: localRoot }).catch((e) =>
+    invoke("open_in_finder", { projectId, relativePath: null }).catch((e) =>
       console.error("Failed to open root in Finder:", e)
     );
   }
@@ -131,9 +133,9 @@ export default function FileTree({ localRoot }: { localRoot: string }) {
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
               }}
-              title={localRoot}
+              title={tree?.name ?? projectId}
             >
-              {localRoot}
+              {tree?.name ?? projectId}
             </div>
           </div>
           <button

@@ -1,13 +1,19 @@
 pub mod agent;
+pub mod boundary;
+pub mod bug_package;
+pub mod cleanup;
 pub mod cli;
 pub mod effect;
 pub mod evidence;
 pub mod harness;
 pub mod manifest;
 pub mod process;
+pub mod profile;
 pub mod scenario;
 pub mod secret;
+pub mod selftest;
 pub mod snapshot;
+pub mod soak;
 pub mod stability;
 
 use std::path::PathBuf;
@@ -16,6 +22,8 @@ use std::path::PathBuf;
 pub enum HarnessError {
     #[error("invalid harness configuration: {0}")]
     InvalidConfiguration(&'static str),
+    #[error("self-test profile rejected: {0}")]
+    ProfileRejected(String),
     #[error("I/O operation failed for {path}: {source}")]
     Io {
         path: PathBuf,

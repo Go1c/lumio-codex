@@ -14,6 +14,21 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Run(RunArgs),
+    /// Isolation-only self-test orchestrator (requires testOnly=true profile).
+    SelfTest(SelfTestArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct SelfTestArgs {
+    /// Path to a JSON/TOML self-test profile (must set testOnly=true).
+    #[arg(long)]
+    pub profile: PathBuf,
+    /// Parent directory for sandboxes (default: system temp).
+    #[arg(long)]
+    pub sandbox_parent: Option<PathBuf>,
+    /// Wall-clock budget in seconds for the whole run (optional).
+    #[arg(long)]
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Args)]

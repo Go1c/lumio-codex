@@ -4,6 +4,7 @@ import OnboardingWizard from "./components/OnboardingWizard";
 import ProjectList from "./components/ProjectList";
 import WorkspaceView from "./components/WorkspaceView";
 import { isAuthenticationFailure } from "./auth";
+import AppShellAccountLink from "./features/account/AppShellAccountLink";
 
 interface Project {
   id: string;
@@ -88,6 +89,7 @@ export default function App() {
   if (loading) {
     return (
       <div className="app app-state">
+        <AppShellAccountLink />
         <p>Loading projects...</p>
       </div>
     );
@@ -96,6 +98,7 @@ export default function App() {
   if (loadError) {
     return (
       <div className="app app-state">
+        <AppShellAccountLink />
         <div className="load-error" role="alert">
           <strong>Projects could not be loaded</strong>
           <span>{errorSummary(loadError)}</span>
@@ -110,6 +113,7 @@ export default function App() {
   if (showWizard || projects.length === 0) {
     return (
       <div className="app">
+        <AppShellAccountLink />
         <OnboardingWizard
           onComplete={() => {
             setShowWizard(false);
@@ -129,6 +133,7 @@ export default function App() {
 
   return (
     <div className="app app-workspace">
+      <AppShellAccountLink />
       <aside className="sidebar">
         <div className="sidebar-heading">
           <span>Projects</span>

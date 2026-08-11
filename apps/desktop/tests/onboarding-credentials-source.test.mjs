@@ -11,14 +11,19 @@ const rustSource = await readFile(
   "utf8",
 );
 
-test("onboarding provisions the stable project identity before saving", () => {
+test("onboarding deploys the stable project identity before probing access", () => {
   const provision = source.indexOf('invoke("provision_workspace_credential"');
   const probe = source.indexOf('invoke("probe_workspace_access"');
   const save = source.indexOf('invoke("save_project"');
+  const execute = source.indexOf('invoke("execute_remote_deployment"');
 
   assert.ok(provision >= 0, "credential provisioning command is missing");
-  assert.ok(probe > provision, "workspace access must be probed after provisioning");
-  assert.ok(save > probe, "project must not be saved before workspace acceptance");
+  assert.ok(save > provision, "project must be saved after credential provisioning");
+  assert.ok(execute > save, "deployment must use the persisted project identity");
+  assert.ok(
+    probe > execute,
+    "workspace access must be probed after deployment registers the root",
+  );
   assert.match(source, /useState\(\(\) => crypto\.randomUUID\(\)\)/);
   assert.match(source, /workspaceId:\s*workspaceId/);
   assert.doesNotMatch(source, /workspaceId:\s*crypto\.randomUUID\(\)/);

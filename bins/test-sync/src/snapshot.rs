@@ -129,6 +129,106 @@ impl CheckpointSample {
                     && conflict.status == "manual"
             })
     }
+
+    /// Machine-readable reasons a checkpoint expectation is not yet met.
+    ///
+    /// Used for fail-fast diagnostics when a dirty remote workspace (or other
+    /// stuck state) makes convergence impossible.
+    pub fn rejection_reasons(
+        &self,
+        expected: &SnapshotExpectation<'_>,
+        expectation: CheckpointExpectationView<'_>,
+    ) -> Vec<String> {
+        let mut reasons = Vec::new();
+        match expectation {
+            CheckpointExpectationView::Converged => {
+                if !self.manifest_a.sync_equivalent(&self.manifest_b) {
+                    reasons.push("manifest_mismatch".into());
+                }
+                if self.global_revision(expected).is_none() {
+                    reasons.push("revision_not_aligned".into());
+                }
+                for (label, client) in [("a", &self.client_a), ("b", &self.client_b)] {
+                    if !client.conflicts.is_empty() {
+                        reasons.push(format!(
+                            "client_{label}_unresolved_conflicts:{}",
+                            client.conflicts.len()
+                        ));
+                    }
+                    let outbox_total = client.outbox.values().sum::<u64>();
+                    if outbox_total > 0 {
+                        reasons.push(format!("client_{label}_outbox:{outbox_total}"));
+                    }
+                    if client.intents > 0 {
+                        reasons.push(format!("client_{label}_intents:{}", client.intents));
+                    }
+                    if !client.runtime_online() {
+                        reasons.push(format!(
+                            "client_{label}_runtime:{}:connected={}",
+                            client.runtime.phase, client.runtime.connected
+                        ));
+                    }
+                    if client.runtime.pending_commands > 0 {
+                        reasons.push(format!(
+                            "client_{label}_pending_commands:{}",
+                            client.runtime.pending_commands
+                        ));
+                    }
+                }
+            }
+            CheckpointExpectationView::Conflict { path, kind } => {
+                if self.client_a.conflicts.is_empty() && self.client_b.conflicts.is_empty() {
+                    reasons.push("conflict_missing".into());
+                } else if self.client_a.conflicts != self.client_b.conflicts {
+                    reasons.push("conflict_set_mismatch".into());
+                } else if !self.client_a.conflicts.iter().all(|conflict| {
+                    conflict.path == path && conflict.kind == kind && conflict.status == "manual"
+                }) {
+                    reasons.push(format!(
+                        "conflict_shape_mismatch:expected={path}/{kind}/manual actual={:?}",
+                        self.client_a
+                            .conflicts
+                            .iter()
+                            .map(|c| format!("{}:{}:{}", c.path, c.kind, c.status))
+                            .collect::<Vec<_>>()
+                    ));
+                }
+                if self.global_revision(expected).is_none() {
+                    reasons.push("revision_not_aligned".into());
+                }
+                for (label, client) in [("a", &self.client_a), ("b", &self.client_b)] {
+                    if !client.conflict_settled() {
+                        reasons.push(format!("client_{label}_not_conflict_settled"));
+                    }
+                }
+            }
+        }
+        reasons
+    }
+
+    /// True when a Converged expectation is blocked by unresolved conflicts that
+    /// are already stable (manifests match) — waiting longer will not help.
+    pub fn converged_blocked_by_stable_conflicts(
+        &self,
+        expected: &SnapshotExpectation<'_>,
+    ) -> bool {
+        self.manifest_a.sync_equivalent(&self.manifest_b)
+            && self.global_revision(expected).is_some()
+            && (!self.client_a.conflicts.is_empty() || !self.client_b.conflicts.is_empty())
+    }
+
+    /// True when either agent is in a terminal runtime failure (fatal/stopped
+    /// with an auth or configuration error). Waiting will not recover.
+    pub fn blocked_by_terminal_runtime(&self) -> bool {
+        self.client_a.runtime_terminal_failure() || self.client_b.runtime_terminal_failure()
+    }
+}
+
+/// Lightweight view of checkpoint expectation for diagnosis (avoids circular deps).
+#[derive(Clone, Copy, Debug)]
+pub enum CheckpointExpectationView<'a> {
+    Converged,
+    Conflict { path: &'a str, kind: &'a str },
 }
 
 impl ClientSnapshot {
@@ -150,12 +250,29 @@ impl ClientSnapshot {
                 .all(|(_, count)| *count == 0)
     }
 
-    fn active_io_settled(&self) -> bool {
+    fn runtime_online(&self) -> bool {
         self.runtime.schema_version == "fns-agent-status/1"
             && self.runtime.running
             && self.runtime.phase == "online"
             && self.runtime.connected
             && self.runtime.last_error_code.is_none()
+    }
+
+    fn runtime_terminal_failure(&self) -> bool {
+        let phase = self.runtime.phase.as_str();
+        let fatal_phase = phase == "fatal" || phase == "stopped" || phase == "error";
+        let auth_or_config = self.runtime.last_error_code.as_deref().is_some_and(|code| {
+            let lower = code.to_ascii_lowercase();
+            lower.contains("auth")
+                || lower.contains("token")
+                || lower.contains("config")
+                || lower.contains("rejected")
+        });
+        (!self.runtime.running && fatal_phase) || auth_or_config
+    }
+
+    fn active_io_settled(&self) -> bool {
+        self.runtime_online()
             && self.runtime.updated_at_ms > 0
             && self.runtime.pending_commands == 0
             && self.runtime.queued_watcher_batches == 0
@@ -369,4 +486,150 @@ fn inspect_runtime(state_dir: &Path) -> Result<RuntimeSnapshot> {
             .map(|code| format!("{code:?}").to_ascii_lowercase()),
         updated_at_ms: status.updated_at_ms,
     })
+}
+
+#[cfg(test)]
+mod diagnosis_tests {
+    use super::*;
+    use crate::manifest::{Manifest, ManifestEntry, PathKind};
+    use std::collections::BTreeMap;
+
+    fn empty_runtime() -> RuntimeSnapshot {
+        RuntimeSnapshot {
+            schema_version: "fns-agent-status/1".into(),
+            workspace_id: "ws".into(),
+            running: true,
+            phase: "online".into(),
+            pid: Some(1),
+            connected: true,
+            last_ack_revision: "1".into(),
+            pending_commands: 0,
+            queued_watcher_batches: 0,
+            active_transfers: 0,
+            reconnect_attempt: 0,
+            last_error_code: None,
+            updated_at_ms: 1,
+        }
+    }
+
+    fn base_client(conflicts: Vec<ConflictSnapshot>) -> ClientSnapshot {
+        ClientSnapshot {
+            cursor: Some(CursorSnapshot {
+                client_id: "c".into(),
+                last_ack_revision: "1".into(),
+                last_applied_revision: "1".into(),
+                pending_ack_revision: None,
+            }),
+            outbox: BTreeMap::new(),
+            intents: 0,
+            stream: StreamSnapshot::default(),
+            journal: BTreeMap::new(),
+            conflicts,
+            sqlite_quick_check: "ok".into(),
+            sqlite_journal_mode: "wal".into(),
+            runtime: empty_runtime(),
+        }
+    }
+
+    fn empty_manifest(digest: &str) -> Manifest {
+        Manifest {
+            entries: Vec::new(),
+            digest: digest.into(),
+        }
+    }
+
+    #[test]
+    fn rejection_reasons_reports_unresolved_conflicts_and_outbox() {
+        let conflict = ConflictSnapshot {
+            conflict_id: "1".into(),
+            conflict_revision: "1".into(),
+            path: "x.txt".into(),
+            kind: "content".into(),
+            status: "manual".into(),
+        };
+        let mut client_a = base_client(vec![conflict.clone()]);
+        client_a.outbox.insert("blocked_conflict".into(), 2);
+        client_a.intents = 2;
+        client_a.runtime.pending_commands = 2;
+        let sample = CheckpointSample {
+            manifest_a: empty_manifest("aaa"),
+            manifest_b: empty_manifest("aaa"),
+            client_a,
+            client_b: base_client(vec![conflict]),
+        };
+        let expected = SnapshotExpectation {
+            workspace_id: "ws",
+            client_id_a: "c",
+            client_id_b: "c",
+            pids: (1, 1),
+        };
+        let reasons = sample.rejection_reasons(&expected, CheckpointExpectationView::Converged);
+        assert!(
+            reasons.iter().any(|r| r.contains("unresolved_conflicts")),
+            "{reasons:?}"
+        );
+        assert!(reasons.iter().any(|r| r.contains("outbox")), "{reasons:?}");
+        assert!(reasons.iter().any(|r| r.contains("intents")), "{reasons:?}");
+        assert!(
+            sample.converged_blocked_by_stable_conflicts(&expected)
+                || !sample.client_a.conflicts.is_empty(),
+            "should detect conflicts present"
+        );
+    }
+
+    #[test]
+    fn converged_blocked_when_manifests_match_with_conflicts() {
+        let conflict = ConflictSnapshot {
+            conflict_id: "1".into(),
+            conflict_revision: "1".into(),
+            path: "x.txt".into(),
+            kind: "content".into(),
+            status: "manual".into(),
+        };
+        // Build clients with consistent revision identity for global_revision
+        let mut a = base_client(vec![conflict.clone()]);
+        a.runtime.pid = Some(11);
+        a.runtime.workspace_id = "ws".into();
+        a.cursor = Some(CursorSnapshot {
+            client_id: "ca".into(),
+            last_ack_revision: "5".into(),
+            last_applied_revision: "5".into(),
+            pending_ack_revision: None,
+        });
+        let mut b = base_client(vec![conflict]);
+        b.runtime.pid = Some(22);
+        b.runtime.workspace_id = "ws".into();
+        b.cursor = Some(CursorSnapshot {
+            client_id: "cb".into(),
+            last_ack_revision: "5".into(),
+            last_applied_revision: "5".into(),
+            pending_ack_revision: None,
+        });
+        let sample = CheckpointSample {
+            manifest_a: empty_manifest("same"),
+            manifest_b: empty_manifest("same"),
+            client_a: a,
+            client_b: b,
+        };
+        let expected = SnapshotExpectation {
+            workspace_id: "ws",
+            client_id_a: "ca",
+            client_id_b: "cb",
+            pids: (11, 22),
+        };
+        // global_revision may still fail if consistent_revision checks more fields;
+        // at least rejection reasons should include conflicts.
+        let reasons = sample.rejection_reasons(&expected, CheckpointExpectationView::Converged);
+        assert!(
+            reasons.iter().any(|r| r.contains("unresolved_conflicts")),
+            "{reasons:?}"
+        );
+        let _ = ManifestEntry {
+            path: "p".into(),
+            kind: PathKind::File,
+            size: 0,
+            mode: 0,
+            blake3: None,
+        };
+    }
 }

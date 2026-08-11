@@ -1,8 +1,10 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import TerminalPane from "./Terminal";
 import FileTree from "./FileTree";
 import ConflictsPane from "./ConflictsPane";
+import { DiagnosticsPane } from "../features/diagnostics";
+import { createInvokeDiagnosticsClient } from "../lib/diagnosticsApi";
 import {
   accountConnectionFailureMessage,
   isAuthenticationFailure,
@@ -37,7 +39,7 @@ interface WorkspaceViewProps {
   onRetryStart: () => Promise<unknown | null>;
 }
 
-type Tab = "terminal" | "files" | "conflicts";
+type Tab = "terminal" | "files" | "conflicts" | "logs";
 type Action = "start" | "stop";
 
 const SYNC_POLL_INTERVAL_MS = 2000;
@@ -115,6 +117,10 @@ export default function WorkspaceView({
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const connectionGeneration = useRef(0);
   const connectionInFlight = useRef(false);
+  const diagnosticsClient = useMemo(
+    () => createInvokeDiagnosticsClient(invoke),
+    [],
+  );
 
   const authenticationRequired = Boolean(
     credentialRequired ||
@@ -271,6 +277,7 @@ export default function WorkspaceView({
     { key: "terminal", label: "Terminal" },
     { key: "files", label: "Files" },
     { key: "conflicts", label: "Conflicts" },
+    { key: "logs", label: "Logs" },
   ];
   const hasFailure = Boolean(
     startupFailure || statusFailure || actionFailure || status?.error,
@@ -424,11 +431,17 @@ export default function WorkspaceView({
             tmuxSession={project.tmuxSession || `fns-${project.name}`}
           />
         )}
-        {activeTab === "files" && <FileTree localRoot={project.localRoot} />}
+        {activeTab === "files" && <FileTree projectId={project.id} />}
         {activeTab === "conflicts" && (
           <ConflictsPane
             projectId={project.id}
             syncRunning={Boolean(status?.running)}
+          />
+        )}
+        {activeTab === "logs" && (
+          <DiagnosticsPane
+            projectId={project.id}
+            client={diagnosticsClient}
           />
         )}
       </div>

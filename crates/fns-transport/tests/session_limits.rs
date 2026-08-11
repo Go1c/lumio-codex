@@ -549,6 +549,84 @@ async fn inbound_idle_timeout_is_not_reset_by_outbound_heartbeat() {
     engine.stop().await;
 }
 
+
+#[tokio::test]
+async fn inbound_pong_resets_idle_timeout() {
+    // B-00009 investigation: server WritePong must keep the session alive.
+    // last_inbound_at is updated for any inbound frame (including Pong) before
+    // dispatch — this test locks that contract so idle 60s does not fire while
+    // the peer answers client heartbeats.
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let server = support::fake_server::ScriptedWorkspaceServer::start(|mut socket| async move {
+        answer_hello(&mut socket).await;
+        let subscribe = next_client_request(&mut socket).await;
+        assert_eq!(subscribe.action, WorkspaceAction::WorkspaceSubscribe);
+        let stream_id =
+            fns_protocol::StreamId::parse("10000000-0000-4000-8000-000000000003").unwrap();
+        let begin = fns_protocol::WorkspaceSnapshotBeginMessage {
+            workspace_id: workspace_id(),
+            stream_id,
+            mode: fns_protocol::WorkspaceSnapshotMode::Snapshot,
+            from_revision: WorkspaceRevision::ZERO,
+            final_revision: WorkspaceRevision::ZERO,
+            entry_count: 0,
+            event_count: 0,
+            conflict_count: 0,
+        };
+        let frame = encode_success(
+            WorkspaceAction::WorkspaceSnapshotBegin,
+            WorkspaceFlow::ServerPush,
+            None,
+            MessageBody::SnapshotBegin(begin),
+        )
+        .unwrap();
+        send_server_frame(&mut socket, frame).await;
+        // Answer client pings with pongs for ~150ms so idle_timeout (45ms) cannot elapse.
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(150);
+        while tokio::time::Instant::now() < deadline {
+            tokio::select! {
+                msg = socket.next() => {
+                    match msg {
+                        Some(Ok(Message::Ping(data))) => {
+                            socket.send(Message::Pong(data)).await.unwrap();
+                        }
+                        Some(Ok(Message::Close(_))) | None => break,
+                        _ => {}
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => break,
+            }
+        }
+        std::future::pending::<()>().await;
+    })
+    .await;
+    let engine = TestEngine::new(None);
+    let mut limits = test_limits();
+    limits.request_timeout = Duration::from_secs(1);
+    limits.idle_timeout = Duration::from_millis(45);
+    limits.heartbeat_interval = Duration::from_millis(10);
+    let (session, mut writer) =
+        connected_session(server.endpoint(), engine.handle.clone(), limits).await;
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(120),
+        session.run(&mut writer, tokio_util::sync::CancellationToken::new()),
+    )
+    .await;
+    // Session should still be running (timeout on our wait), not IdleTimeout error.
+    match result {
+        Err(_) => {} // outer wait timed out => session still alive — good
+        Ok(SessionResult::Error(error)) => {
+            panic!("session ended with {:?} despite pongs", error.code());
+        }
+        Ok(other) => panic!("unexpected session result while pongs active: {other:?}"),
+    }
+    drop(server);
+    engine.stop().await;
+}
+
 #[tokio::test]
 async fn wrong_mutation_response_id_does_not_settle_durable_outbox() {
     let (operation_tx, operation_rx) = tokio::sync::oneshot::channel();

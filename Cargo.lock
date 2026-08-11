@@ -1052,13 +1052,16 @@ dependencies = [
 name = "fns-agent"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clap",
  "fns-fs",
+ "fns-observability",
  "fns-platform",
  "fns-protocol",
  "fns-sync-core",
  "fns-transport",
  "futures-util",
+ "hex",
  "http",
  "serde",
  "serde_json",
@@ -1090,6 +1093,19 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "unicode-normalization",
+ "uuid",
+]
+
+[[package]]
+name = "fns-observability"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.19",
  "uuid",
 ]
 
@@ -1129,6 +1145,7 @@ dependencies = [
  "blake3",
  "diffy",
  "fns-fs",
+ "fns-observability",
  "fns-protocol",
  "rusqlite",
  "serde",
@@ -1145,6 +1162,7 @@ dependencies = [
  "blake3",
  "bytes",
  "fns-fs",
+ "fns-observability",
  "fns-platform",
  "fns-protocol",
  "fns-sync-core",
@@ -1169,15 +1187,18 @@ name = "fns-workspace-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "blake3",
  "chrono",
  "diffy",
  "directories",
  "fns-agent",
+ "fns-observability",
  "fns-platform",
  "fns-protocol",
  "fns-sync-core",
  "fns-transport",
  "futures-util",
+ "hex",
  "httparse",
  "portable-pty",
  "serde",
@@ -1188,6 +1209,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-shell",
  "tempfile",
+ "test-sync",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
@@ -4216,6 +4238,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "zeroize",
 ]
 

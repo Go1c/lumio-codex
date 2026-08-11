@@ -127,9 +127,11 @@ struct RestartPolicy {
 impl Default for RestartPolicy {
     fn default() -> Self {
         Self {
-            max_restarts: 3,
+            // B-00009: allow more recoveries across a long-lived session so transient
+            // IdleTimeout/Network agent exits do not permanently stop sync after a few cycles.
+            max_restarts: 32,
             initial_backoff: Duration::from_millis(250),
-            max_backoff: Duration::from_secs(5),
+            max_backoff: Duration::from_secs(30),
             process_options: AgentProcessOptions::default(),
         }
     }
@@ -1811,6 +1813,9 @@ async fn session_actor(
                 return;
             }
             has_started = true;
+            // Successful launch after a recovery: reset budget so a long-running
+            // session can survive repeated transient IdleTimeout/Network exits.
+            restart_attempts = 0;
         } else {
             update_session_status(
                 &registry,
@@ -1821,6 +1826,7 @@ async fn session_actor(
                 "running".into(),
             )
             .await;
+            restart_attempts = 0;
         }
 
         loop {

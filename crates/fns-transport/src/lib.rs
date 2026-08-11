@@ -9,6 +9,7 @@ pub mod config;
 pub mod dispatch;
 pub mod engine;
 pub mod error;
+pub mod obs;
 pub mod reconnect;
 pub mod session;
 pub mod socket;
@@ -24,5 +25,6 @@ pub use config::{
 };
 pub use engine::{EngineHandle, EngineRuntimeStatus, EngineWorker};
 pub use error::{TransportError, TransportErrorCode};
+pub use obs::TransportDiagnostics;
 pub use reconnect::{JitterSource, ReconnectPolicy, ReconnectSchedule, UuidJitter};
 pub use session::{SessionConnectionPhase, SessionRuntimeStatus};

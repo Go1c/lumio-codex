@@ -24,9 +24,12 @@ test("onboarding previews before executing the managed remote deployment", () =>
 
   assert.ok(preview >= 0, "read-only deployment preview is missing");
   assert.ok(provision > preview, "credential provisioning must follow preview");
-  assert.ok(probe > provision, "workspace access must be verified after login");
-  assert.ok(save > probe, "project persistence must follow access verification");
+  assert.ok(save > provision, "project persistence must follow provisioning");
   assert.ok(execute > save, "remote writes must use the accepted, persisted project");
+  assert.ok(
+    probe > execute,
+    "workspace access must be verified after deployment registers the root",
+  );
   assert.match(source, /listen<DeployProgress>\(\s*"deploy:\/\/progress"/);
   assert.match(source, /invoke\("cancel_remote_deployment"/);
 });

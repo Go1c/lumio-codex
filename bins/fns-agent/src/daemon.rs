@@ -9,11 +9,13 @@ use crate::config::AgentConfig;
 use crate::error::{AgentError, AgentErrorCode, AgentPhase};
 use crate::status::AgentStatus;
 
-use fns_sync_core::{SyncEngine, SyncEngineConfig};
+use fns_observability::RuntimeDiagnostics;
+use fns_sync_core::{SyncDiagnostics, SyncEngine, SyncEngineConfig};
 use fns_transport::{
     EngineWorker, JitterSource, ReconnectPolicy, ReconnectSchedule, SessionConnectionPhase,
-    SessionRuntimeStatus, UuidJitter, WorkspaceEndpoint,
+    SessionRuntimeStatus, TransportDiagnostics, UuidJitter, WorkspaceEndpoint,
 };
+use std::sync::Arc;
 
 use std::future::Future;
 use std::path::Path;
@@ -109,6 +111,9 @@ async fn run_until_shutdown(
     let state_dir = config.state_dir.clone();
     let endpoint = WorkspaceEndpoint::parse(&config.endpoint)
         .map_err(|_| AgentError::new(AgentErrorCode::InvalidConfiguration))?;
+    let diagnostics =
+        crate::obs::open_agent_diagnostics(&state_dir, &workspace_id.to_string(), None);
+    crate::obs::emit_lifecycle(&diagnostics, "starting", "agent starting", vec![]);
 
     write_status(&state_dir, AgentPhase::Starting, workspace_id)?;
     write_status(&state_dir, AgentPhase::Recovering, workspace_id)?;
@@ -117,6 +122,15 @@ async fn run_until_shutdown(
         Ok(runtime) => runtime,
         Err(error) => {
             write_status_error(&state_dir, workspace_id, error.code())?;
+            crate::obs::emit_lifecycle(
+                &diagnostics,
+                "fatal",
+                "local runtime failed",
+                vec![(
+                    "errorCode",
+                    serde_json::to_value(error.code()).unwrap_or(serde_json::Value::Null),
+                )],
+            );
             return Err(error);
         }
     };
@@ -131,6 +145,7 @@ async fn run_until_shutdown(
                     handle,
                     &state_dir,
                     workspace_id,
+                    &diagnostics,
                     Err(AgentError::new(AgentErrorCode::Protocol)),
                 )
                 .await;
@@ -143,6 +158,7 @@ async fn run_until_shutdown(
                 shutdown,
                 watcher_failure,
                 queued_watcher_batches,
+                &diagnostics,
             )
             .await
         }
@@ -154,6 +170,7 @@ async fn run_until_shutdown(
         handle,
         &state_dir,
         workspace_id,
+        &diagnostics,
         run_result,
     )
     .await
@@ -192,6 +209,7 @@ async fn run_transport_loop(
     shutdown: tokio_util::sync::CancellationToken,
     watcher_failure: tokio_util::sync::CancellationToken,
     queued_watcher_batches: StdArc<StdAtomicUsize>,
+    diagnostics: &RuntimeDiagnostics,
 ) -> Result<(), AgentError> {
     let workspace_id = config.workspace_id;
     let state_dir = &config.state_dir;
@@ -216,6 +234,7 @@ async fn run_transport_loop(
 
         let reconnect_error_code = match connect_result {
             Ok(stream) => {
+                let transport_diag = TransportDiagnostics::new(Arc::new(diagnostics.clone()));
                 let (session, mut writer, mut session_status_rx) =
                     fns_transport::session::Session::new_observed(
                         stream,
@@ -224,12 +243,14 @@ async fn run_transport_loop(
                         config.client_id,
                         "0.1.0".into(),
                     );
+                let session = session.with_diagnostics(transport_diag);
                 let mut current_status = *session_status_rx.borrow_and_update();
                 write_session_status(
                     state_dir,
                     workspace_id,
                     handle,
                     &queued_watcher_batches,
+                    diagnostics,
                     current_status,
                     schedule.attempt(),
                 )
@@ -263,6 +284,7 @@ async fn run_transport_loop(
                                 workspace_id,
                                 handle,
                                 &queued_watcher_batches,
+                                diagnostics,
                                 current_status,
                                 schedule.attempt(),
                             )
@@ -274,6 +296,7 @@ async fn run_transport_loop(
                                 workspace_id,
                                 handle,
                                 &queued_watcher_batches,
+                                diagnostics,
                                 current_status,
                                 schedule.attempt(),
                             )
@@ -307,12 +330,16 @@ async fn run_transport_loop(
         };
 
         let delay = schedule.next_delay();
+        let attempt = schedule.attempt();
+        TransportDiagnostics::new(Arc::new(diagnostics.clone()))
+            .on_reconnect(attempt, &format!("{reconnect_error_code:?}"));
         write_reconnect_status(
             state_dir,
             workspace_id,
             handle,
             &queued_watcher_batches,
-            schedule.attempt(),
+            diagnostics,
+            attempt,
             reconnect_error_code,
         )
         .await?;
@@ -343,6 +370,7 @@ async fn finalize_runtime(
     handle: fns_transport::EngineHandle,
     state_dir: &Path,
     workspace_id: fns_protocol::WorkspaceId,
+    diagnostics: &RuntimeDiagnostics,
     run_result: Result<(), AgentError>,
 ) -> Result<(), AgentError> {
     let stopping_result = if run_result.is_ok() {
@@ -359,9 +387,20 @@ async fn finalize_runtime(
         .or_else(|| engine_result.err());
     if let Some(error) = error {
         write_status_error(state_dir, workspace_id, error.code())?;
+        crate::obs::emit_lifecycle(
+            diagnostics,
+            "fatal",
+            "agent stopped with error",
+            vec![(
+                "errorCode",
+                serde_json::to_value(error.code()).unwrap_or(serde_json::Value::Null),
+            )],
+        );
         return Err(error);
     }
-    write_status_stopped(state_dir, workspace_id)
+    write_status_stopped(state_dir, workspace_id)?;
+    crate::obs::emit_lifecycle(diagnostics, "stopped", "agent stopped", vec![]);
+    Ok(())
 }
 
 async fn shutdown_engine_worker(
@@ -797,6 +836,7 @@ async fn write_session_status(
     workspace_id: fns_protocol::WorkspaceId,
     handle: &fns_transport::EngineHandle,
     queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    diagnostics: &RuntimeDiagnostics,
     session: SessionRuntimeStatus,
     reconnect_attempt: u32,
 ) -> Result<(), AgentError> {
@@ -810,6 +850,7 @@ async fn write_session_status(
         workspace_id,
         handle,
         queued_watcher_batches,
+        diagnostics,
         phase,
         connected,
         session.active_transfers,
@@ -824,14 +865,17 @@ async fn write_reconnect_status(
     workspace_id: fns_protocol::WorkspaceId,
     handle: &fns_transport::EngineHandle,
     queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    diagnostics: &RuntimeDiagnostics,
     reconnect_attempt: u32,
     last_error_code: AgentErrorCode,
 ) -> Result<(), AgentError> {
+    diagnostics.bump_connection_generation();
     write_runtime_status(
         state_dir,
         workspace_id,
         handle,
         queued_watcher_batches,
+        diagnostics,
         AgentPhase::Connecting,
         false,
         0,
@@ -847,6 +891,7 @@ async fn write_runtime_status(
     workspace_id: fns_protocol::WorkspaceId,
     handle: &fns_transport::EngineHandle,
     queued_watcher_batches: &StdArc<StdAtomicUsize>,
+    diagnostics: &RuntimeDiagnostics,
     phase: AgentPhase,
     connected: bool,
     active_transfers: usize,
@@ -877,7 +922,58 @@ async fn write_runtime_status(
     };
     status
         .write_to(&state_dir.join("runtime-status.json"))
-        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))
+        .map_err(|_| AgentError::new(AgentErrorCode::Filesystem))?;
+    let phase_name = serde_json::to_value(phase)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".into());
+    let error_name = last_error_code.and_then(|code| {
+        serde_json::to_value(code)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+    });
+    // Best-effort durable diagnostic event; never fails the status path.
+    crate::obs::emit_status_snapshot(
+        diagnostics,
+        &phase_name,
+        connected,
+        engine.pending_commands,
+        queued_watcher_batches,
+        active_transfers,
+        &engine.last_ack_revision.to_string(),
+        reconnect_attempt,
+        error_name.as_deref(),
+    );
+    // Boundary events on the real agent path (outbox/stream/apply/cursor/watcher).
+    let sync_diag = SyncDiagnostics::new(Arc::new(diagnostics.clone()));
+    sync_diag.on_outbox_snapshot(
+        engine.outbox_queued,
+        engine.outbox_dispatched,
+        engine.outbox_awaiting_blob,
+        engine.outbox_blocked_conflict,
+    );
+    if engine.stream_active {
+        sync_diag.on_stream_advance(
+            "active",
+            &engine.last_applied_revision.to_string(),
+            0,
+            false,
+        );
+    }
+    sync_diag.on_apply_progress(engine.last_applied_revision.get(), 0);
+    sync_diag.on_cursor(
+        &engine.last_ack_revision.to_string(),
+        &engine.last_applied_revision.to_string(),
+        engine.pending_ack,
+        engine.pending_segment_ack,
+    );
+    crate::obs::emit_watcher(
+        diagnostics,
+        "watcher.queue.snapshot",
+        "watcher queue depth",
+        queued_watcher_batches,
+    );
+    Ok(())
 }
 
 fn previous_status(state_dir: &Path, workspace_id: fns_protocol::WorkspaceId) -> AgentStatus {
@@ -1374,12 +1470,18 @@ mod tests {
         let (worker, handle) = engine(workspace.path(), state.path(), rules_config());
         let queued = StdArc::new(StdAtomicUsize::new(0));
         let workspace_id = agent_config(workspace.path(), state.path()).workspace_id;
+        let diagnostics = crate::obs::open_agent_diagnostics(
+            state.path(),
+            &workspace_id.to_string(),
+            Some("run-status-reuse".into()),
+        );
 
         write_reconnect_status(
             state.path(),
             workspace_id,
             &handle,
             &queued,
+            &diagnostics,
             3,
             AgentErrorCode::ResourceLimit,
         )
@@ -1399,6 +1501,7 @@ mod tests {
             workspace_id,
             &handle,
             &queued,
+            &diagnostics,
             4,
             AgentErrorCode::TransferTimeout,
         )
@@ -1413,6 +1516,21 @@ mod tests {
             status.last_error_code,
             Some(AgentErrorCode::TransferTimeout)
         );
+        let diagnostic_lines =
+            std::fs::read_to_string(state.path().join("diagnostics").join("events.jsonl")).unwrap();
+        let status_events: Vec<fns_observability::DiagnosticEvent> = diagnostic_lines
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|event: &fns_observability::DiagnosticEvent| {
+                event.event_name == "agent.status.published"
+            })
+            .collect();
+        assert_eq!(status_events.len(), 2);
+        assert!(status_events.iter().all(|event| {
+            event.run_id == "run-status-reuse"
+                && event.fields.contains_key("queuedWatcherBatches")
+                && event.fields.contains_key("lastErrorCode")
+        }));
 
         stop_engine(worker, &handle).await;
     }
@@ -1428,12 +1546,19 @@ mod tests {
             .await
             .unwrap();
         let queued = StdArc::new(StdAtomicUsize::new(2));
+        let workspace_id = agent_config(workspace.path(), state.path()).workspace_id;
+        let diagnostics = crate::obs::open_agent_diagnostics(
+            state.path(),
+            &workspace_id.to_string(),
+            Some("run-online-status".into()),
+        );
 
         write_session_status(
             state.path(),
-            agent_config(workspace.path(), state.path()).workspace_id,
+            workspace_id,
             &handle,
             &queued,
+            &diagnostics,
             SessionRuntimeStatus {
                 phase: SessionConnectionPhase::Online,
                 active_transfers: 3,
@@ -1628,6 +1753,11 @@ mod tests {
         let config = agent_config(workspace.path(), state.path());
         let workspace_id = config.workspace_id;
         let (mut watcher, worker, handle) = start_local_runtime(&config).await.unwrap();
+        let diagnostics = crate::obs::open_agent_diagnostics(
+            state.path(),
+            &workspace_id.to_string(),
+            Some("run-finalize".into()),
+        );
 
         let result = finalize_runtime(
             &mut watcher,
@@ -1635,6 +1765,7 @@ mod tests {
             handle,
             state.path(),
             workspace_id,
+            &diagnostics,
             Err(AgentError::new(AgentErrorCode::Network)),
         )
         .await;

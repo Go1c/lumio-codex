@@ -17,6 +17,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+blake3.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 base64 = "0.22.1"
 tauri = { version = "2", features = [] }
@@ -24,6 +25,7 @@ tauri-build = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 directories.workspace = true
 diffy.workspace = true
+hex.workspace = true
 portable-pty = "0.8"
 serde.workspace = true
 serde_json.workspace = true
@@ -34,10 +36,12 @@ tokio.workspace = true
 tokio-util.workspace = true
 uuid.workspace = true
 fns-agent = { path = "../../../bins/fns-agent" }
+fns-observability = { path = "../../../crates/fns-observability" }
 fns-platform = { path = "../../../crates/fns-platform" }
 fns-protocol = { path = "../../../crates/fns-protocol" }
 fns-sync-core = { path = "../../../crates/fns-sync-core" }
 fns-transport = { path = "../../../crates/fns-transport" }
+test-sync = { path = "../../../bins/test-sync" }
 httparse = "1.10.1"
 zeroize = { workspace = true, features = ["serde"] }
 

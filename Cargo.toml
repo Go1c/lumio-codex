@@ -6,6 +6,7 @@ members = [
   "crates/fns-fs",
   "crates/fns-transport",
   "crates/fns-platform",
+  "crates/fns-observability",
   "bins/fns-agent",
   "bins/test-sync",
   "apps/desktop/src-tauri",

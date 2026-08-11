@@ -1429,7 +1429,10 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<(), DeployFailure>>,
 {
-    eprintln!("[fns-deploy] step={step:?} status=starting project={}", request.project_id);
+    eprintln!(
+        "[fns-deploy] step={step:?} status=starting project={}",
+        request.project_id
+    );
     progress(DeployProgress {
         project_id: request.project_id.clone(),
         step,

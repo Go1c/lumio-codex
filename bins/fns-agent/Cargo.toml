@@ -17,12 +17,15 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+blake3.workspace = true
 clap.workspace = true
 fns-fs = { path = "../../crates/fns-fs" }
+fns-observability = { path = "../../crates/fns-observability" }
 fns-platform = { path = "../../crates/fns-platform" }
 fns-protocol = { path = "../../crates/fns-protocol" }
 fns-sync-core = { path = "../../crates/fns-sync-core" }
 fns-transport = { path = "../../crates/fns-transport" }
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

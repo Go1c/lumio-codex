@@ -5,6 +5,7 @@
 
 mod credentials;
 mod deploy;
+mod diagnostics;
 mod files;
 mod project;
 mod ssh;
@@ -288,12 +289,19 @@ pub fn run() {
         .manage(deploy::DeployState::production())
         .manage(credential_state)
         .manage(sync_state)
+        .manage(diagnostics::DiagnosticsState::default())
         .invoke_handler(tauri::generate_handler![
             greet,
             save_project,
             list_projects,
             delete_project,
             parse_ssh_hosts,
+            diagnostics::diagnostics_list_events,
+            diagnostics::diagnostics_get_health,
+            diagnostics::diagnostics_preview_support_bundle,
+            diagnostics::diagnostics_export_support_bundle,
+            diagnostics::diagnostics_run_self_test,
+            diagnostics::diagnostics_cancel_self_test,
             terminal::start_terminal,
             terminal::write_terminal,
             terminal::resize_terminal,

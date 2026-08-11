@@ -1596,7 +1596,10 @@ impl CredentialState {
     ) -> Result<ProvisionStatus, ProvisionFailure> {
         self.retry_pending_revocation(&request.project_id, &tunnels)
             .await?;
-        eprintln!("[fns-provision] step=tunnel starting host={}", request.ssh_host_alias);
+        eprintln!(
+            "[fns-provision] step=tunnel starting host={}",
+            request.ssh_host_alias
+        );
         let project_id = request.project_id.clone();
         let tunnel_key = provision_tunnel_key(&request.project_id);
         let tunnel_host = request.ssh_host_alias.clone();
@@ -1753,19 +1756,28 @@ impl CredentialState {
         .await
         {
             Ok(response) => {
-                eprintln!("[fns-provision] step=login status=http_ok status_code={}", response.status);
+                eprintln!(
+                    "[fns-provision] step=login status=http_ok status_code={}",
+                    response.status
+                );
                 response
             }
             Err(_) if cancellation.is_cancelled() => {
                 return Err(ProvisionErrorCode::Cancelled.into());
             }
             Err(failure) => {
-                eprintln!("[fns-provision] step=login status=FAILED code={:?}", failure.primary);
+                eprintln!(
+                    "[fns-provision] step=login status=FAILED code={:?}",
+                    failure.primary
+                );
                 return Err(failure);
             }
         };
         let login: LoginData = decode_envelope(login_response, Endpoint::Login).map_err(|e| {
-            eprintln!("[fns-provision] step=login status=DECODE_FAILED code={:?}", e.primary);
+            eprintln!(
+                "[fns-provision] step=login status=DECODE_FAILED code={:?}",
+                e.primary
+            );
             e
         })?;
         eprintln!("[fns-provision] step=login status=decoded_ok");
@@ -1807,21 +1819,31 @@ impl CredentialState {
             .await
             {
                 Ok(response) => {
-                    eprintln!("[fns-provision] step=token_issue status=http_ok status_code={}", response.status);
+                    eprintln!(
+                        "[fns-provision] step=token_issue status=http_ok status_code={}",
+                        response.status
+                    );
                     response
                 }
                 Err(_) if cancellation.is_cancelled() => {
                     return Err(ProvisionErrorCode::Cancelled.into());
                 }
                 Err(failure) => {
-                    eprintln!("[fns-provision] step=token_issue status=FAILED code={:?}", failure.primary);
+                    eprintln!(
+                        "[fns-provision] step=token_issue status=FAILED code={:?}",
+                        failure.primary
+                    );
                     return Err(failure);
                 }
             };
-            let issued: TokenData = decode_envelope(token_response, Endpoint::Token).map_err(|e| {
-                eprintln!("[fns-provision] step=token_issue status=DECODE_FAILED code={:?}", e.primary);
-                e
-            })?;
+            let issued: TokenData =
+                decode_envelope(token_response, Endpoint::Token).map_err(|e| {
+                    eprintln!(
+                        "[fns-provision] step=token_issue status=DECODE_FAILED code={:?}",
+                        e.primary
+                    );
+                    e
+                })?;
             if issued.scope != "p:ws c:fns-agent f:workspace_rw" {
                 return Err(ProvisionErrorCode::ScopeMismatch.into());
             }
@@ -2251,8 +2273,15 @@ async fn post_json(
     bounded_io_timeout(deadlines.io, stream.write_all(&request)).await?;
     let response = bounded_provision_timeout(deadlines.io, read_http_response(&mut stream)).await;
     match &response {
-        Ok(resp) => eprintln!("[fns-provision] post_json path={path} ok status={} body_len={}", resp.status, resp.body.len()),
-        Err(failure) => eprintln!("[fns-provision] post_json path={path} FAILED code={:?}", failure.primary),
+        Ok(resp) => eprintln!(
+            "[fns-provision] post_json path={path} ok status={} body_len={}",
+            resp.status,
+            resp.body.len()
+        ),
+        Err(failure) => eprintln!(
+            "[fns-provision] post_json path={path} FAILED code={:?}",
+            failure.primary
+        ),
     }
     response
 }
@@ -2313,7 +2342,11 @@ async fn read_http_response(stream: &mut TcpStream) -> Result<HttpResponse, Prov
             .await
             .map_err(|_| ProvisionFailure::from(ProvisionErrorCode::Network))?;
         if read == 0 {
-            eprintln!("[fns-provision] read_http_response: EOF after {} bytes, header_end={}", bytes.len(), header_end.is_some());
+            eprintln!(
+                "[fns-provision] read_http_response: EOF after {} bytes, header_end={}",
+                bytes.len(),
+                header_end.is_some()
+            );
             break;
         }
         bytes.extend_from_slice(&chunk[..read]);

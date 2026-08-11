@@ -26,9 +26,11 @@ pub const MAX_ACTIVE_TRANSFERS: usize = 4;
 
 // Fixed timeouts.
 pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Must exceed server workspace-v2 heartbeat wait (60s) so a live peer that only
+/// answers pings is not dropped (B-00009). Outbound-only traffic still does not reset idle.
+pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
-pub const TRANSFER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub const TRANSFER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 pub const TRANSFER_MAX_LIFETIME: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 pub const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 

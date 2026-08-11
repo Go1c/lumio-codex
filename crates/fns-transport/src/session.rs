@@ -116,6 +116,9 @@ pub struct Session {
     last_inbound_at: Instant,
     limits: SessionLimits,
     status_tx: Option<tokio::sync::watch::Sender<SessionRuntimeStatus>>,
+    /// Best-effort transport diagnostics (shared RuntimeDiagnostics runId).
+    diagnostics: crate::obs::TransportDiagnostics,
+    last_published_phase: Option<SessionConnectionPhase>,
 }
 
 /// Production session deadlines and per-poll work limits.
@@ -316,9 +319,18 @@ impl Session {
                 last_inbound_at: now,
                 limits,
                 status_tx,
+                diagnostics: crate::obs::TransportDiagnostics::none(),
+                last_published_phase: None,
             },
             writer,
         )
+    }
+
+    /// Attach shared runtime diagnostics so phase/reconnect/request events
+    /// share the agent process `runId`. Safe to call before `run`.
+    pub fn with_diagnostics(mut self, diagnostics: crate::obs::TransportDiagnostics) -> Self {
+        self.diagnostics = diagnostics;
+        self
     }
 
     /// Run the session: send Hello, Subscribe, then process the read loop
@@ -481,10 +493,7 @@ impl Session {
         }
     }
 
-    fn publish_runtime_status(&self) {
-        let Some(status_tx) = &self.status_tx else {
-            return;
-        };
+    fn publish_runtime_status(&mut self) {
         let phase = match &self.phase {
             SessionPhase::AwaitingHello => SessionConnectionPhase::Handshaking,
             SessionPhase::AwaitingSubscribe | SessionPhase::Streaming(_) => {
@@ -493,9 +502,24 @@ impl Session {
             SessionPhase::Online => SessionConnectionPhase::Online,
             SessionPhase::Closing => return,
         };
+        let active_transfers = self.transfers.active_count();
+        if self.last_published_phase != Some(phase) {
+            let phase_name = match phase {
+                SessionConnectionPhase::Handshaking => "handshaking",
+                SessionConnectionPhase::Subscribing => "subscribing",
+                SessionConnectionPhase::Online => "online",
+            };
+            self.diagnostics
+                .on_phase(phase_name, "session connection phase advanced");
+            self.last_published_phase = Some(phase);
+        }
+        self.diagnostics.on_transfer("session", active_transfers);
+        let Some(status_tx) = &self.status_tx else {
+            return;
+        };
         let next = SessionRuntimeStatus {
             phase,
-            active_transfers: self.transfers.active_count(),
+            active_transfers,
         };
         let _ = status_tx.send_if_modified(|current| {
             if *current == next {
@@ -1229,6 +1253,7 @@ impl Session {
             self.requests.cancel_unsent(&request_id);
             return Err(error);
         }
+        self.diagnostics.on_request_sent("workspace.hello");
 
         // Await Hello response.
         loop {
@@ -1289,6 +1314,7 @@ impl Session {
         .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
         self.requests.reserve_untracked_id(request_id)?;
         writer.send_text(frame).await?;
+        self.diagnostics.on_request_sent("workspace.subscribe");
 
         self.phase = SessionPhase::AwaitingSubscribe;
         self.subscribe_deadline = Some(Instant::now() + self.limits.request_timeout);

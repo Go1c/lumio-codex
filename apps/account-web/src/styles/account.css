@@ -1,0 +1,161 @@
+/* Account web responsive baseline (375px+) — no horizontal overflow for long emails */
+
+:root {
+  --account-max: 28rem;
+  --account-pad: 1rem;
+  --account-error: #b91c1c;
+  --account-focus: #2563eb;
+  --account-muted: #4b5563;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.account-shell {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: var(--account-pad);
+  overflow-x: hidden;
+}
+
+/* Explicit 375px layout constraint for account cards */
+@media (min-width: 375px) {
+  .account-shell {
+    min-width: 375px;
+  }
+}
+
+.account-card {
+  max-width: var(--account-max);
+  width: 100%;
+  margin: 0 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.account-description {
+  color: var(--account-muted);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.email-field,
+.email-field--long,
+.field {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  margin-bottom: 0.75rem;
+}
+
+.email-field--long input,
+.email-field input {
+  /* long local-parts / domains must wrap / scroll inside field, not page */
+  overflow-x: auto;
+  text-overflow: ellipsis;
+}
+
+.account-form label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+.account-form input {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+}
+
+.account-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 0.75rem;
+  padding: 0.6rem 1rem;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.account-form button:disabled,
+.account-form button[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.account-form button:focus-visible,
+.account-form input:focus-visible,
+.account-form a:focus-visible {
+  outline: 2px solid var(--account-focus);
+  outline-offset: 2px;
+}
+
+.account-resend {
+  background: transparent;
+  border: 1px solid #d1d5db;
+}
+
+.account-secondary {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.account-error,
+[role="alert"] {
+  color: var(--account-error);
+  min-height: 1.25rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.account-status--loading {
+  opacity: 0.92;
+}
+
+.account-status--offline {
+  border-left: 3px solid #6b7280;
+  padding-left: 0.75rem;
+}
+
+.account-status--rate_limited,
+.account-status--expired {
+  border-left: 3px solid #d97706;
+  padding-left: 0.75rem;
+}
+
+.account-status--error {
+  border-left: 3px solid var(--account-error);
+  padding-left: 0.75rem;
+}
+
+.account-status--success {
+  border-left: 3px solid #059669;
+  padding-left: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  .account-shell {
+    padding: 2rem;
+  }
+}
+
+/* Narrow phones below 375: still no horizontal page scroll */
+@media (max-width: 374px) {
+  .account-shell {
+    min-width: 0;
+    padding: 0.75rem;
+  }
+}

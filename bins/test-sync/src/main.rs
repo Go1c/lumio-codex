@@ -85,17 +85,60 @@ async fn run() -> ExitCode {
             signal.cancel();
         }
     });
-    let result = match cli.command {
-        Command::Run(args) => test_sync::harness::run(args, cancellation).await,
-    };
-    match result {
-        Ok(evidence) => {
-            println!("e2e evidence: {}", evidence.display());
-            ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("test-sync failed: {error}");
-            ExitCode::FAILURE
+    match cli.command {
+        Command::Run(args) => match test_sync::harness::run(args, cancellation).await {
+            Ok(evidence) => {
+                println!("e2e evidence: {}", evidence.display());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("test-sync failed: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::SelfTest(args) => {
+            // Orchestrator is synchronous; run it on a blocking thread so
+            // Ctrl-C cancellation can still be observed via timeout budget.
+            let profile = args.profile;
+            let sandbox_parent = args.sandbox_parent;
+            let timeout = args.timeout_seconds.map(std::time::Duration::from_secs);
+            let options = test_sync::selftest::SelfTestOptions {
+                profile_path: profile,
+                sandbox_parent,
+                timeout,
+                ..Default::default()
+            };
+            let cancel = cancellation.clone();
+            let join = tokio::task::spawn_blocking(move || {
+                if cancel.is_cancelled() {
+                    return Err(test_sync::HarnessError::Timeout("self-test cancelled"));
+                }
+                test_sync::selftest::run_self_test(options)
+            });
+            match join.await {
+                Ok(Ok(result)) => {
+                    println!(
+                        "self-test outcome={:?} runId={} manifest={} bugPackage={}",
+                        result.manifest.outcome,
+                        result.manifest.run_id,
+                        result.manifest_path.display(),
+                        result.bug_package_path.display()
+                    );
+                    use test_sync::selftest::RunOutcome;
+                    match result.manifest.outcome {
+                        RunOutcome::Passed => ExitCode::SUCCESS,
+                        _ => ExitCode::FAILURE,
+                    }
+                }
+                Ok(Err(error)) => {
+                    eprintln!("self-test failed: {error}");
+                    ExitCode::FAILURE
+                }
+                Err(error) => {
+                    eprintln!("self-test join failed: {error}");
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }

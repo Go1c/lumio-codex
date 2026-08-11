@@ -22,7 +22,15 @@ enum BlobImportStage {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineRuntimeStatus {
     pub last_ack_revision: fns_protocol::WorkspaceRevision,
+    pub last_applied_revision: fns_protocol::WorkspaceRevision,
     pub pending_commands: u64,
+    pub pending_ack: u64,
+    pub pending_segment_ack: u64,
+    pub outbox_queued: u64,
+    pub outbox_dispatched: u64,
+    pub outbox_awaiting_blob: u64,
+    pub outbox_blocked_conflict: u64,
+    pub stream_active: bool,
 }
 
 /// Private request variants — each maps to exactly one SyncEngine method.
@@ -229,9 +237,30 @@ fn process_call(
         }
         EngineCall::RuntimeStatus { tx } => {
             let status = engine.cursor().and_then(|cursor| {
+                let mut outbox_queued = 0u64;
+                let mut outbox_dispatched = 0u64;
+                let mut outbox_awaiting_blob = 0u64;
+                let mut outbox_blocked_conflict = 0u64;
+                for record in engine.state().outbox()? {
+                    match record.stage {
+                        fns_sync_core::OutboxStage::Queued => outbox_queued += 1,
+                        fns_sync_core::OutboxStage::Dispatched => outbox_dispatched += 1,
+                        fns_sync_core::OutboxStage::AwaitingBlob => outbox_awaiting_blob += 1,
+                        fns_sync_core::OutboxStage::BlockedConflict => outbox_blocked_conflict += 1,
+                    }
+                }
+                let stream_active = engine.active_stream_mode()?.is_some();
                 Ok(EngineRuntimeStatus {
                     last_ack_revision: cursor.last_ack_revision,
+                    last_applied_revision: cursor.last_applied_revision,
                     pending_commands: engine.state().pending_work_count()?,
+                    pending_ack: u64::from(cursor.pending_ack_revision.is_some()),
+                    pending_segment_ack: u64::from(cursor.pending_segment_ack_revision.is_some()),
+                    outbox_queued,
+                    outbox_dispatched,
+                    outbox_awaiting_blob,
+                    outbox_blocked_conflict,
+                    stream_active,
                 })
             });
             let _ = tx.send(map_err_named(status, "runtime_status"));

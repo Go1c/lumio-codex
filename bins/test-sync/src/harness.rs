@@ -13,7 +13,7 @@ use crate::scenario::{
     ScenarioAction,
 };
 use crate::secret::SecretMaterial;
-use crate::snapshot::{capture, CheckpointSample, SnapshotExpectation};
+use crate::snapshot::{capture, CheckpointExpectationView, CheckpointSample, SnapshotExpectation};
 use crate::stability::{classify_stability, Stability};
 use crate::{io_error, HarnessError, Result};
 use serde::Serialize;
@@ -1321,6 +1321,12 @@ async fn stable_checkpoint(
             client_id_b: &config.endpoint_b.client_id,
             pids: expected_pids,
         };
+        let expectation_view = match expectation {
+            CheckpointExpectation::Converged => CheckpointExpectationView::Converged,
+            CheckpointExpectation::Conflict { path, kind } => {
+                CheckpointExpectationView::Conflict { path, kind }
+            }
+        };
         let classification = classify_stability(sample_slice, |sample| match expectation {
             CheckpointExpectation::Converged => sample.converged(&expected),
             CheckpointExpectation::Conflict { path, kind } => {
@@ -1332,6 +1338,7 @@ async fn stable_checkpoint(
             Stability::Collecting { identical } => identical,
             Stability::Rejected | Stability::Stable => 3,
         };
+        let rejection_reasons = last.rejection_reasons(&expected, expectation_view);
         *sequence += 1;
         evidence.append_event(
             "protocol",
@@ -1366,9 +1373,60 @@ async fn stable_checkpoint(
             evidence.write_json(&format!("checkpoints/{index:02}-{name}.json"), last)?;
             return Ok(());
         }
+        // Fail fast: agent runtime is already terminal (auth rejected, etc.).
+        if last.blocked_by_terminal_runtime() {
+            let detail = format!(
+                "checkpoint {name}: terminal agent runtime ({})",
+                rejection_reasons.join(",")
+            );
+            persist_checkpoint_failure(
+                evidence,
+                index,
+                name,
+                "terminal_runtime",
+                Some(&detail),
+                samples.back(),
+            )?;
+            return Err(HarnessError::ProcessDetail(detail));
+        }
+        // Fail fast: Converged expectation cannot succeed while unresolved
+        // conflicts remain and byte manifests already match (dirty remote WS).
+        if matches!(expectation, CheckpointExpectation::Converged)
+            && last.converged_blocked_by_stable_conflicts(&expected)
+            && identical >= 3
+        {
+            let detail = format!(
+                "checkpoint {name}: converged blocked by unresolved conflicts ({})",
+                rejection_reasons.join(",")
+            );
+            persist_checkpoint_failure(
+                evidence,
+                index,
+                name,
+                "blocked_by_unresolved_conflicts",
+                Some(&detail),
+                samples.back(),
+            )?;
+            return Err(HarnessError::ProcessDetail(detail));
+        }
         if tokio::time::Instant::now() >= deadline {
-            persist_checkpoint_failure(evidence, index, name, "timeout", None, samples.back())?;
-            return Err(HarnessError::Timeout("three stable checkpoint samples"));
+            let detail = if rejection_reasons.is_empty() {
+                format!("checkpoint {name}: timed out waiting for three stable samples")
+            } else {
+                format!(
+                    "checkpoint {name}: timed out ({})",
+                    rejection_reasons.join(",")
+                )
+            };
+            persist_checkpoint_failure(
+                evidence,
+                index,
+                name,
+                "timeout",
+                Some(&detail),
+                samples.back(),
+            )?;
+            return Err(HarnessError::ProcessDetail(detail));
         }
         tokio::select! {
             () = tokio::time::sleep(config.timeouts.sample_interval) => {}
