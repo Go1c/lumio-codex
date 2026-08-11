@@ -311,6 +311,7 @@ pub fn run() {
             terminal::close_tmux_window,
             terminal::list_tmux_windows,
             terminal::kill_all_sessions,
+            remote_monitor::get_server_status,
             files::browse_files,
             files::read_file,
             files::compute_diff,

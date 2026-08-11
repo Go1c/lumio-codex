@@ -1,8 +1,16 @@
 //! Remote host status + project-scoped tmux Claude session probes.
-//!
-//! Pure parsers and types live here. SSH probing is layered in later tasks.
 
+use crate::project::ProjectConfig;
+use crate::terminal::TerminalManager;
 use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
+const SSH_TIMEOUT_SECS: u64 = 10;
+const STDOUT_CAP: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -491,6 +499,264 @@ pub fn sessions_error(
     }
 }
 
+/// Reject probe stdout larger than the hard cap.
+pub fn enforce_stdout_bound(stdout: &str) -> Result<(), RemoteMonitorError> {
+    if stdout.len() > STDOUT_CAP {
+        return Err(RemoteMonitorError {
+            code: "output_truncated".into(),
+            message: "Probe output exceeded size limit".into(),
+        });
+    }
+    Ok(())
+}
+
+/// Build the remote host probe shell script. `remote_root` is single-quoted inside.
+pub fn build_host_probe_script(remote_root: &str) -> String {
+    let quoted_root = TerminalManager::posix_shell_single_quote(remote_root);
+    // Remote Python probe: only dynamic input is ROOT assignment (single-quoted path).
+    // Heredoc body is fixed and uses <<'PY' so no expansion of user content.
+    format!(
+        "ROOT={root}; export ROOT; python3 - <<'PY'\n{body}\nPY",
+        root = quoted_root,
+        body = HOST_PROBE_PYTHON,
+    )
+}
+
+/// Fixed remote probe body (no user input).
+const HOST_PROBE_PYTHON: &str = r#"
+import json, os, time, glob
+root = os.environ.get("ROOT", "/")
+
+def read_stat():
+    with open("/proc/stat") as f:
+        parts = f.readline().split()
+    nums = list(map(int, parts[1:8]))
+    idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+    return sum(nums), idle
+
+t1, i1 = read_stat()
+time.sleep(0.3)
+t2, i2 = read_stat()
+dt = max(t2 - t1, 1)
+di = i2 - i1
+cpu = max(0.0, min(100.0, (dt - di) * 100.0 / dt))
+load = open("/proc/loadavg").read().split()
+cores = os.cpu_count() or 1
+mem = {}
+for line in open("/proc/meminfo"):
+    bits = line.split()
+    if len(bits) >= 2:
+        mem[bits[0].rstrip(":")] = int(bits[1]) * 1024
+total = mem.get("MemTotal", 0)
+avail = mem.get("MemAvailable", 0)
+uptime = float(open("/proc/uptime").read().split()[0])
+host = os.uname().nodename
+disks = []
+seen = set()
+for line in open("/proc/mounts"):
+    parts = line.split()
+    if len(parts) < 2:
+        continue
+    mp = parts[1]
+    if mp != "/" and not (root == mp or root.startswith(mp.rstrip("/") + "/")):
+        continue
+    if mp in seen:
+        continue
+    try:
+        st = os.statvfs(mp)
+        tot = st.f_frsize * st.f_blocks
+        free = st.f_frsize * st.f_bavail
+        disks.append({
+            "mount": mp,
+            "totalBytes": tot,
+            "usedBytes": max(tot - free, 0),
+            "availableBytes": free,
+        })
+        seen.add(mp)
+    except Exception:
+        pass
+if not disks:
+    st = os.statvfs("/")
+    tot = st.f_frsize * st.f_blocks
+    free = st.f_frsize * st.f_bavail
+    disks = [{
+        "mount": "/",
+        "totalBytes": tot,
+        "usedBytes": max(tot - free, 0),
+        "availableBytes": free,
+    }]
+procs = []
+for path in glob.glob("/proc/[0-9]*/status"):
+    try:
+        pid = int(path.split("/")[2])
+        comm = ""
+        rss = 0
+        for line in open(path):
+            if line.startswith("Name:"):
+                comm = line.split()[1]
+            elif line.startswith("VmRSS:"):
+                rss = int(line.split()[1]) * 1024
+        cmd = ""
+        try:
+            raw = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\x00", b" ")
+            cmd = raw.decode("utf-8", "replace").strip()
+        except Exception:
+            pass
+        blob = f"{comm} {cmd}"
+        keep = False
+        if "fns-agent" in blob or "fns-server" in blob:
+            keep = True
+        first = cmd.split()[:1]
+        if comm == "claude" or first == ["claude"]:
+            keep = True
+        if not keep:
+            continue
+        procs.append({
+            "pid": pid,
+            "comm": comm,
+            "cmdline": cmd[:400],
+            "rssBytes": rss,
+            "cpuPercent": 0.0,
+        })
+    except Exception:
+        pass
+print(json.dumps({
+    "hostname": host,
+    "uptimeSeconds": int(uptime),
+    "cpu": {
+        "usagePercent": round(cpu, 2),
+        "load1": float(load[0]),
+        "load5": float(load[1]),
+        "load15": float(load[2]),
+        "cores": cores,
+    },
+    "memory": {"totalBytes": total, "availableBytes": avail},
+    "disks": disks,
+    "processes": procs,
+}))
+"#;
+
+struct SshCapture {
+    stdout: String,
+    exit_code: i32,
+}
+
+fn run_ssh_capture(alias: &str, remote_command: &str) -> Result<SshCapture, RemoteMonitorError> {
+    if alias.trim().is_empty() {
+        return Err(RemoteMonitorError {
+            code: "ssh_failed".into(),
+            message: "SSH host alias is empty".into(),
+        });
+    }
+
+    let mut child = Command::new("ssh")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=8")
+        .arg(alias)
+        .arg(remote_command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| RemoteMonitorError {
+            code: "ssh_failed".into(),
+            message: "Failed to start SSH".into(),
+        })?;
+
+    let stdout_pipe = child.stdout.take();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stdout_pipe {
+            let mut chunk = [0u8; 4096];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if buf.len() < STDOUT_CAP {
+                            let room = STDOUT_CAP - buf.len();
+                            buf.extend_from_slice(&chunk[..n.min(room)]);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+        let status = child.wait().ok();
+        let _ = tx.send((buf, status));
+    });
+
+    match rx.recv_timeout(Duration::from_secs(SSH_TIMEOUT_SECS)) {
+        Ok((buf, status)) => {
+            if buf.len() >= STDOUT_CAP {
+                return Err(RemoteMonitorError {
+                    code: "output_truncated".into(),
+                    message: "Probe output exceeded size limit".into(),
+                });
+            }
+            let stdout = String::from_utf8_lossy(&buf).into_owned();
+            enforce_stdout_bound(&stdout)?;
+            let exit_code = status.and_then(|s| s.code()).unwrap_or(1);
+            Ok(SshCapture { stdout, exit_code })
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(RemoteMonitorError {
+            code: "timeout".into(),
+            message: "Probe timed out".into(),
+        }),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(RemoteMonitorError {
+            code: "ssh_failed".into(),
+            message: "SSH capture worker disconnected".into(),
+        }),
+    }
+}
+
+/// Tauri command: remote host CPU/memory/disk + service process RSS.
+#[tauri::command]
+pub fn get_server_status(project_id: String) -> ServerStatusSnapshot {
+    let captured_at = chrono::Utc::now().to_rfc3339();
+    let project = match ProjectConfig::find_by_id(&project_id) {
+        Ok(p) => p,
+        Err(_) => {
+            return server_status_error(
+                &project_id,
+                "",
+                &captured_at,
+                "project_not_found",
+                "Project not found",
+            );
+        }
+    };
+
+    let script = build_host_probe_script(&project.remote_root);
+    match run_ssh_capture(&project.ssh_host_alias, &script) {
+        Ok(capture) => {
+            if capture.exit_code != 0 && capture.stdout.trim().is_empty() {
+                return server_status_error(
+                    &project_id,
+                    &project.ssh_host_alias,
+                    &captured_at,
+                    "remote_cmd_failed",
+                    "Remote probe failed",
+                );
+            }
+            parse_server_status_payload(
+                &capture.stdout,
+                &project_id,
+                &project.ssh_host_alias,
+                &captured_at,
+            )
+        }
+        Err(e) => server_status_error(
+            &project_id,
+            &project.ssh_host_alias,
+            &captured_at,
+            &e.code,
+            &e.message,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,5 +834,22 @@ mod tests {
         let s = server_status_error("p", "h", "2026-08-11T00:00:00Z", "timeout", "probe timed out");
         assert!(!s.ok);
         assert_eq!(s.error.unwrap().code, "timeout");
+    }
+
+    #[test]
+    fn reject_stdout_over_cap() {
+        let big = "x".repeat(65 * 1024);
+        assert!(enforce_stdout_bound(&big).is_err());
+        assert!(enforce_stdout_bound("ok").is_ok());
+    }
+
+    #[test]
+    fn host_probe_script_embeds_quoted_remote_root() {
+        let script = build_host_probe_script("/home/u/project");
+        assert!(script.contains("'/home/u/project'"));
+        assert!(script.contains("usagePercent"));
+        // Injection in root must remain inside single quotes after escaping.
+        let evil = build_host_probe_script("/tmp/x'$(id)");
+        assert!(evil.contains("'\\''"));
     }
 }
