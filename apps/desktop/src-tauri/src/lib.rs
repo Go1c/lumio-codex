@@ -8,6 +8,7 @@ mod deploy;
 mod diagnostics;
 mod files;
 mod project;
+mod remote_monitor;
 mod ssh;
 mod ssh_tunnel;
 mod sync;

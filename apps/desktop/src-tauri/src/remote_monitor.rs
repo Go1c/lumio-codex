@@ -1,0 +1,572 @@
+//! Remote host status + project-scoped tmux Claude session probes.
+//!
+//! Pure parsers and types live here. SSH probing is layered in later tasks.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteMonitorError {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerStatusSnapshot {
+    pub project_id: String,
+    pub ssh_host_alias: String,
+    pub captured_at: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RemoteMonitorError>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostMetrics>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub services: Option<ServicesMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostMetrics {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_seconds: Option<u64>,
+    pub cpu: CpuMetrics,
+    pub memory: MemoryMetrics,
+    pub disks: Vec<DiskMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuMetrics {
+    pub usage_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load5: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load15: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMetrics {
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub available_bytes: u64,
+    pub used_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskMetrics {
+    pub mount: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub available_bytes: u64,
+    pub used_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceItem {
+    pub key: String,
+    pub display_name: String,
+    pub running: bool,
+    pub process_count: u32,
+    pub cpu_percent: f64,
+    pub memory_rss_bytes: u64,
+    pub pids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServicesMetrics {
+    pub items: Vec<ServiceItem>,
+    pub our_services_memory_rss_bytes: u64,
+    pub our_services_cpu_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSessionWindow {
+    pub index: u32,
+    pub id: String,
+    pub name: String,
+    pub title: String,
+    pub active: bool,
+    pub pane_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub looks_like_claude: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeSessionsSnapshot {
+    pub project_id: String,
+    pub ssh_host_alias: String,
+    pub tmux_session: String,
+    pub captured_at: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RemoteMonitorError>,
+    pub session_exists: bool,
+    pub windows: Vec<ClaudeSessionWindow>,
+    pub active_index: Option<u32>,
+}
+
+/// Intermediate JSON shape emitted by the remote host probe script.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteHostProbe {
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default)]
+    uptime_seconds: Option<u64>,
+    cpu: RemoteCpuProbe,
+    memory: RemoteMemoryProbe,
+    #[serde(default)]
+    disks: Vec<RemoteDiskProbe>,
+    #[serde(default)]
+    processes: Vec<RemoteProcessProbe>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteCpuProbe {
+    usage_percent: f64,
+    #[serde(default)]
+    load1: Option<f64>,
+    #[serde(default)]
+    load5: Option<f64>,
+    #[serde(default)]
+    load15: Option<f64>,
+    #[serde(default)]
+    cores: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteMemoryProbe {
+    total_bytes: u64,
+    available_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteDiskProbe {
+    mount: String,
+    total_bytes: u64,
+    used_bytes: u64,
+    available_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteProcessProbe {
+    #[serde(default)]
+    pid: Option<u32>,
+    #[serde(default)]
+    comm: String,
+    #[serde(default)]
+    cmdline: String,
+    #[serde(default)]
+    rss_bytes: u64,
+    #[serde(default)]
+    cpu_percent: f64,
+}
+
+const SERVICE_KEYS: &[&str] = &["fns-agent", "fns-server", "claude"];
+const PID_CAP: usize = 20;
+
+/// Strict session name validation: charset only, equals sanitized form, max 64.
+pub fn validate_tmux_session_name(name: &str) -> Result<String, String> {
+    if name.is_empty() || name.len() > 64 {
+        return Err("invalid_session_name".into());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("invalid_session_name".into());
+    }
+    Ok(name.to_string())
+}
+
+/// Match a process to one of our tracked service keys.
+pub fn match_service_key(comm: &str, cmdline: &str) -> Option<&'static str> {
+    let blob = format!("{comm} {cmdline}");
+    if blob.contains("fns-agent") {
+        return Some("fns-agent");
+    }
+    if blob.contains("fns-server") {
+        return Some("fns-server");
+    }
+    if comm == "claude" || cmdline.split_whitespace().next() == Some("claude") {
+        return Some("claude");
+    }
+    None
+}
+
+fn display_name_for(key: &str) -> String {
+    match key {
+        "fns-agent" => "fns-agent".to_string(),
+        "fns-server" => "fns-server".to_string(),
+        "claude" => "claude".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn used_percent(used: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (used as f64 / total as f64) * 100.0
+    }
+}
+
+/// Map remote probe JSON into a `ServerStatusSnapshot`.
+pub fn parse_server_status_payload(
+    stdout: &str,
+    project_id: &str,
+    ssh_host_alias: &str,
+    captured_at: &str,
+) -> ServerStatusSnapshot {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return server_status_error(
+            project_id,
+            ssh_host_alias,
+            captured_at,
+            "parse_failed",
+            "Empty probe output",
+        );
+    }
+
+    let probe: RemoteHostProbe = match serde_json::from_str(trimmed) {
+        Ok(p) => p,
+        Err(_) => {
+            return server_status_error(
+                project_id,
+                ssh_host_alias,
+                captured_at,
+                "parse_failed",
+                "Probe output is not valid JSON",
+            );
+        }
+    };
+
+    let available = probe.memory.available_bytes;
+    let total = probe.memory.total_bytes;
+    let used = total.saturating_sub(available);
+
+    let disks: Vec<DiskMetrics> = probe
+        .disks
+        .into_iter()
+        .map(|d| DiskMetrics {
+            used_percent: used_percent(d.used_bytes, d.total_bytes),
+            mount: d.mount,
+            total_bytes: d.total_bytes,
+            used_bytes: d.used_bytes,
+            available_bytes: d.available_bytes,
+        })
+        .collect();
+
+    // Aggregate processes by service key.
+    struct Agg {
+        count: u32,
+        cpu: f64,
+        rss: u64,
+        pids: Vec<u32>,
+    }
+    let mut aggs: std::collections::HashMap<&'static str, Agg> = std::collections::HashMap::new();
+    for key in SERVICE_KEYS {
+        aggs.insert(
+            *key,
+            Agg {
+                count: 0,
+                cpu: 0.0,
+                rss: 0,
+                pids: Vec::new(),
+            },
+        );
+    }
+
+    for proc in probe.processes {
+        let Some(key) = match_service_key(&proc.comm, &proc.cmdline) else {
+            continue;
+        };
+        let agg = aggs.get_mut(key).expect("pre-inserted service key");
+        agg.count += 1;
+        agg.cpu += proc.cpu_percent;
+        agg.rss = agg.rss.saturating_add(proc.rss_bytes);
+        if let Some(pid) = proc.pid {
+            if agg.pids.len() < PID_CAP {
+                agg.pids.push(pid);
+            }
+        }
+    }
+
+    let mut items = Vec::with_capacity(SERVICE_KEYS.len());
+    let mut our_rss = 0u64;
+    let mut our_cpu = 0.0f64;
+    for key in SERVICE_KEYS {
+        let agg = aggs.get(key).expect("pre-inserted");
+        if *key == "fns-agent" || *key == "fns-server" {
+            our_rss = our_rss.saturating_add(agg.rss);
+            our_cpu += agg.cpu;
+        }
+        items.push(ServiceItem {
+            key: (*key).to_string(),
+            display_name: display_name_for(key),
+            running: agg.count > 0,
+            process_count: agg.count,
+            cpu_percent: agg.cpu,
+            memory_rss_bytes: agg.rss,
+            pids: agg.pids.clone(),
+        });
+    }
+
+    ServerStatusSnapshot {
+        project_id: project_id.to_string(),
+        ssh_host_alias: ssh_host_alias.to_string(),
+        captured_at: captured_at.to_string(),
+        ok: true,
+        error: None,
+        host: Some(HostMetrics {
+            hostname: probe.hostname,
+            uptime_seconds: probe.uptime_seconds,
+            cpu: CpuMetrics {
+                usage_percent: probe.cpu.usage_percent,
+                load1: probe.cpu.load1,
+                load5: probe.cpu.load5,
+                load15: probe.cpu.load15,
+                cores: probe.cpu.cores,
+            },
+            memory: MemoryMetrics {
+                total_bytes: total,
+                used_bytes: used,
+                available_bytes: available,
+                used_percent: used_percent(used, total),
+            },
+            disks,
+        }),
+        services: Some(ServicesMetrics {
+            items,
+            our_services_memory_rss_bytes: our_rss,
+            our_services_cpu_percent: our_cpu,
+        }),
+    }
+}
+
+/// Parse `tmux list-windows -F` TSV output.
+pub fn parse_tmux_list_windows(
+    stdout: &str,
+    project_id: &str,
+    ssh_host_alias: &str,
+    tmux_session: &str,
+    captured_at: &str,
+) -> ClaudeSessionsSnapshot {
+    let mut windows = Vec::new();
+    let mut active_index: Option<u32> = None;
+
+    for line in stdout.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 4 {
+            return sessions_error(
+                project_id,
+                ssh_host_alias,
+                tmux_session,
+                captured_at,
+                true,
+                "parse_failed",
+                "Unexpected tmux list-windows format",
+            );
+        }
+        let index: u32 = match parts[0].parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return sessions_error(
+                    project_id,
+                    ssh_host_alias,
+                    tmux_session,
+                    captured_at,
+                    true,
+                    "parse_failed",
+                    "Invalid window index",
+                );
+            }
+        };
+        let name = parts[1].to_string();
+        let active = parts[2] == "1";
+        let pane_count: u32 = parts[3].parse().unwrap_or(1);
+        let window_id = parts
+            .get(4)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("@{index}"));
+        let title = if name.is_empty() {
+            format!("Window {index}")
+        } else {
+            name.clone()
+        };
+        if active {
+            active_index = Some(index);
+        }
+        windows.push(ClaudeSessionWindow {
+            index,
+            id: format!("{tmux_session}:{index}"),
+            name,
+            title,
+            active,
+            pane_count,
+            looks_like_claude: None,
+        });
+        let _ = window_id; // reserved for future stable id use
+    }
+
+    ClaudeSessionsSnapshot {
+        project_id: project_id.to_string(),
+        ssh_host_alias: ssh_host_alias.to_string(),
+        tmux_session: tmux_session.to_string(),
+        captured_at: captured_at.to_string(),
+        ok: true,
+        error: None,
+        session_exists: true,
+        windows,
+        active_index,
+    }
+}
+
+pub fn server_status_error(
+    project_id: &str,
+    ssh_host_alias: &str,
+    captured_at: &str,
+    code: &str,
+    message: &str,
+) -> ServerStatusSnapshot {
+    ServerStatusSnapshot {
+        project_id: project_id.to_string(),
+        ssh_host_alias: ssh_host_alias.to_string(),
+        captured_at: captured_at.to_string(),
+        ok: false,
+        error: Some(RemoteMonitorError {
+            code: code.to_string(),
+            message: message.to_string(),
+        }),
+        host: None,
+        services: None,
+    }
+}
+
+pub fn sessions_error(
+    project_id: &str,
+    ssh_host_alias: &str,
+    tmux_session: &str,
+    captured_at: &str,
+    session_exists: bool,
+    code: &str,
+    message: &str,
+) -> ClaudeSessionsSnapshot {
+    ClaudeSessionsSnapshot {
+        project_id: project_id.to_string(),
+        ssh_host_alias: ssh_host_alias.to_string(),
+        tmux_session: tmux_session.to_string(),
+        captured_at: captured_at.to_string(),
+        ok: false,
+        error: Some(RemoteMonitorError {
+            code: code.to_string(),
+            message: message.to_string(),
+        }),
+        session_exists,
+        windows: Vec::new(),
+        active_index: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_service_key_agent_server_claude() {
+        assert_eq!(
+            match_service_key("fns-agent", "/opt/fns/fns-agent --config x"),
+            Some("fns-agent")
+        );
+        assert_eq!(
+            match_service_key("fns-server", "/usr/local/bin/fns-server"),
+            Some("fns-server")
+        );
+        assert_eq!(match_service_key("claude", "claude"), Some("claude"));
+        assert_eq!(match_service_key("bash", "-bash"), None);
+    }
+
+    #[test]
+    fn parse_server_status_sums_our_services_excluding_claude() {
+        let raw = r#"{
+          "hostname":"box",
+          "uptimeSeconds":100,
+          "cpu":{"usagePercent":12.5,"load1":0.2,"load5":0.3,"load15":0.1,"cores":4},
+          "memory":{"totalBytes":1000,"availableBytes":400},
+          "disks":[{"mount":"/","totalBytes":100,"usedBytes":50,"availableBytes":50}],
+          "processes":[
+            {"comm":"fns-agent","cmdline":"/bin/fns-agent","rssBytes":100,"cpuPercent":1.0,"pid":1},
+            {"comm":"fns-server","cmdline":"/bin/fns-server","rssBytes":200,"cpuPercent":2.0,"pid":2},
+            {"comm":"claude","cmdline":"claude","rssBytes":500,"cpuPercent":10.0,"pid":3}
+          ]
+        }"#;
+        let snap = parse_server_status_payload(raw, "proj-1", "myhost", "2026-08-11T00:00:00Z");
+        assert!(snap.ok);
+        let services = snap.services.expect("services");
+        assert_eq!(services.our_services_memory_rss_bytes, 300);
+        assert!((services.our_services_cpu_percent - 3.0).abs() < 0.01);
+        let claude = services
+            .items
+            .iter()
+            .find(|i| i.key == "claude")
+            .expect("claude row");
+        assert_eq!(claude.memory_rss_bytes, 500);
+        let host = snap.host.expect("host");
+        assert_eq!(host.memory.used_bytes, 600);
+    }
+
+    #[test]
+    fn parse_tmux_list_windows_tsv() {
+        let raw = "0\tmain\t1\t1\t@1\n1\tfix auth\t0\t1\t@2\n";
+        let snap = parse_tmux_list_windows(
+            raw,
+            "proj-1",
+            "myhost",
+            "fns-demo",
+            "2026-08-11T00:00:00Z",
+        );
+        assert!(snap.ok);
+        assert!(snap.session_exists);
+        assert_eq!(snap.windows.len(), 2);
+        assert_eq!(snap.windows[1].title, "fix auth");
+        assert_eq!(snap.active_index, Some(0));
+    }
+
+    #[test]
+    fn validate_tmux_session_name_rejects_injection() {
+        assert!(validate_tmux_session_name("good_session-1").is_ok());
+        assert!(validate_tmux_session_name("evil;rm").is_err());
+        assert!(validate_tmux_session_name("a:b").is_err());
+        assert!(validate_tmux_session_name("").is_err());
+    }
+
+    #[test]
+    fn snapshot_error_helper_sets_ok_false() {
+        let s = server_status_error("p", "h", "2026-08-11T00:00:00Z", "timeout", "probe timed out");
+        assert!(!s.ok);
+        assert_eq!(s.error.unwrap().code, "timeout");
+    }
+}
