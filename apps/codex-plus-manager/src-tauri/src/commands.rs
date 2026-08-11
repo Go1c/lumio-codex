@@ -4626,7 +4626,7 @@ mod tests {
     }
 
     #[test]
-    fn dream_skin_commands_are_registered_with_tauri() {
+    fn dream_skin_commands_are_not_registered_with_lumio() {
         let source =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
 
@@ -4647,28 +4647,31 @@ mod tests {
             "commands::delete_dream_skin_theme",
             "commands::activate_dream_skin_theme",
         ] {
-            assert!(source.contains(command), "missing Tauri command {command}");
+            assert!(
+                !source.contains(command),
+                "exposed legacy command {command}"
+            );
         }
     }
 
     #[test]
-    fn dream_skin_tray_actions_reuse_core_lifecycle() {
+    fn dream_skin_tray_actions_are_not_exposed_by_lumio() {
         let source =
             std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs")).unwrap();
 
-        for expected in [
+        for forbidden in [
             "tray_apply_dream_skin",
             "apply_dream_skin_live",
             "sync_default_dream_skin_base_theme",
+            "tray_pause_dream_skin",
+            "pause_dream_skin_from_tray",
+            "codex_app_dream_skin_paused",
         ] {
             assert!(
-                source.contains(expected),
-                "missing tray lifecycle entry {expected}"
+                !source.contains(forbidden),
+                "exposed tray action {forbidden}"
             );
         }
-        assert!(!source.contains("tray_pause_dream_skin"));
-        assert!(!source.contains("pause_dream_skin_from_tray"));
-        assert!(source.contains("!settings.codex_app_dream_skin_paused"));
     }
 
     #[test]

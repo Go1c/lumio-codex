@@ -195,9 +195,7 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     assert!(workflow.contains("target/release/lumio-codex.exe"));
     assert!(workflow.contains("target/release/lumio-codex-launcher.exe"));
     assert!(workflow.contains("LumioCodex.nsi"));
-    assert!(workflow.contains(
-        "LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"
-    ));
+    assert!(workflow.contains("LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"));
     assert!(workflow.contains("${TMPDIR:-/tmp}"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(!workflow.contains("codex-plus-plus"));
