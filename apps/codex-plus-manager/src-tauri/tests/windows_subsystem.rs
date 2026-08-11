@@ -22,21 +22,22 @@ fn manager_release_binary_uses_embedded_frontend_assets() {
 }
 
 #[test]
-fn manager_uses_single_instance_guard_before_starting_tauri() {
+fn lumio_uses_single_instance_guard_before_starting_tauri() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
 
     assert!(lib_rs.contains("acquire_single_instance_guard()"));
     assert!(lib_rs.contains("manager_guard_port"));
-    assert!(lib_rs.contains("manager.already_running"));
+    assert!(lib_rs.contains("focus_existing_lumio_window();"));
 }
 
 #[test]
-fn manager_repeated_launch_activates_existing_window() {
+fn lumio_repeated_launch_activates_existing_window() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
 
-    assert!(lib_rs.contains("focus_existing_manager_window();"));
+    assert!(lib_rs.contains("focus_existing_lumio_window();"));
+    assert!(lib_rs.contains("std::env::current_exe()"));
     assert!(lib_rs.contains("windows_activate_process_window"));
 }
 
@@ -51,12 +52,9 @@ fn manager_main_window_uses_default_window_icon_explicitly() {
 }
 
 #[test]
-fn manager_close_minimizes_to_tray_without_confirmation() {
+fn lumio_close_minimizes_to_tray_without_confirmation() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let app_tsx = manifest_dir.parent().unwrap().join("src/App.tsx");
-    let app_tsx = std::fs::read_to_string(&app_tsx).expect("read manager App.tsx");
 
     assert!(!lib_rs.contains("MessageDialogButtons"));
     assert!(!lib_rs.contains(".dialog()"));
@@ -64,20 +62,21 @@ fn manager_close_minimizes_to_tray_without_confirmation() {
     assert!(lib_rs.contains("let _ = close_event_window.hide();"));
     assert!(lib_rs.contains("startup_is_transient()"));
     assert!(lib_rs.contains("arg == \"--transient\""));
-    assert!(!app_tsx.contains("CloseConfirmDialog"));
-    assert!(app_tsx.contains("manager_exit_app"));
-    assert!(app_tsx.contains("manager_hide_to_tray"));
+    assert!(lib_rs.contains("lumio_exit_app"));
+    assert!(lib_rs.contains("lumio_hide_to_tray"));
+    assert!(!lib_rs.contains("manager_exit_app"));
+    assert!(!lib_rs.contains("manager_hide_to_tray"));
 }
 
 #[test]
-fn manager_queues_codexplusplus_provider_urls_for_confirmation_on_startup() {
+fn lumio_entrypoint_does_not_accept_legacy_custom_urls() {
     let main_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
         .expect("read manager main.rs");
 
-    assert!(main_rs.contains("codexplusplus://"));
-    assert!(main_rs.contains("provider_import::save_pending_provider_import_from_url"));
-    assert!(!main_rs.contains("provider_import::import_provider_from_url"));
-    assert!(main_rs.contains("manager.provider_import_url.pending"));
+    assert!(main_rs.contains("codex_plus_manager_lib::run();"));
+    assert!(!main_rs.contains("codexplusplus://"));
+    assert!(!main_rs.contains("dreamskin://"));
+    assert!(!main_rs.contains("provider_import"));
 }
 
 #[test]
@@ -300,8 +299,8 @@ fn manager_window_and_relay_detail_header_stay_usable() {
     assert!(styles.contains("position: sticky"));
     assert!(styles.contains("top: 0"));
     assert!(styles.contains("margin: 0"));
-    assert!(lib_rs.contains(".inner_size(1180.0, 820.0)"));
-    assert!(lib_rs.contains(".min_inner_size(960.0, 720.0)"));
+    assert!(lib_rs.contains(".inner_size(1040.0, 720.0)"));
+    assert!(lib_rs.contains(".min_inner_size(760.0, 620.0)"));
     assert!(tauri_conf.contains("\"width\": 1180"));
     assert!(tauri_conf.contains("\"height\": 820"));
     assert!(tauri_conf.contains("\"minWidth\": 960"));
