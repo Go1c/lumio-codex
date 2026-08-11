@@ -80,7 +80,7 @@ fn lumio_entrypoint_does_not_accept_legacy_custom_urls() {
 }
 
 #[test]
-fn launcher_binary_embeds_codex_icon_resource() {
+fn launcher_binary_embeds_lumio_icon_and_metadata() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let launcher_build = manifest_dir
         .parent()
@@ -91,10 +91,13 @@ fn launcher_binary_embeds_codex_icon_resource() {
 
     assert!(build_rs.contains("WindowsResource"));
     assert!(build_rs.contains("icons/icon.ico"));
+    assert!(build_rs.contains("ProductName"));
+    assert!(build_rs.contains("Lumio Codex"));
+    assert!(build_rs.contains("lumio-codex-launcher.exe"));
 }
 
 #[test]
-fn windows_binaries_request_administrator_privileges() {
+fn windows_binaries_and_installer_run_as_current_user() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let manager_build =
         std::fs::read_to_string(manifest_dir.join("build.rs")).expect("read manager build.rs");
@@ -111,15 +114,16 @@ fn windows_binaries_request_administrator_privileges() {
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()
-        .join("scripts/installer/windows/CodexPlusPlus.nsi");
+        .join("scripts/installer/windows/LumioCodex.nsi");
     let windows_installer =
         std::fs::read_to_string(&windows_installer).expect("read windows installer");
 
     assert!(manager_build.contains("windows-app-manifest.xml"));
     assert!(launcher_build.contains("windows-app-manifest.xml"));
-    assert!(windows_manifest.contains("requireAdministrator"));
+    assert!(windows_manifest.contains("asInvoker"));
+    assert!(!windows_manifest.contains("requireAdministrator"));
     assert!(windows_manifest.contains("Microsoft.Windows.Common-Controls"));
-    assert!(windows_installer.contains("RequestExecutionLevel admin"));
+    assert!(windows_installer.contains("RequestExecutionLevel user"));
 }
 
 #[test]
@@ -151,7 +155,7 @@ fn manager_launch_button_spawns_silent_launcher_binary() {
 }
 
 #[test]
-fn macos_packager_hides_silent_launcher_but_not_manager() {
+fn macos_packager_keeps_launcher_inside_single_visible_lumio_app() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let packager = manifest_dir
         .parent()
@@ -161,39 +165,49 @@ fn macos_packager_hides_silent_launcher_but_not_manager() {
         .join("scripts/installer/macos/package-dmg.sh");
     let script = std::fs::read_to_string(&packager).expect("read macOS packager");
 
-    assert!(script.contains("<key>LSUIElement</key>"));
     assert!(script.contains("ARCH=\"${2:-$(uname -m)}\""));
     assert!(script.contains("BINARY_DIR=\"${BINARY_DIR:-$ROOT/target/release}\""));
-    assert!(script.contains("CodexPlusPlus-${VERSION}-macos-${ARCH}.dmg"));
-    assert!(script.contains(
-        "create_app \"Codex++\" \"CodexPlusPlus\" \"$BINARY_DIR/codex-plus-plus\" \"com.bigpizzav3.codexplusplus\" \"true\""
-    ));
-    assert!(script.contains(
-        "create_app \"Codex++ 管理工具\" \"CodexPlusPlusManager\" \"$BINARY_DIR/codex-plus-plus-manager\" \"com.bigpizzav3.codexplusplus.manager\" \"false\""
-    ));
+    assert!(script.contains("LumioCodex-${VERSION}-macos-${ARCH}-internal-unsigned.dmg"));
+    assert!(script.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
+    assert!(script.contains("Contents/Helpers/lumio-codex-launcher"));
+    assert!(!script.contains("LSUIElement"));
+    assert!(!script.contains("CFBundleURLTypes"));
 }
 
 #[test]
-fn github_release_workflow_builds_separate_macos_x64_and_arm64_dmgs() {
+fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workflow = manifest_dir
         .parent()
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()
-        .join(".github/workflows/release-assets.yml");
-    let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
+        .join(".github/workflows/pr-build.yml");
+    let workflow = std::fs::read_to_string(&workflow).expect("read internal build workflow");
 
+    assert!(workflow.contains("branches: [publish]"));
     assert!(workflow.contains("macos-15-intel"));
     assert!(workflow.contains("x86_64-apple-darwin"));
     assert!(workflow.contains("macos-14"));
     assert!(workflow.contains("aarch64-apple-darwin"));
     assert!(workflow.contains("package-dmg.sh \"$VERSION\" \"${{ matrix.arch }}\""));
     assert!(workflow.contains("target/${{ matrix.target }}/release"));
+    assert!(workflow.contains("target/release/lumio-codex.exe"));
+    assert!(workflow.contains("target/release/lumio-codex-launcher.exe"));
+    assert!(workflow.contains("LumioCodex.nsi"));
+    assert!(workflow.contains(
+        "LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"
+    ));
+    assert!(workflow.contains("${TMPDIR:-/tmp}"));
+    assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(!workflow.contains("codex-plus-plus"));
+    assert!(!workflow.contains("CodexPlusPlus"));
+    assert!(!workflow.contains("softprops/action-gh-release"));
+    assert!(!workflow.contains("gh release"));
 }
 
 #[test]
-fn github_release_workflow_uploads_static_latest_json() {
+fn github_public_release_workflow_is_blocked_until_signing_is_ready() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let workflow = manifest_dir
         .parent()
@@ -203,9 +217,15 @@ fn github_release_workflow_uploads_static_latest_json() {
         .join(".github/workflows/release-assets.yml");
     let workflow = std::fs::read_to_string(&workflow).expect("read release assets workflow");
 
-    assert!(workflow.contains("latest-json:"));
-    assert!(workflow.contains("latest.json"));
-    assert!(workflow.contains("gh release upload \"$TAG\" latest.json --clobber"));
+    assert!(workflow.contains("name: Public release gate"));
+    assert!(workflow.contains("workflow_dispatch:"));
+    assert!(workflow.contains("contents: read"));
+    assert!(workflow.contains("SIGNING_REQUIRED"));
+    assert!(workflow.contains("exit 1"));
+    assert!(!workflow.contains("contents: write"));
+    assert!(!workflow.contains("softprops/action-gh-release"));
+    assert!(!workflow.contains("gh release"));
+    assert!(!workflow.contains("latest.json"));
 }
 
 #[test]
