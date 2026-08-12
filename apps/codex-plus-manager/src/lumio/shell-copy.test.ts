@@ -113,6 +113,39 @@ test("the signed-out surface states the positioning promise verbatim", async () 
   assert.match(signedOut, /凭据由系统保护/);
 });
 
+test("the register view carries the spec copy for every state", async () => {
+  const view = await readFile(new URL("./views/RegisterView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /重新发送/);
+  assert.match(view, /两次输入不一致/);
+  assert.match(view, /密码至少 8 位/);
+  assert.match(view, /正在创建账户…/);
+  assert.match(view, /已有账户？去登录/);
+  assert.match(view, /注册暂未开放/);
+  assert.match(view, /返回登录/);
+});
+
+test("the login view carries the spec copy including the two-factor step", async () => {
+  const view = await readFile(new URL("./views/LoginView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /正在验证…/);
+  assert.match(view, /忘记密码？/);
+  assert.match(view, /密码重置在网页端完成/);
+  assert.match(view, /在浏览器中打开/);
+  assert.match(view, /输入两步验证码/);
+  assert.match(view, /打开你的验证器应用查看动态码/);
+  assert.match(view, /返回重新登录/);
+  assert.match(view, /没有账户？创建账户/);
+});
+
+test("neither auth view hardcodes business rules the server owns", async () => {
+  const register = await readFile(new URL("./views/RegisterView.tsx", import.meta.url), "utf8");
+
+  assert.match(register, /settings\.emailSuffixWhitelist|formatEmailSuffixHint/);
+  assert.match(register, /settings\.agreementDocuments/);
+  assert.doesNotMatch(register, /@gmail\.com|@qq\.com/);
+});
+
 test("React entry renders only LumioApp", async () => {
   const main = await readFile(new URL("../main.tsx", import.meta.url), "utf8");
 

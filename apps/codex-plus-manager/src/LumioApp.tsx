@@ -19,6 +19,8 @@ import { LumioCommandError, loadLumioBootstrap, loadPublicSettings, shellLabels 
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
 import type { LumioState } from "./lumio/state.ts";
 import type { LumioAccountSummary, LumioCodexApp, LumioPhase } from "./lumio/types.ts";
+import { LoginView } from "./lumio/views/LoginView.tsx";
+import { RegisterView } from "./lumio/views/RegisterView.tsx";
 import { SignedOutView } from "./lumio/views/SignedOutView.tsx";
 import { ToastHost, useToasts } from "./lumio/views/Toast.tsx";
 
@@ -182,6 +184,26 @@ export function LumioApp() {
             onSignIn={() => dispatch({ type: "auth-step-changed", step: "login" })}
             serviceAvailable={state.serviceAvailable}
           />
+        ) : state.phase === "authenticating" && state.service !== null ? (
+          state.authStep === "register" ? (
+            <RegisterView
+              onAuthenticated={(account) => dispatch({ type: "authenticated", account })}
+              onBack={() => dispatch({ type: "auth-step-changed", step: "login" })}
+              onTwoFactorRequired={() => dispatch({ type: "two-factor-required" })}
+              pushToast={pushToast}
+              settings={state.service}
+            />
+          ) : (
+            <LoginView
+              onAuthenticated={(account) => dispatch({ type: "authenticated", account })}
+              onBackToPassword={() => dispatch({ type: "auth-step-changed", step: "login" })}
+              onCreateAccount={() => dispatch({ type: "auth-step-changed", step: "register" })}
+              onTwoFactorRequired={() => dispatch({ type: "two-factor-required" })}
+              pushToast={pushToast}
+              settings={state.service}
+              step={state.authStep === "two-factor" ? "two-factor" : "login"}
+            />
+          )
         ) : state.phase === "authenticating" || state.phase === "provisioning" ? (
           <section aria-live="polite" className="lumio-loading">
             <span className="lumio-loading-mark">
