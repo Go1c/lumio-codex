@@ -1,86 +1,45 @@
-# Contributing to CodexPlusPlus
+# Contributing to Lumio Codex
 
-Thank you for your interest in contributing to CodexPlusPlus!
+感谢贡献。本仓库是 Lumio Codex 桌面客户端与官网源码（AGPL-3.0-only），fork 自 CodexPlusPlus。
 
-## Development Setup
+## 开发与打包
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/BigPizzaV3/CodexPlusPlus.git
-   cd CodexPlusPlus
-   ```
+完整步骤见运维手册，勿只依赖本页摘要：
 
-2. **Install Rust toolchain**
-   Ensure you have Rust 1.70+ installed:
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   rustc --version  # Should be 1.70+
-   ```
+- **[docs/ops/01-local-build.md](docs/ops/01-local-build.md)** — 环境、编译、测试、打内部安装包  
+- **[docs/ops/README.md](docs/ops/README.md)** — 部署 / 发版总览  
 
-3. **Build the project**
-   ```bash
-   cargo build --release
-   ```
+摘要：
 
-4. **Run tests**
-   ```bash
-   cargo test
-   ```
+```bash
+git clone https://github.com/Go1c/lumio-codex.git
+cd lumio-codex
+git checkout publish
 
-## Project Structure
-
-```
-CodexPlusPlus/
-├── crates/
-│   ├── codex-plus-data/    # Data handling and provider sync
-│   └── codex-plus-core/    # Core Codex++ logic
-└── README.md               # Project documentation
+cd apps/codex-plus-manager
+npm ci && npm run check && npm test && npm run vite:build
+cd ../..
+cargo test -p codex-plus-core --lib lumio
+cargo test -p codex-plus-manager
 ```
 
-## Making Changes
+## 分支与 PR
 
-1. **Create a feature branch**
-   ```bash
-   git checkout -b feat/your-feature-name
-   ```
+- 持续集成分支：`publish`  
+- PR 请包含：Summary、验证命令与结果、known gaps  
+- 推送 / 合并 / 公开发布遵守仓库确认规则（见 `.spec/rules/system.md`）  
+- 改 `.spec/` 后运行：`node .spec/tools/spec-lint.mjs`  
 
-2. **Make your changes**
-   - Write idiomatic Rust code
-   - Add tests for new functionality
-   - Update documentation as needed
+## 发版
 
-3. **Run the test suite**
-   ```bash
-   cargo test --all-features
-   cargo clippy  # Linting
-   ```
+见 **[docs/ops/03-release.md](docs/ops/03-release.md)**。公开签名包在 CI `Public release gate` 打开之前不要当作稳定版分发。
 
-4. **Commit your changes**
-   ```bash
-   git commit -m "feat: add your feature description"
-   ```
+## 代码风格
 
-## Code Style
+- Rust：`cargo fmt`  
+- 前端：与现有 Lumio 壳一致；用户可见文案避开禁词（见 `shell-copy.test.ts`）  
+- 知识沉淀：功能行为进 `.spec/knowledge/`；运维步骤进 `docs/ops/`  
 
-- Follow Rust standard formatting (`cargo fmt`)
-- Use `clippy` for linting recommendations
-- Write self-documenting code with clear variable/function names
-- Add doc comments (`///`) for public APIs
+## 报告问题
 
-## Pull Request Process
-
-1. Fork the repository
-2. Create your feature branch
-3. Make your changes with adequate tests
-4. Ensure all tests pass and clippy is clean
-5. Submit a pull request with a clear description
-
-## Reporting Issues
-
-- Use GitHub Issues for bug reports and feature requests
-- Include Rust version (`rustc --version`) and OS information
-- For bugs, provide minimal reproduction steps
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the project's [GNU Affero General Public License v3.0](LICENSE), using the SPDX identifier `AGPL-3.0-only`.
+使用 GitHub Issues。请勿在 Issue 中粘贴 token、API Key、`.env` 或签名证书。

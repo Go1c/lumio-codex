@@ -7,10 +7,14 @@
 *.sh text eol=lf
 .github/workflows/*.yml text eol=lf
 
-# Preserve the original Snow Skin asset line endings for byte-exact bundling.
-assets/inject/upstream/snow-skin/*.js text eol=lf
-assets/inject/upstream/snow-skin/*.css text eol=lf
-
-# Keep byte-exact macOS theme assets identical on every checkout platform.
-assets/inject/upstream/*/macos/*.js text eol=lf
-assets/inject/upstream/*/macos/*.css text eol=lf
+# Upstream inject assets are hashed byte-exact in CI (Windows runners
+# must not rewrite them to CRLF).
+assets/inject/upstream/**/*.js text eol=lf
+assets/inject/upstream/**/*.css text eol=lf
+assets/inject/upstream/**/*.json text eol=lf
+assets/inject/upstream/**/*.html text eol=lf
+assets/inject/upstream/**/*.png binary
+assets/inject/upstream/**/*.jpg binary
+assets/inject/upstream/**/*.jpeg binary
+assets/inject/upstream/**/*.webp binary
+assets/inject/upstream/**/*.ico binary

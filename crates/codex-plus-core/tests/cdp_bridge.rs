@@ -1895,13 +1895,13 @@ fn manager_ui_exposes_pure_api_relay_mode_button() {
         .and_then(std::path::Path::parent)
         .expect("core crate should live under crates/codex-plus-core");
     let source = std::fs::read_to_string(repo.join("apps/codex-plus-manager/src/App.tsx")).unwrap();
-    let commands =
-        std::fs::read_to_string(repo.join("apps/codex-plus-manager/src-tauri/src/lib.rs")).unwrap();
 
     assert!(source.contains("官方混入 API Key"));
     assert!(source.contains("纯 API"));
     assert!(source.contains("apply_pure_api_injection"));
-    assert!(commands.contains("commands::apply_pure_api_injection"));
+    // Registration in lib.rs is no longer asserted here: the Lumio shell owns the
+    // invoke_handler and its allowlist admits lumio_ commands only. That boundary is
+    // enforced by apps/codex-plus-manager/src-tauri/tests/lumio_command_surface.rs.
 }
 
 #[test]

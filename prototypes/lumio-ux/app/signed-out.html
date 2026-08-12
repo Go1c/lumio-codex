@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 未登录首页</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/signed-out.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav is-locked" aria-label="主导航">
+        <a href="#" class="is-active">首页</a>
+        <a href="settings.html">设置</a>
+      </nav>
+      <span class="lx-phase" id="phase"><i></i>等待登录</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-signed-out">
+        <div class="lx-banner is-info" id="service-banner">
+          <span>服务暂时不可用，稍后自动重试。你可以稍后再登录，本机配置不会被修改。</span>
+          <span class="lx-chip is-code">SERVICE_UNAVAILABLE</span>
+        </div>
+
+        <section class="lx-hero">
+          <div>
+            <span class="lx-kicker">官方 Codex 快速接入工具</span>
+            <h1>更快开始使用<span>官方 Codex。</span></h1>
+            <p class="lead">
+              这个小工具只做一件事：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。
+              之后你使用的始终是官方 Codex 应用，一切保持原生。
+            </p>
+            <div class="lx-hero-cta">
+              <a class="lx-button is-primary is-large" href="login.html" id="btn-login">登录 →</a>
+              <a class="lx-button is-secondary is-large" href="register.html" id="btn-register">创建账户</a>
+            </div>
+            <p class="note" id="reg-closed-note" hidden>注册暂未开放，如已有账户可直接登录。</p>
+            <p class="note">🔒 不需要手动填写底层连接信息</p>
+          </div>
+          <div class="lx-quiet-card">
+            <p class="title">我们的承诺</p>
+            <div class="row">
+              <span class="tick">✓</span>
+              <span><strong>不修改官方应用</strong><small>官方 Codex 保持原样，本工具不替代、不注入。</small></span>
+            </div>
+            <div class="row">
+              <span class="tick">✓</span>
+              <span><strong>配置可一键恢复</strong><small>写入前先备份，随时恢复到接管前的状态。</small></span>
+            </div>
+            <div class="row">
+              <span class="tick">✓</span>
+              <span><strong>凭据由系统保护</strong><small>保存在钥匙串 / 凭据管理器，界面与日志不含明文。</small></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="lx-status-strip">
+          <article>
+            <span class="sicon">👤</span>
+            <div><small>账户状态</small><strong>尚未登录</strong></div>
+          </article>
+          <article>
+            <span class="sicon is-ok">💻</span>
+            <div><small>官方应用</small><strong>检测成功</strong></div>
+          </article>
+          <article id="service-strip">
+            <span class="sicon is-ok" id="service-icon">📡</span>
+            <div><small>服务入口</small><strong id="service-text">api.lumio.games</strong></div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#registration-closed", label: "注册暂未开放" },
+      { hash: "#service-down", label: "服务不可用" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const apply = () => {
+        const regClosed = location.hash === "#registration-closed";
+        const serviceDown = location.hash === "#service-down";
+
+        const btnRegister = document.getElementById("btn-register");
+        const btnLogin = document.getElementById("btn-login");
+        const note = document.getElementById("reg-closed-note");
+        const banner = document.getElementById("service-banner");
+        const phase = document.getElementById("phase");
+        const serviceIcon = document.getElementById("service-icon");
+        const serviceText = document.getElementById("service-text");
+
+        // 注册关闭：创建账户按钮禁用 + 注释
+        btnRegister.style.pointerEvents = regClosed || serviceDown ? "none" : "";
+        btnRegister.style.opacity = regClosed || serviceDown ? "0.55" : "";
+        note.hidden = !regClosed;
+
+        // 服务不可用：两个按钮均禁用，状态条警示
+        btnLogin.style.pointerEvents = serviceDown ? "none" : "";
+        btnLogin.style.opacity = serviceDown ? "0.55" : "";
+        banner.classList.toggle("is-visible", serviceDown);
+        phase.className = "lx-phase" + (serviceDown ? " is-danger" : "");
+        phase.lastChild.textContent = serviceDown ? "服务暂时不可用" : "等待登录";
+        serviceIcon.className = "sicon" + (serviceDown ? " is-warn" : " is-ok");
+        serviceText.textContent = serviceDown ? "连接失败，30 秒后重试" : "api.lumio.games";
+      };
+      window.addEventListener("hashchange", apply);
+      apply();
+    });
+  </script>
+</body>
+</html>

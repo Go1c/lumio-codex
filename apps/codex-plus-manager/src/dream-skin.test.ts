@@ -324,12 +324,12 @@ describe("dream skin theme helpers", () => {
     assert.match(css, /\.dream-skin-market-preview\s*\{[^}]*aspect-ratio:\s*16 \/ 9/s);
   });
 
-  it("allows the webview to load managed theme images only", async () => {
-    const raw = await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8");
-    const config = JSON.parse(raw);
-    const assetProtocol = config.app?.security?.assetProtocol;
+  it("disables the legacy managed-theme asset protocol", async () => {
+    const configRaw = await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8");
+    const cargoManifest = await readFile(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
+    const config = JSON.parse(configRaw);
 
-    assert.equal(assetProtocol?.enable, true);
-    assert.deepEqual(assetProtocol?.scope, ["$HOME/.codex-session-delete/dream-skin/**"]);
+    assert.equal(config.app?.security?.assetProtocol, undefined);
+    assert.doesNotMatch(cargoManifest, /"protocol-asset"/);
   });
 });

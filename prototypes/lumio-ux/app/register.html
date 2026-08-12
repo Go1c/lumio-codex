@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 注册</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/register.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav is-locked" aria-label="主导航">
+        <a href="#" class="is-active">首页</a>
+        <a href="#">设置</a>
+      </nav>
+      <span class="lx-phase"><i></i>正在验证账户</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-auth-wrap">
+        <!-- 正常注册表单 -->
+        <div class="lx-auth-card" id="register-form-card">
+          <p class="lx-eyebrow">创建账户</p>
+          <h1>用邮箱开始</h1>
+          <p class="lead">验证邮箱后设置密码即可完成注册，随后会自动完成官方 Codex 的连接准备。</p>
+
+          <div class="lx-banner" id="form-banner">
+            <span id="form-banner-text"></span>
+            <span class="lx-chip is-code" id="form-banner-code"></span>
+          </div>
+
+          <form id="register-form" novalidate>
+            <div class="lx-field" id="field-email">
+              <label for="email">邮箱</label>
+              <input class="lx-input" type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+              <p class="lx-hint">支持的邮箱：@gmail.com、@outlook.com、@qq.com、@163.com</p>
+              <p class="lx-error" id="email-error">请输入有效的邮箱地址</p>
+            </div>
+
+            <div class="lx-field" id="field-code">
+              <label for="code">验证码</label>
+              <div class="lx-input-row">
+                <input class="lx-input" type="text" id="code" inputmode="numeric" maxlength="6" placeholder="6 位数字" />
+                <button class="lx-button is-secondary" type="button" id="send-code" disabled>发送验证码</button>
+              </div>
+              <p class="lx-error" id="code-error">验证码不正确或已过期</p>
+            </div>
+
+            <div class="lx-field" id="field-password">
+              <label for="password">设置密码</label>
+              <input class="lx-input" type="password" id="password" placeholder="至少 8 位" autocomplete="new-password" />
+              <div class="lx-strength" id="strength" data-level="0">
+                <div class="lx-strength-bars"><i></i><i></i><i></i></div>
+                <small id="strength-label">密码强度</small>
+              </div>
+            </div>
+
+            <div class="lx-field" id="field-confirm">
+              <label for="confirm">确认密码</label>
+              <input class="lx-input" type="password" id="confirm" placeholder="再输入一次" autocomplete="new-password" />
+              <p class="lx-error" id="confirm-error">两次输入不一致</p>
+            </div>
+
+            <div class="lx-agreements" id="agreements">
+              <label class="lx-agree-row">
+                <input type="checkbox" data-agree />
+                <span>我已阅读并同意 <a href="#" onclick="Proto.toast('演示：展开服务条款正文'); return false;">服务条款</a><span class="lx-agree-version">v2026-03</span></span>
+              </label>
+              <label class="lx-agree-row">
+                <input type="checkbox" data-agree />
+                <span>我已阅读并同意 <a href="#" onclick="Proto.toast('演示：展开隐私政策正文'); return false;">隐私政策</a><span class="lx-agree-version">v2026-03</span></span>
+              </label>
+              <label class="lx-agree-row">
+                <input type="checkbox" data-agree />
+                <span>我已阅读并同意 <a href="#" onclick="Proto.toast('演示：展开使用政策正文'); return false;">使用政策</a><span class="lx-agree-version">v2026-01</span></span>
+              </label>
+            </div>
+
+            <button class="lx-button is-primary is-large" type="submit" id="submit" style="width: 100%;" disabled>创建账户</button>
+          </form>
+
+          <p class="lx-auth-foot">已有账户？<a href="login.html">去登录</a></p>
+        </div>
+
+        <!-- 注册关闭降级态 -->
+        <div class="lx-auth-card" id="register-closed-card" hidden>
+          <p class="lx-eyebrow">创建账户</p>
+          <h1>注册暂未开放</h1>
+          <p class="lead">
+            我们正在分批开放注册名额，请稍后再来。开放时间以官网公告为准；
+            如你已有账户，可以直接登录。
+          </p>
+          <a class="lx-button is-primary is-large" href="login.html" style="width: 100%;">返回登录</a>
+          <p class="lx-auth-foot"><a href="signed-out.html">回到首页</a></p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#closed", label: "注册关闭降级态" },
+      { hash: "#server-error", label: "提交后服务端错误" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const ALLOWED_SUFFIXES = ["gmail.com", "outlook.com", "qq.com", "163.com"];
+      const form = document.getElementById("register-form");
+      const email = document.getElementById("email");
+      const fieldEmail = document.getElementById("field-email");
+      const emailError = document.getElementById("email-error");
+      const sendCode = document.getElementById("send-code");
+      const code = document.getElementById("code");
+      const fieldCode = document.getElementById("field-code");
+      const password = document.getElementById("password");
+      const strength = document.getElementById("strength");
+      const strengthLabel = document.getElementById("strength-label");
+      const confirm = document.getElementById("confirm");
+      const fieldConfirm = document.getElementById("field-confirm");
+      const agrees = Array.from(document.querySelectorAll("[data-agree]"));
+      const submit = document.getElementById("submit");
+      const banner = document.getElementById("form-banner");
+
+      const emailValid = () => {
+        const v = email.value.trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return { ok: false, msg: "请输入有效的邮箱地址" };
+        const suffix = v.split("@")[1].toLowerCase();
+        if (!ALLOWED_SUFFIXES.includes(suffix)) return { ok: false, msg: "该邮箱后缀暂不支持" };
+        return { ok: true };
+      };
+
+      const passwordLevel = () => {
+        const v = password.value;
+        if (v.length < 8) return v.length === 0 ? 0 : 1;
+        let score = 1;
+        if (/[a-zA-Z]/.test(v) && /\d/.test(v)) score += 1;
+        if (v.length >= 12 && /[^a-zA-Z0-9]/.test(v)) score += 1;
+        return score;
+      };
+
+      const refresh = () => {
+        const okEmail = emailValid().ok;
+        sendCode.disabled = !okEmail || sendCode.textContent.includes("(");
+        const ready =
+          okEmail &&
+          code.value.trim().length === 6 &&
+          password.value.length >= 8 &&
+          confirm.value === password.value &&
+          agrees.every((c) => c.checked);
+        submit.disabled = !ready;
+      };
+
+      email.addEventListener("blur", () => {
+        const r = emailValid();
+        fieldEmail.classList.toggle("has-error", !r.ok && email.value.trim() !== "");
+        if (!r.ok) emailError.textContent = r.msg;
+      });
+      email.addEventListener("input", () => {
+        fieldEmail.classList.remove("has-error");
+        refresh();
+      });
+
+      sendCode.addEventListener("click", () => {
+        Proto.countdown(sendCode, 60);
+        Proto.toast("验证码已发送到 " + email.value.trim(), "ok");
+      });
+
+      code.addEventListener("input", () => {
+        code.value = code.value.replace(/\D/g, "").slice(0, 6);
+        fieldCode.classList.remove("has-error");
+        refresh();
+      });
+
+      password.addEventListener("input", () => {
+        const level = passwordLevel();
+        strength.dataset.level = String(level);
+        strengthLabel.textContent = ["密码强度", "弱", "中", "强"][level];
+        refresh();
+      });
+
+      confirm.addEventListener("blur", () => {
+        fieldConfirm.classList.toggle(
+          "has-error",
+          confirm.value !== "" && confirm.value !== password.value
+        );
+      });
+      confirm.addEventListener("input", () => {
+        fieldConfirm.classList.remove("has-error");
+        refresh();
+      });
+
+      agrees.forEach((c) => c.addEventListener("change", refresh));
+
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        // 演示：#server-error 变体走失败分支，其余成功进入 provisioning
+        submit.disabled = true;
+        submit.innerHTML = '<span class="lx-spin"></span>正在创建账户…';
+        setTimeout(() => {
+          if (location.hash === "#server-error") {
+            submit.disabled = false;
+            submit.textContent = "创建账户";
+            document.getElementById("form-banner-text").textContent = "验证码不正确或已过期";
+            document.getElementById("form-banner-code").textContent = "AUTH_CODE_INVALID";
+            banner.classList.add("is-visible");
+            fieldCode.classList.add("has-error");
+          } else {
+            location.href = "provisioning.html";
+          }
+        }, 900);
+      });
+
+      const applyVariant = () => {
+        const closed = location.hash === "#closed";
+        document.getElementById("register-form-card").hidden = closed;
+        document.getElementById("register-closed-card").hidden = !closed;
+        if (!closed) banner.classList.remove("is-visible");
+      };
+      window.addEventListener("hashchange", applyVariant);
+      applyVariant();
+      refresh();
+    });
+  </script>
+</body>
+</html>

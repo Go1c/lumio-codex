@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumio Codex · 交互原型总入口</title>
+  <link rel="stylesheet" href="assets/prototype.css" />
+</head>
+<body data-root="" data-page="index.html">
+  <main class="proto-index">
+    <header class="proto-index-head">
+      <div class="lx-brand">
+        <span class="lx-logo is-large"></span>
+        <span class="lx-brand-name"><strong style="font-size: 19px;">Lumio Codex</strong><small>UX PROTOTYPE</small></span>
+      </div>
+      <h1>交互原型 · 站点地图</h1>
+      <p>
+        本原型对应设计文档 <code>docs/specs/2026-08-12-lumio-ux-interaction-design.md</code>。
+        全部页面为纯静态假数据，不发任何网络请求。每个页面右下角的「原型导航」浮层可跳转任意页面，
+        并切换该页的状态变体（错误态、离线态、降级态等）。
+      </p>
+    </header>
+
+    <div class="proto-map">
+      <section class="proto-map-group lx-card">
+        <h2>官网（极简下载页）</h2>
+        <p>一句话定位 + 三步开始 + 下载 + 三条 FAQ；无账户入口，注册 / 登录 / 充值全部在 App 内完成。</p>
+        <div class="proto-map-links">
+          <a href="site/index.html">官网首页<small>定位 · 三步 · 下载 · FAQ</small></a>
+        </div>
+      </section>
+
+      <section class="proto-map-group lx-card">
+        <h2>App · 账户流程</h2>
+        <p>从未登录到自动配置完成的完整链路（对应设计文档 5.1–5.4）。</p>
+        <div class="proto-map-links">
+          <a href="app/signed-out.html">未登录首页<small>登录 / 注册入口 · 服务不可用降级</small></a>
+          <a href="app/register.html">注册<small>验证码倒计时 · 后缀提示 · 协议勾选</small></a>
+          <a href="app/login.html">登录<small>密码 · 2FA 分格输入 · 忘记密码</small></a>
+          <a href="app/provisioning.html">自动配置<small>四步进度 · 失败分支</small></a>
+        </div>
+      </section>
+
+      <section class="proto-map-group lx-card">
+        <h2>App · 主体页面</h2>
+        <p>登录后的日常使用与异常处理（对应设计文档 5.5–5.8）。</p>
+        <div class="proto-map-links">
+          <a href="app/home-online.html">首页 · 在线<small>余额 / 连接 / 模型 · 启动与充值</small></a>
+          <a href="app/home-offline.html">首页 · 离线<small>缓存态 · 禁用解释 · 重连恢复</small></a>
+          <a href="app/payment-handoff.html">充值交接<small>浏览器等待卡 · 成功 / 超时</small></a>
+          <a href="app/repair.html">需要检查配置<small>错误码 · 恢复二次确认</small></a>
+          <a href="app/settings.html">设置<small>六项设置 · 重新检测 · 遥测确认</small></a>
+        </div>
+      </section>
+
+      <section class="proto-map-group lx-card">
+        <h2>推荐评审动线</h2>
+        <p>按真实用户旅程走一遍：</p>
+        <div class="proto-map-links">
+          <a href="site/index.html#downloads">1. 官网下载区<small>了解产品 → 获取安装包</small></a>
+          <a href="app/signed-out.html">2. 首次打开 App<small>未登录首页</small></a>
+          <a href="app/register.html">3. 注册新账户<small>填表 → 提交</small></a>
+          <a href="app/provisioning.html">4. 自动配置<small>四步完成后进入首页</small></a>
+          <a href="app/home-online.html">5. 首页操作<small>充值 → 启动官方 Codex</small></a>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="assets/prototype.js" defer></script>
+</body>
+</html>

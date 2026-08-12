@@ -1,0 +1,1508 @@
+:root {
+  color: #f6f7fb;
+  background: #090b14;
+  color-scheme: dark;
+  font-family:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 0;
+  overflow: hidden;
+}
+
+button {
+  color: inherit;
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid #9aa1b5;
+  outline-offset: 3px;
+}
+
+.lumio-app {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-rows: 68px minmax(0, 1fr) 36px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgb(11 13 24 / 96%), rgb(7 9 17 / 99%)),
+    #090b14;
+}
+
+.lumio-app::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background-image:
+    linear-gradient(rgb(255 255 255 / 2%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 2%) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+  content: "";
+  pointer-events: none;
+}
+
+.lumio-topbar {
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 0 28px;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(8 10 19 / 72%);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 14%);
+  backdrop-filter: blur(18px);
+}
+
+.lumio-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 11px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lumio-logo-wrap {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 5%);
+}
+
+.lumio-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lumio-brand > span:last-child {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lumio-brand strong {
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+
+.lumio-brand small,
+.lumio-footer,
+.lumio-eyebrow,
+.lumio-kicker,
+.lumio-quiet-title {
+  font-family: "JetBrains Mono", monospace;
+}
+
+.lumio-brand small {
+  color: #7f849c;
+  font-size: 9px;
+  letter-spacing: 0.15em;
+}
+
+.lumio-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 3%);
+}
+
+.lumio-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 94px;
+  padding: 8px 15px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #85899e;
+  cursor: pointer;
+  font-size: 13px;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.lumio-nav button:hover {
+  color: #d9dbea;
+}
+
+.lumio-nav button.is-active {
+  background: rgb(255 255 255 / 8%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%);
+  color: #fff;
+}
+
+.lumio-nav.is-locked button {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.lumio-phase {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  color: #898da2;
+  font-size: 12px;
+}
+
+.lumio-phase > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #767b91;
+  box-shadow: 0 0 0 4px rgb(118 123 145 / 10%);
+}
+
+.lumio-phase.is-online > span {
+  background: #3ee6b4;
+  box-shadow: 0 0 0 4px rgb(62 230 180 / 10%);
+}
+
+.lumio-phase.is-offline > span {
+  background: #f3bd63;
+  box-shadow: 0 0 0 4px rgb(243 189 99 / 10%);
+}
+
+.lumio-main {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: rgb(255 255 255 / 12%) transparent;
+}
+
+.lumio-signed-out,
+.lumio-dashboard,
+.lumio-settings-page,
+.lumio-loading,
+.lumio-repair-card {
+  width: min(1180px, calc(100% - 56px));
+  margin: 0 auto;
+}
+
+.lumio-signed-out {
+  display: grid;
+  align-content: center;
+  gap: 30px;
+  min-height: 100%;
+  padding: 42px 0 36px;
+}
+
+.lumio-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  align-items: center;
+  gap: clamp(42px, 7vw, 100px);
+  min-height: 360px;
+}
+
+.lumio-hero-copy {
+  max-width: 650px;
+}
+
+.lumio-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 3%);
+  color: #8e9098;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.lumio-hero h1 {
+  margin: 24px 0 16px;
+  color: #f7f7fb;
+  font-size: clamp(30px, 3.6vw, 38px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
+}
+
+.lumio-hero-copy > p {
+  max-width: 520px;
+  margin: 0 0 24px;
+  color: #8e9098;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.lumio-hero-cta {
+  display: flex;
+  gap: 12px;
+}
+
+.lumio-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    transform 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
+}
+
+.lumio-button:not(:disabled) {
+  cursor: pointer;
+}
+
+.lumio-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.lumio-button.is-large {
+  min-height: 48px;
+  padding: 0 21px;
+}
+
+/* 官方风主按钮：中性浅色实底，不用品牌渐变 */
+.lumio-button.is-primary {
+  background: #ececf1;
+  color: #16181f;
+}
+
+.lumio-button.is-primary:not(:disabled):hover {
+  background: #fff;
+}
+
+.lumio-button.is-secondary {
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(255 255 255 / 5%);
+  color: #d8d9e4;
+}
+
+.lumio-button.is-warning {
+  border-color: rgb(219 168 92 / 24%);
+  background: rgb(219 168 92 / 7%);
+  color: #c4a074;
+}
+
+.lumio-button:disabled,
+.lumio-small-button:disabled,
+.lumio-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.lumio-inline-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  color: #72778d;
+  font-size: 11px;
+}
+
+/* 克制原则：右侧不放品牌动效，改为安静的承诺清单 */
+.lumio-quiet-card {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 26px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 3%);
+}
+
+.lumio-quiet-title {
+  margin: 0 0 14px;
+  color: #6e7077;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.lumio-quiet-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 0;
+}
+
+.lumio-quiet-row + .lumio-quiet-row {
+  border-top: 1px solid rgb(255 255 255 / 5%);
+}
+
+.lumio-quiet-tick {
+  flex: none;
+  margin-top: 2px;
+  color: #6fbfa8;
+}
+
+.lumio-quiet-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.lumio-quiet-row small {
+  display: block;
+  margin-top: 3px;
+  color: #6e7077;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@keyframes lumio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lumio-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid #ef6673;
+  border-radius: 8px;
+  background: rgb(242 113 126 / 7%);
+  color: #f4b6bd;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lumio-banner.is-warning {
+  border-left-color: #d9a552;
+  background: rgb(219 168 92 / 7%);
+  color: #e8cba0;
+}
+
+.lumio-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 13px;
+}
+
+.lumio-status-strip article,
+.lumio-status-action {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 15px 18px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 3%);
+  text-align: left;
+}
+
+.lumio-status-action {
+  cursor: pointer;
+  transition: border-color 150ms ease;
+}
+
+.lumio-status-action:hover {
+  border-color: rgb(255 255 255 / 15%);
+}
+
+.lumio-status-strip article > svg,
+.lumio-status-action > svg {
+  color: #555a70;
+}
+
+.lumio-status-strip small,
+.lumio-status-strip strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-status-strip small {
+  margin-bottom: 3px;
+  color: #666b80;
+  font-size: 10px;
+}
+
+.lumio-status-strip strong {
+  color: #c7c9d7;
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.lumio-status-icon,
+.lumio-card-icon,
+.lumio-setting-icon,
+.lumio-panel-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  color: #777d93;
+}
+
+.lumio-status-icon.is-success {
+  border-color: rgb(73 211 176 / 14%);
+  background: rgb(73 211 176 / 7%);
+  color: #6fbfa8;
+}
+
+.lumio-status-icon.is-warning {
+  border-color: rgb(219 168 92 / 18%);
+  background: rgb(219 168 92 / 7%);
+  color: #c4a074;
+}
+
+.lumio-dashboard,
+.lumio-settings-page {
+  padding: 52px 0 48px;
+}
+
+.lumio-welcome-row,
+.lumio-page-heading {
+  margin-bottom: 30px;
+}
+
+.lumio-welcome-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.lumio-eyebrow {
+  margin: 0 0 9px;
+  color: #6e7077;
+  font-size: 10px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.lumio-welcome-row h1,
+.lumio-page-heading h1,
+.lumio-repair-card h1 {
+  margin: 0;
+  color: #f4f4f8;
+  font-size: 30px;
+  font-weight: 620;
+  letter-spacing: -0.035em;
+}
+
+.lumio-welcome-row > div > p:last-child,
+.lumio-page-heading > p:last-child,
+.lumio-repair-card p {
+  margin: 8px 0 0;
+  color: #85899e;
+  font-size: 13px;
+}
+
+.lumio-secure-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid rgb(79 209 177 / 13%);
+  border-radius: 9px;
+  background: rgb(79 209 177 / 5%);
+  color: #7ed7c2;
+  font-size: 11px;
+}
+
+.lumio-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.lumio-card,
+.lumio-action-panel,
+.lumio-settings-list,
+.lumio-repair-card {
+  border: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(255 255 255 / 3.2%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 3%),
+    0 18px 45px rgb(0 0 0 / 12%);
+}
+
+.lumio-card {
+  min-height: 184px;
+  padding: 21px;
+  border-radius: 14px;
+}
+
+.lumio-card > p {
+  margin: 22px 0 7px;
+  color: #777b90;
+  font-size: 11px;
+}
+
+.lumio-card > strong {
+  display: block;
+  overflow: hidden;
+  margin-bottom: 7px;
+  color: #ececf2;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-balance-card > strong {
+  font-size: 30px;
+}
+
+.lumio-card > small {
+  color: #5f6479;
+  font-size: 10px;
+}
+
+.lumio-card-icon {
+  color: #8e9098;
+}
+
+.lumio-action-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 15px;
+  padding: 24px;
+  border-radius: 14px;
+}
+
+.lumio-action-panel h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 580;
+}
+
+.lumio-action-panel div > p:last-child {
+  margin: 7px 0 0;
+  color: #74798e;
+  font-size: 11px;
+}
+
+.lumio-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.lumio-settings-page {
+  max-width: 920px;
+}
+
+.lumio-page-heading > p:last-child {
+  font-size: 13px;
+}
+
+.lumio-settings-list {
+  overflow: hidden;
+  border-radius: 15px;
+}
+
+.lumio-setting-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 15px;
+  min-height: 82px;
+  padding: 15px 18px;
+}
+
+.lumio-setting-row + .lumio-setting-row {
+  border-top: 1px solid rgb(255 255 255 / 6%);
+}
+
+.lumio-setting-row strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #d9dbe5;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.lumio-setting-row p {
+  max-width: 650px;
+  margin: 0;
+  overflow: hidden;
+  color: #74798e;
+  font-size: 11px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-setting-icon {
+  color: #8e9098;
+}
+
+.lumio-setting-icon.is-warning {
+  color: #d4a96c;
+}
+
+.lumio-toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 999px;
+  background: #272a38;
+}
+
+.lumio-toggle span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #82869a;
+  transition: transform 160ms ease;
+}
+
+.lumio-toggle.is-on {
+  border-color: rgb(16 163 127 / 45%);
+  background: #10a37f;
+}
+
+.lumio-toggle.is-on span {
+  background: #fff;
+  transform: translateX(16px);
+}
+
+.lumio-small-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgb(255 255 255 / 9%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 4%);
+  color: #b5b8c7;
+  font-size: 11px;
+}
+
+.lumio-small-button.is-warning {
+  border-color: rgb(219 168 92 / 14%);
+  color: #c9a878;
+}
+
+.lumio-path-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px !important;
+}
+
+.lumio-settings-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 15px 2px 0;
+  color: #5f6478;
+  font-size: 10px;
+}
+
+.lumio-loading {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  min-height: 100%;
+  color: #8b8fa3;
+}
+
+.lumio-loading-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 5%);
+  color: #b7bdcd;
+}
+
+.lumio-loading-mark svg {
+  animation: lumio-spin 1.8s linear infinite;
+}
+
+.lumio-loading p {
+  margin-top: 15px;
+  font-size: 12px;
+}
+
+.lumio-repair {
+  display: grid;
+  place-content: center;
+  min-height: 100%;
+  padding: 40px 0;
+}
+
+.lumio-repair-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  width: min(660px, calc(100vw - 56px));
+  padding: 28px;
+  border-radius: 16px;
+}
+
+.lumio-repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.lumio-code-chip {
+  display: inline-block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  color: #8a8fa4;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.lumio-setting-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lumio-setting-note {
+  margin-top: 5px !important;
+  color: #c4a074 !important;
+}
+
+.lumio-path-value.is-flash {
+  animation: lumio-flash 1200ms ease;
+}
+
+@keyframes lumio-flash {
+  from {
+    color: #6fbfa8;
+  }
+}
+
+.lumio-spin {
+  animation: lumio-spin 900ms linear infinite;
+}
+
+.lumio-panel-icon.is-warning {
+  border-color: rgb(229 176 96 / 15%);
+  background: rgb(229 176 96 / 7%);
+  color: #d7aa69;
+}
+
+.lumio-repair-card code {
+  display: inline-block;
+  margin-top: 16px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  color: #8a8fa4;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.lumio-provision {
+  display: grid;
+  place-content: center;
+  min-height: 100%;
+  padding: 40px 0;
+  text-align: center;
+}
+
+.lumio-provision h1 {
+  margin: 0 0 6px;
+  color: #f4f4f8;
+  font-size: 24px;
+  font-weight: 640;
+}
+
+.lumio-provision-lead {
+  margin: 0 0 30px;
+  color: #8e9098;
+  font-size: 13px;
+}
+
+.lumio-steps {
+  display: grid;
+  width: min(420px, calc(100vw - 56px));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.lumio-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 4px;
+}
+
+.lumio-step + .lumio-step::before {
+  position: absolute;
+  top: -12px;
+  left: 19px;
+  width: 1px;
+  height: 24px;
+  background: rgb(255 255 255 / 10%);
+  content: "";
+}
+
+.lumio-step-dot {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 50%;
+  background: rgb(255 255 255 / 5%);
+  color: #6e7077;
+  font-size: 13px;
+}
+
+.lumio-step.is-running .lumio-step-dot {
+  border-color: rgb(255 255 255 / 40%);
+  color: #d1d5e0;
+}
+
+.lumio-step.is-done .lumio-step-dot {
+  border-color: rgb(16 163 127 / 40%);
+  background: rgb(16 163 127 / 10%);
+  color: #6fbfa8;
+}
+
+.lumio-step.is-failed .lumio-step-dot {
+  border-color: rgb(242 113 126 / 45%);
+  background: rgb(242 113 126 / 8%);
+  color: #ef6673;
+}
+
+.lumio-step-body strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.lumio-step.is-failed .lumio-step-body strong {
+  color: #ef6673;
+}
+
+.lumio-step-body small {
+  display: block;
+  margin-top: 3px;
+  color: #6e7077;
+  font-size: 11px;
+}
+
+.lumio-step-state {
+  margin-left: auto;
+  color: #6e7077;
+  font-size: 11px;
+}
+
+.lumio-provision-actions {
+  display: flex;
+  justify-content: center;
+  gap: 11px;
+  margin-top: 26px;
+}
+
+.lumio-provision-foot {
+  margin: 28px 0 0;
+  color: #6e7077;
+  font-size: 11px;
+}
+
+.lumio-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 18px;
+  padding: 11px 14px;
+  border: 1px solid rgb(219 168 92 / 20%);
+  border-radius: 10px;
+  background: rgb(219 168 92 / 7%);
+  color: #e8cba0;
+  font-size: 12px;
+}
+
+.lumio-notice.is-success {
+  border-color: rgb(62 230 180 / 20%);
+  background: rgb(62 230 180 / 6%);
+  color: #6fbfa8;
+}
+
+.lumio-notice.is-update {
+  border-color: rgb(120 170 255 / 22%);
+  background: rgb(120 170 255 / 8%);
+  color: #c5d7ff;
+  flex-wrap: wrap;
+}
+
+.lumio-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 7px;
+  padding: 3px 8px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 7px;
+  font-size: 10px;
+}
+
+.lumio-tag.is-success {
+  border-color: rgb(79 209 177 / 16%);
+  background: rgb(79 209 177 / 6%);
+  color: #6fbfa8;
+}
+
+.lumio-tag.is-warning {
+  border-color: rgb(219 168 92 / 20%);
+  background: rgb(219 168 92 / 7%);
+  color: #c4a074;
+}
+
+.lumio-card.is-cached > strong {
+  color: #8e9098;
+}
+
+.lumio-card-note {
+  display: block;
+  margin-top: 8px;
+  color: #6e7077;
+  font-size: 10px;
+}
+
+.lumio-small-button.is-inline {
+  min-height: 24px;
+  margin-left: 8px;
+  padding: 0 8px;
+  font-size: 10px;
+}
+
+.lumio-small-button:not(:disabled) {
+  cursor: pointer;
+}
+
+.lumio-auth-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 40px 0;
+}
+
+.lumio-auth-card {
+  width: min(420px, calc(100vw - 56px));
+}
+
+.lumio-auth-card h1 {
+  margin: 0 0 8px;
+  color: #f4f4f8;
+  font-size: 26px;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+}
+
+.lumio-auth-lead {
+  margin: 0 0 22px;
+  color: #8e9098;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.lumio-auth-foot {
+  margin: 20px 0 0;
+  color: #6e7077;
+  font-size: 12px;
+  text-align: center;
+}
+
+.lumio-field {
+  margin-bottom: 18px;
+}
+
+.lumio-field > label {
+  display: block;
+  margin-bottom: 7px;
+  color: #d1d5e0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lumio-field-hint {
+  margin: 7px 0 0;
+  color: #6e7077;
+  font-size: 11px;
+}
+
+.lumio-field-hint.is-end {
+  text-align: right;
+}
+
+.lumio-field-error {
+  margin: 7px 0 0;
+  color: #ef6673;
+  font-size: 11px;
+}
+
+.lumio-form-error {
+  margin-bottom: 12px;
+}
+
+.lumio-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 13px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  color: #ececf1;
+  font: inherit;
+  font-size: 13px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.lumio-input::placeholder {
+  color: #5d6175;
+}
+
+.lumio-input:focus {
+  border-color: rgb(255 255 255 / 34%);
+  background: rgb(255 255 255 / 6%);
+  outline: none;
+}
+
+.lumio-field.has-error .lumio-input {
+  border-color: rgb(242 113 126 / 55%);
+}
+
+.lumio-input-row {
+  display: flex;
+  gap: 9px;
+}
+
+.lumio-input-row .lumio-input {
+  flex: 1;
+}
+
+.lumio-input-row .lumio-button {
+  flex: none;
+  min-width: 116px;
+  font-size: 12px;
+}
+
+.lumio-button.is-block {
+  width: 100%;
+}
+
+.lumio-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lumio-strength-bars {
+  display: flex;
+  flex: 1;
+  gap: 5px;
+}
+
+.lumio-strength-bars i {
+  flex: 1;
+  height: 4px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 9%);
+}
+
+.lumio-strength[data-level="1"] .lumio-strength-bars i:nth-child(1) {
+  background: #ef6673;
+}
+
+.lumio-strength[data-level="2"] .lumio-strength-bars i:nth-child(-n + 2) {
+  background: #d9a552;
+}
+
+.lumio-strength[data-level="3"] .lumio-strength-bars i {
+  background: #10a37f;
+}
+
+.lumio-strength small {
+  color: #6e7077;
+  font-size: 10px;
+}
+
+.lumio-agreements {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.lumio-agree-row {
+  padding: 11px 13px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 3%);
+  font-size: 12px;
+}
+
+.lumio-agree-row > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.lumio-agree-row input {
+  margin: 2px 0 0;
+  accent-color: #ececf1;
+}
+
+.lumio-agree-version {
+  margin-left: 6px;
+  color: #6e7077;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.lumio-agree-body {
+  margin: 10px 0 0;
+  color: #8e9098;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.lumio-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b7bdcd;
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.lumio-otp {
+  display: flex;
+  justify-content: center;
+  gap: 9px;
+}
+
+.lumio-otp input {
+  width: 46px;
+  height: 54px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  color: #ececf1;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 20px;
+  text-align: center;
+}
+
+.lumio-otp input:focus {
+  border-color: rgb(255 255 255 / 34%);
+  outline: none;
+}
+
+.lumio-otp.is-error input {
+  border-color: rgb(242 113 126 / 55%);
+  animation: lumio-shake 240ms ease;
+}
+
+@keyframes lumio-shake {
+  25% {
+    transform: translateX(-4px);
+  }
+
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+.lumio-modal-backdrop {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  inset: 0;
+  padding: 20px;
+  background: rgb(4 5 10 / 66%);
+  backdrop-filter: blur(4px);
+}
+
+.lumio-modal {
+  width: min(440px, 100%);
+  padding: 26px;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 16px;
+  background: #0d0f1c;
+  box-shadow: 0 30px 90px rgb(0 0 0 / 55%);
+}
+
+.lumio-modal h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  font-weight: 640;
+}
+
+.lumio-modal p {
+  margin: 0 0 10px;
+  color: #8e9098;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.lumio-modal ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  color: #8e9098;
+  font-size: 13px;
+  line-height: 1.9;
+}
+
+.lumio-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.lumio-toasts {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 80;
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+}
+
+.lumio-toast {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 360px;
+  padding: 11px 15px;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 11px;
+  background: #12141f;
+  box-shadow: 0 16px 44px rgb(0 0 0 / 45%);
+  color: #d1d5e0;
+  font-size: 12px;
+  animation: lumio-toast-in 200ms ease;
+}
+
+.lumio-toast.is-success {
+  border-color: rgb(62 230 180 / 30%);
+  color: #6fbfa8;
+}
+
+.lumio-toast.is-error {
+  border-color: rgb(242 113 126 / 32%);
+  color: #f4b6bd;
+}
+
+.lumio-toast button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6e7077;
+  cursor: pointer;
+}
+
+@keyframes lumio-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+.lumio-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-top: 1px solid rgb(255 255 255 / 5%);
+  color: #494e62;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.lumio-footer-version {
+  position: absolute;
+  right: 22px;
+}
+
+.lumio-footer-separator {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #44495d;
+}
+
+@media (max-width: 900px) {
+  .lumio-topbar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .lumio-phase {
+    display: none;
+  }
+
+  .lumio-nav {
+    justify-self: end;
+  }
+
+  .lumio-hero {
+    grid-template-columns: minmax(0, 1.25fr) minmax(250px, 0.75fr);
+    gap: 32px;
+  }
+
+  .lumio-status-strip article {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 760px) {
+  .lumio-app {
+    grid-template-rows: 62px minmax(0, 1fr) 32px;
+  }
+
+  .lumio-topbar {
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .lumio-brand small {
+    display: none;
+  }
+
+  .lumio-nav button {
+    min-width: auto;
+    padding: 7px 10px;
+  }
+
+  .lumio-signed-out,
+  .lumio-dashboard,
+  .lumio-settings-page,
+  .lumio-loading,
+  .lumio-repair-card {
+    width: min(100% - 30px, 1180px);
+  }
+
+  .lumio-signed-out {
+    align-content: start;
+    padding-top: 30px;
+  }
+
+  .lumio-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .lumio-status-strip,
+  .lumio-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lumio-status-strip article + article {
+    border-top: 1px solid rgb(255 255 255 / 7%);
+    border-left: 0;
+  }
+
+  .lumio-action-panel,
+  .lumio-welcome-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lumio-actions {
+    width: 100%;
+  }
+
+  .lumio-actions .lumio-button {
+    flex: 1;
+  }
+
+  .lumio-setting-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .lumio-setting-row > :last-child {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .lumio-footer-version {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

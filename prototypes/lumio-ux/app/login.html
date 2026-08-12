@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 登录</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/login.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav is-locked" aria-label="主导航">
+        <a href="#" class="is-active">首页</a>
+        <a href="#">设置</a>
+      </nav>
+      <span class="lx-phase"><i></i>正在验证账户</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-auth-wrap">
+        <!-- 第一步：邮箱 + 密码 -->
+        <div class="lx-auth-card" id="step-password">
+          <p class="lx-eyebrow">欢迎回来</p>
+          <h1>登录</h1>
+          <p class="lead">登录后会自动完成官方 Codex 的连接准备，无需任何手动配置。</p>
+
+          <div class="lx-banner" id="login-banner">
+            <span id="login-banner-text"></span>
+            <span class="lx-chip is-code" id="login-banner-code"></span>
+          </div>
+
+          <form id="login-form" novalidate>
+            <div class="lx-field">
+              <label for="email">邮箱</label>
+              <input class="lx-input" type="email" id="email" placeholder="you@example.com" autocomplete="email" />
+            </div>
+            <div class="lx-field">
+              <label for="password">密码</label>
+              <div class="lx-input-row">
+                <input class="lx-input" type="password" id="password" placeholder="输入密码" autocomplete="current-password" />
+                <button class="lx-button is-secondary" type="button" id="toggle-pw" style="min-width: 64px;">显示</button>
+              </div>
+              <p class="lx-hint" style="text-align: right; margin-top: 8px;">
+                <a href="#" data-open-modal="forgot-modal" onclick="return false;" id="forgot-link">忘记密码？</a>
+              </p>
+            </div>
+            <button class="lx-button is-primary is-large" type="submit" id="login-submit" style="width: 100%;" disabled>登录</button>
+          </form>
+
+          <p class="lx-auth-foot">没有账户？<a href="register.html">创建账户</a></p>
+        </div>
+
+        <!-- 第二步：2FA（原位切换，不换页） -->
+        <div class="lx-auth-card" id="step-2fa" hidden>
+          <p class="lx-eyebrow">两步验证</p>
+          <h1>输入两步验证码</h1>
+          <p class="lead">打开你的验证器应用查看动态码。演示：输入 <code>246810</code> 通过，其他值报错。</p>
+
+          <div class="lx-field" id="otp-field">
+            <div class="lx-otp" id="otp">
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 1 位" />
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 2 位" />
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 3 位" />
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 4 位" />
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 5 位" />
+              <input type="text" inputmode="numeric" maxlength="1" aria-label="第 6 位" />
+            </div>
+            <p class="lx-error" id="otp-error" style="text-align: center;">两步验证码不正确（AUTH_2FA_INVALID）</p>
+          </div>
+
+          <p class="lx-auth-foot"><a href="#" id="back-to-password">← 返回重新登录</a></p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <!-- 忘记密码说明层 -->
+  <div class="lx-modal-backdrop" id="forgot-modal" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
+    <div class="lx-modal">
+      <h3 id="forgot-title">密码重置在网页端完成</h3>
+      <p>出于安全考虑，密码重置在浏览器中进行。我们会打开重置页面，完成后回到这里重新登录即可。</p>
+      <div class="lx-modal-actions">
+        <button class="lx-button is-secondary" type="button" data-close-modal="forgot-modal">取消</button>
+        <button class="lx-button is-primary" type="button" id="forgot-go">在浏览器中打开</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#error", label: "凭据错误" },
+      { hash: "#disabled", label: "账号已停用" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const email = document.getElementById("email");
+      const password = document.getElementById("password");
+      const submit = document.getElementById("login-submit");
+      const banner = document.getElementById("login-banner");
+      const bannerText = document.getElementById("login-banner-text");
+      const bannerCode = document.getElementById("login-banner-code");
+      const stepPassword = document.getElementById("step-password");
+      const step2fa = document.getElementById("step-2fa");
+      const otpField = document.getElementById("otp-field");
+
+      const refresh = () => {
+        submit.disabled = !(email.value.trim() && password.value);
+      };
+      email.addEventListener("input", refresh);
+      password.addEventListener("input", refresh);
+
+      document.getElementById("toggle-pw").addEventListener("click", (e) => {
+        const show = password.type === "password";
+        password.type = show ? "text" : "password";
+        e.target.textContent = show ? "隐藏" : "显示";
+      });
+
+      document.getElementById("forgot-go").addEventListener("click", () => {
+        Proto.closeModal("forgot-modal");
+        Proto.toast("演示：系统浏览器已打开密码重置页", "ok");
+      });
+
+      const showBanner = (text, codeStr) => {
+        bannerText.textContent = text;
+        bannerCode.textContent = codeStr;
+        banner.classList.add("is-visible");
+      };
+
+      document.getElementById("login-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        submit.disabled = true;
+        submit.innerHTML = '<span class="lx-spin"></span>正在验证…';
+        setTimeout(() => {
+          submit.disabled = false;
+          submit.textContent = "登录";
+          if (location.hash === "#error") {
+            // 凭据错误：密码清空、邮箱保留、焦点回密码框
+            showBanner("邮箱或密码不正确", "AUTH_INVALID_CREDENTIALS");
+            password.value = "";
+            password.focus();
+            refresh();
+          } else if (location.hash === "#disabled") {
+            showBanner("该账户已被停用，请联系支持。", "AUTH_ACCOUNT_DISABLED");
+          } else {
+            // 演示：默认走 2FA 步骤
+            banner.classList.remove("is-visible");
+            stepPassword.hidden = true;
+            step2fa.hidden = false;
+            step2fa.querySelector("input").focus();
+          }
+        }, 900);
+      });
+
+      const otp = Proto.bindOtp(document.getElementById("otp"), (value) => {
+        if (value === "246810") {
+          location.href = "provisioning.html";
+        } else {
+          otpField.classList.add("has-error");
+          document.getElementById("otp").classList.add("is-error");
+          setTimeout(() => {
+            document.getElementById("otp").classList.remove("is-error");
+            otp.clear();
+          }, 400);
+        }
+      });
+
+      document.getElementById("back-to-password").addEventListener("click", (e) => {
+        e.preventDefault();
+        step2fa.hidden = true;
+        stepPassword.hidden = false;
+        otpField.classList.remove("has-error");
+      });
+    });
+  </script>
+</body>
+</html>

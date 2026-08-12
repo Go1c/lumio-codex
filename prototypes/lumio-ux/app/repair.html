@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 需要检查配置</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/repair.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav is-locked" aria-label="主导航">
+        <a href="#" class="is-active">首页</a>
+        <a href="#">设置</a>
+      </nav>
+      <span class="lx-phase is-danger"><i></i>需要检查配置</span>
+    </header>
+
+    <main class="lx-main">
+      <section class="lx-repair">
+        <div class="lx-repair-card lx-card">
+          <span class="ricon">⚠</span>
+          <div>
+            <p class="lx-eyebrow">启动检查发现问题</p>
+            <h1>需要检查配置</h1>
+
+            <!-- 默认：外部修改冲突 -->
+            <div id="case-conflict">
+              <p>
+                检测到本机配置被其他工具修改过。为保护你的设置，Lumio 不会自动覆盖这些改动——
+                你可以重新检查，或恢复到接管前的原始配置。
+              </p>
+              <p><span class="lx-chip is-code is-warn">CODEX_CONFIG_CONFLICT</span></p>
+              <div class="lx-repair-actions">
+                <button class="lx-button is-primary" type="button" id="recheck">重新检查</button>
+                <button class="lx-button is-warning" type="button" data-open-modal="restore-confirm">恢复本机配置</button>
+                <button class="lx-button is-secondary" type="button" id="export-logs">导出诊断日志</button>
+              </div>
+            </div>
+
+            <!-- 变体：凭据失效 -->
+            <div id="case-credentials" hidden>
+              <p>
+                本机保存的登录凭据已失效，需要重新登录。你的本机配置与官方 Codex 均未被修改。
+              </p>
+              <p><span class="lx-chip is-code is-warn">KEY_STORAGE_UNAVAILABLE</span></p>
+              <div class="lx-repair-actions">
+                <a class="lx-button is-primary" href="login.html">重新登录</a>
+                <button class="lx-button is-secondary" type="button" id="export-logs-2">导出诊断日志</button>
+              </div>
+            </div>
+
+            <!-- 修复失败提示 -->
+            <div class="lx-banner" id="repair-failed" style="margin-top: 20px;">
+              <span>问题仍未解决，已保留原始快照与诊断信息，可再次尝试。</span>
+              <span class="lx-chip is-code">CODEX_RESTORE_FAILED</span>
+            </div>
+
+            <p class="lx-settings-note" style="margin-top: 18px;">
+              导出前会再次扫描并移除敏感内容；修复过程不会删除最后可恢复的配置副本。
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <!-- 恢复二次确认 -->
+  <div class="lx-modal-backdrop" id="restore-confirm" role="dialog" aria-modal="true" aria-labelledby="restore-title">
+    <div class="lx-modal">
+      <h3 id="restore-title">恢复本机配置？</h3>
+      <p>将撤销由 Lumio 管理的配置字段并恢复接管前内容，你的其他本机设置不受影响。</p>
+      <p>此操作可以再次登录后重新配置，不会丢失账户数据。</p>
+      <div class="lx-modal-actions">
+        <button class="lx-button is-secondary" type="button" data-close-modal="restore-confirm">取消</button>
+        <button class="lx-button is-warning" type="button" id="restore-go">确认恢复</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#credentials", label: "凭据失效变体" },
+      { hash: "#restore-failed", label: "修复失败提示" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const recheck = document.getElementById("recheck");
+      recheck.addEventListener("click", () => {
+        recheck.disabled = true;
+        recheck.innerHTML = '<span class="lx-spin"></span>正在检查…';
+        setTimeout(() => {
+          // 演示：重新检查通过，回到在线首页
+          location.href = "home-online.html";
+        }, 1600);
+      });
+
+      const exportLogs = () => Proto.toast("已导出到 ~/Downloads/lumio-diagnostics.zip", "ok");
+      document.getElementById("export-logs").addEventListener("click", exportLogs);
+      document.getElementById("export-logs-2").addEventListener("click", exportLogs);
+
+      document.getElementById("restore-go").addEventListener("click", () => {
+        Proto.closeModal("restore-confirm");
+        Proto.toast("已恢复接管前配置", "ok");
+        setTimeout(() => (location.href = "signed-out.html"), 1200);
+      });
+
+      const apply = () => {
+        document.getElementById("case-conflict").hidden = location.hash === "#credentials";
+        document.getElementById("case-credentials").hidden = location.hash !== "#credentials";
+        document.getElementById("repair-failed").classList.toggle("is-visible", location.hash === "#restore-failed");
+      };
+      window.addEventListener("hashchange", apply);
+      apply();
+    });
+  </script>
+</body>
+</html>
