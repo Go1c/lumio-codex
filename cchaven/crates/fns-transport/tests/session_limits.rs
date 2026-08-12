@@ -549,7 +549,6 @@ async fn inbound_idle_timeout_is_not_reset_by_outbound_heartbeat() {
     engine.stop().await;
 }
 
-
 #[tokio::test]
 async fn inbound_pong_resets_idle_timeout() {
     // B-00009 investigation: server WritePong must keep the session alive.

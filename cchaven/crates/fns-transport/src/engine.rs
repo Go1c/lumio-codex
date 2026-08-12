@@ -111,15 +111,39 @@ enum EngineCall {
         message: fns_protocol::WorkspaceAckRequest,
         tx: oneshot::Sender<Result<(), TransportError>>,
     },
-    /// Run an arbitrary job against the engine on the engine thread.
-    ///
-    /// Hosts need engine state the wire protocol never asks for — the conflict
-    /// list behind a UI, aggregate progress counters, a user-chosen conflict
-    /// resolution. Routing those through one boxed job keeps the "exactly one
-    /// thread touches SyncEngine" invariant without growing a handle method per
-    /// question. The job carries its own reply channel.
-    Job {
-        job: Box<dyn FnOnce(&mut SyncEngine) + Send>,
+    OpenBlob {
+        content_hash: fns_protocol::WorkspaceContentHash,
+        tx: oneshot::Sender<Result<std::fs::File, TransportError>>,
+    },
+    BeginBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        content_hash: fns_protocol::WorkspaceContentHash,
+        size: u64,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    WriteBlobChunk {
+        transfer_id: fns_protocol::TransferId,
+        data: tokio_tungstenite::tungstenite::Bytes,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    SealBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    CommitBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        tx: oneshot::Sender<Result<Vec<fns_sync_core::SyncCommand>, TransportError>>,
+    },
+    AbortBlobImport {
+        transfer_id: fns_protocol::TransferId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    AbortBlobImports {
+        tx: oneshot::Sender<Result<(), TransportError>>,
+    },
+    BlobUploaded {
+        operation_id: fns_protocol::OperationId,
+        tx: oneshot::Sender<Result<(), TransportError>>,
     },
     Shutdown {
         tx: oneshot::Sender<Result<(), TransportError>>,
@@ -405,7 +429,6 @@ fn process_call(
         EngineCall::BlobUploaded { operation_id, tx } => {
             let _ = tx.send(map_err(engine.blob_uploaded(operation_id)));
         }
-        EngineCall::Job { job } => job(engine),
         EngineCall::Shutdown { tx } => {
             blob_imports.clear();
             let _ = tx.send(map_err(engine.close()));
@@ -524,30 +547,6 @@ impl EngineHandle {
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
         rx.await
             .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?
-    }
-
-    /// Run `job` on the engine thread and await its value.
-    ///
-    /// Use this for engine state a host needs but the session loop does not
-    /// drive, such as the conflict list or the counters behind a status
-    /// indicator. The job runs to completion between two protocol calls, so it
-    /// must not block.
-    pub async fn with_engine<T, F>(&self, job: F) -> Result<T, TransportError>
-    where
-        F: FnOnce(&mut SyncEngine) -> T + Send + 'static,
-        T: Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        self.tx
-            .send(EngineCall::Job {
-                job: Box::new(move |engine| {
-                    let _ = tx.send(job(engine));
-                }),
-            })
-            .await
-            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))?;
-        rx.await
-            .map_err(|_| TransportError::new(TransportErrorCode::Core, false))
     }
 
     pub async fn shutdown(&self) -> Result<(), TransportError> {

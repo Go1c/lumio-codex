@@ -38,9 +38,10 @@ pub enum ExpectedResponse {
         content_hash: WorkspaceContentHash,
         size: u64,
     },
-    ConflictResolution {
-        body: fns_protocol::WorkspaceConflictResolvedRequest,
-    },
+    BlobBeginUpload(fns_protocol::WorkspaceBlobBeginMessage),
+    BlobEndUpload(WorkspaceBlobEndMessage),
+    BlobEndDownload(WorkspaceBlobEndMessage),
+    ConflictResolved(WorkspaceConflictResolvedRequest),
 }
 
 impl ExpectedResponse {
@@ -289,19 +290,7 @@ impl RequestTracker {
             | DecodedEnvelope::Failure {
                 request_id: None, ..
             }
-            SyncCommand::ResolveConflict(body) => {
-                let id = fresh_request_id();
-                let frame = encode_request(
-                    WorkspaceAction::WorkspaceConflictResolved,
-                    id,
-                    MessageBody::ConflictResolvedRequest(body.clone()),
-                )
-                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
-                (id, frame, ExpectedResponse::ConflictResolution { body })
-            }
-            SyncCommand::UploadBlob { .. } => {
-                // UploadBlob sends nothing by itself — it's paired with server BlobNeed.
-                // Transfer module (Task 5) handles this.
+            | DecodedEnvelope::Request { .. } => {
                 return Err(TransportError::new(TransportErrorCode::Protocol, false));
             }
         };
@@ -364,14 +353,10 @@ impl RequestTracker {
 
     pub fn expired(&self, now: Instant, timeout: Duration) -> Option<RequestId> {
         self.entries
-            .drain()
-            .map(|(_, entry)| match entry.expected {
-                ExpectedResponse::Mutation { command } => command,
-                ExpectedResponse::Ack { body } => SyncCommand::SendAck(body),
-                ExpectedResponse::BlobNeedDownload { command } => command,
-                ExpectedResponse::ConflictResolution { body } => SyncCommand::ResolveConflict(body),
-            })
-            .collect()
+            .iter()
+            .filter(|(_, entry)| now.saturating_duration_since(entry.sent_at) >= timeout)
+            .min_by_key(|(_, entry)| entry.sent_at)
+            .map(|(request_id, _)| *request_id)
     }
 
     pub fn next_deadline(&self, timeout: Duration) -> Option<Instant> {

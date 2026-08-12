@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use fns_fs::FsChange;
+use fns_fs::{FsChange, SyncRuleConfig};
 use fns_protocol::{ClientId, WorkspaceId, WorkspacePath};
 use fns_sync_core::{SyncEngine, SyncEngineConfig, SyncError};
 use tempfile::TempDir;
@@ -49,7 +49,11 @@ impl Fixture {
             workspace.path(),
             state.path(),
         )
-        .with_sync_rules(includes, excludes);
+        .with_sync_rules(SyncRuleConfig {
+            includes,
+            excludes,
+            protect_secrets: true,
+        });
         Self {
             engine: SyncEngine::open(config).expect("engine"),
             workspace,

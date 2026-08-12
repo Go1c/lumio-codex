@@ -293,7 +293,9 @@ mod tests {
             ssh_host_alias: "test-ssh".into(),
             scenarios: vec![],
         };
-        let error = profile.ensure_test_only().expect_err("must reject non-loopback");
+        let error = profile
+            .ensure_test_only()
+            .expect_err("must reject non-loopback");
         assert!(
             matches!(error, HarnessError::InvalidConfiguration(_)),
             "expected InvalidConfiguration, got {error:?}"
@@ -313,7 +315,9 @@ mod tests {
             ssh_host_alias: "test-ssh".into(),
             scenarios: vec![],
         };
-        let error = profile.ensure_test_only().expect_err("must reject missing port");
+        let error = profile
+            .ensure_test_only()
+            .expect_err("must reject missing port");
         assert!(
             matches!(error, HarnessError::InvalidConfiguration(_)),
             "expected InvalidConfiguration, got {error:?}"

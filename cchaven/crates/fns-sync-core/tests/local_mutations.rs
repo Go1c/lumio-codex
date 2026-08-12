@@ -141,8 +141,7 @@ fn change_after_dispatch_becomes_deferred_intent() {
         SyncCommand::ResolveConflict(_)
         | SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
-        | SyncCommand::SendAck(_)
-        | SyncCommand::ResolveConflict(_) => panic!("expected mutation"),
+        | SyncCommand::SendAck(_) => panic!("expected mutation"),
     };
     assert_eq!(outbox[0].body(), dispatched_body.as_slice());
 }

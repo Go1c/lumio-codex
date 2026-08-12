@@ -27,9 +27,6 @@ pub enum SyncCommand {
         size: u64,
     },
     SendAck(WorkspaceAckRequest),
-    /// A user-chosen conflict resolution, replayed from the durable conflict
-    /// row until the server answers with `WorkspaceConflictResolved`.
-    ResolveConflict(WorkspaceConflictResolvedRequest),
 }
 
 impl SyncCommand {
@@ -39,7 +36,6 @@ impl SyncCommand {
             Self::ResolveConflict(resolution) => Some(resolution.operation_id),
             Self::UploadBlob { operation_id, .. } => Some(*operation_id),
             Self::DownloadBlob { operation_id, .. } => *operation_id,
-            Self::ResolveConflict(request) => Some(request.operation_id),
             Self::SendAck(_) => None,
         }
     }
@@ -47,10 +43,10 @@ impl SyncCommand {
     pub fn mutation(&self) -> Result<WorkspaceMutation, SyncError> {
         match self {
             Self::Mutation(mutation) => Ok(mutation.clone()),
-            Self::UploadBlob { .. }
+            Self::ResolveConflict(_)
+            | Self::UploadBlob { .. }
             | Self::DownloadBlob { .. }
-            | Self::SendAck(_)
-            | Self::ResolveConflict(_) => Err(SyncError::ProtocolInvariant {
+            | Self::SendAck(_) => Err(SyncError::ProtocolInvariant {
                 reason: "command_not_mutation",
             }),
         }
@@ -61,7 +57,6 @@ impl SyncCommand {
             Self::Mutation(mutation) => canonical_json(mutation),
             Self::ResolveConflict(resolution) => canonical_json(resolution),
             Self::SendAck(message) => canonical_json(message),
-            Self::ResolveConflict(request) => canonical_json(request),
             Self::UploadBlob { .. } | Self::DownloadBlob { .. } => {
                 Err(SyncError::ProtocolInvariant {
                     reason: "command_not_mutation",

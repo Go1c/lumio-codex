@@ -1105,19 +1105,127 @@ impl Session {
                     return Ok(CommandSendResult::Deferred(SyncCommand::SendAck(body)));
                 }
             }
-            SyncCommand::ResolveConflict(body) => {
+            SyncCommand::DownloadBlob {
+                workspace_id,
+                operation_id,
+                content_hash,
+                size,
+            } => {
+                if self
+                    .pending_downloads
+                    .iter()
+                    .any(|pending| pending.content_hash == content_hash && pending.size == size)
+                    || self.transfers.has_active_download(&content_hash, size)
+                    || self.requests.has_download(&content_hash, size)
+                {
+                    return Ok(CommandSendResult::Consumed);
+                }
+                // A request is already consuming a server transfer slot as
+                // soon as BlobNeed is sent, even though BlobBegin has not
+                // arrived yet. Keep queued downloads within our configured
+                // connection limit so an upload cannot be rejected merely
+                // because several downloads are waiting for their begins.
+                if self.transfers.active_count() + self.pending_downloads.len()
+                    >= MAX_SESSION_TRANSFERS
+                {
+                    return Ok(CommandSendResult::Consumed);
+                }
+                // Send BlobNeed(download) request to server.
                 let request_id = fresh_request_id();
+                let need_body = fns_protocol::WorkspaceBlobNeedDownloadRequest {
+                    workspace_id,
+                    direction: fns_protocol::WorkspaceBlobDirection::Download,
+                    // Download requests identify immutable CAS content only.
+                    // The operation remains local transfer context; the v2 wire
+                    // contract requires both nullable fields to be explicit null.
+                    operation_id: fns_protocol::RequiredNullable::Null,
+                    content_hash: content_hash.clone(),
+                    size: fns_protocol::RequiredNullable::Null,
+                };
+                need_body
+                    .validate()
+                    .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
                 let frame = encode_request(
-                    WorkspaceAction::WorkspaceConflictResolved,
+                    WorkspaceAction::WorkspaceBlobNeed,
                     request_id,
-                    MessageBody::ConflictResolvedRequest(body),
+                    MessageBody::BlobNeedDownloadRequest(need_body),
                 )
                 .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
-                writer.send_text(frame).await?;
+                let expected = ExpectedResponse::BlobNeedDownload {
+                    workspace_id,
+                    operation_id: None,
+                    content_hash: content_hash.clone(),
+                    size,
+                };
+                if !self
+                    .send_tracked_text(writer, request_id, expected, frame, budget)
+                    .await?
+                {
+                    return Ok(CommandSendResult::Deferred(SyncCommand::DownloadBlob {
+                        workspace_id,
+                        operation_id,
+                        content_hash,
+                        size,
+                    }));
+                }
+                let now = Instant::now();
+                self.pending_downloads.push(PendingDownload {
+                    workspace_id,
+                    operation_id,
+                    content_hash,
+                    size,
+                    started_at: now,
+                    last_progress_at: now,
+                });
             }
-            SyncCommand::DownloadBlob { .. } | SyncCommand::UploadBlob { .. } => {
-                // Blob transfers require transfer-table coordination (Task 5/6 deeper integration).
-                // For now these are skipped — they'll be handled when transfer wire is wired.
+            SyncCommand::UploadBlob {
+                workspace_id,
+                operation_id,
+                content_hash,
+                size,
+            } => {
+                // The engine command and the server BlobNeed can arrive in
+                // either order. Register the engine half before attempting
+                // to pair it with a server need.
+                let retry = SyncCommand::UploadBlob {
+                    workspace_id,
+                    operation_id,
+                    content_hash: content_hash.clone(),
+                    size,
+                };
+                self.transfers.add_upload_intent(
+                    UploadIntent {
+                        workspace_id,
+                        operation_id,
+                        content_hash: content_hash.clone(),
+                        size,
+                    },
+                    retry.clone(),
+                );
+                if self
+                    .transfers
+                    .has_matching_upload(&operation_id, &content_hash, size)
+                    && !self.transfers.has_active_upload(&operation_id)
+                    && self.transfers.active_count() + self.pending_downloads.len()
+                        < MAX_SESSION_TRANSFERS
+                {
+                    if self.requests.available_slots() == 0 {
+                        return Ok(CommandSendResult::Deferred(retry));
+                    }
+                    if !self
+                        .upload_blob(
+                            writer,
+                            workspace_id,
+                            operation_id,
+                            content_hash,
+                            size,
+                            budget,
+                        )
+                        .await?
+                    {
+                        return Ok(CommandSendResult::Deferred(retry));
+                    }
+                }
             }
         }
         Ok(CommandSendResult::Consumed)
