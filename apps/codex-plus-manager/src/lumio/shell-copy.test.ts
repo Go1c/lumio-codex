@@ -111,6 +111,8 @@ test("no user-facing source file mentions a forbidden product surface", async ()
 
   const sources: [string, string][] = [
     ["LumioApp.tsx", await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8")],
+    // state.ts 里有会上屏的文案常量（禁用说明等），禁词扫描必须覆盖到。
+    ["state.ts", await readFile(new URL("./state.ts", import.meta.url), "utf8")],
     ...(await Promise.all(
       views.map(
         async (name): Promise<[string, string]> => [
@@ -319,7 +321,10 @@ test("the repair view offers the three spec actions and never a force overwrite"
   assert.match(view, /需要检查配置/);
   assert.match(view, /重新检查/);
   assert.match(view, /恢复本机配置/);
-  assert.match(view, /将撤销由 Lumio 管理的配置字段并恢复接管前内容，你的其他本机设置不受影响。/);
+  // restore 是整文件回滚，不是字段级撤销：二次确认必须说清接管后的改动会丢失。
+  assert.match(view, /还原到 Lumio 接管前的状态/);
+  assert.match(view, /接管之后你在这个文件里做的修改都会丢失/);
+  assert.doesNotMatch(view, /你的其他本机设置不受影响/);
   assert.match(view, /导出诊断日志/);
   assert.match(view, /导出前会再次扫描并移除敏感内容/);
   assert.match(view, /问题仍未解决/);
@@ -354,15 +359,19 @@ test("the settings view keeps every approved row and its explanation", async () 
   assert.match(view, /未检测到，可手动选择/);
   assert.match(view, /所选应用无法识别为官方 Codex/);
   assert.match(view, /不可用的选项会保持禁用，不会修改本机配置。/);
+  assert.doesNotMatch(view, /撤销 Lumio 管理的字段并保留其他本机设置/);
+  assert.match(view, /把配置文件还原到接管前的状态/);
+  assert.match(view, /使用数据收集尚未开放/);
+  assert.match(view, /TELEMETRY_NOTE/);
+  assert.doesNotMatch(view, /setTelemetryConfirmOpen\(true\)/);
+  assert.doesNotMatch(view, /确认开启/);
 });
 
-test("enabling telemetry requires an explicit confirmation that lists the collected fields", async () => {
+test("the telemetry switch stays disabled with a stated reason this cycle", async () => {
   const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
 
-  assert.match(view, /版本/);
-  assert.match(view, /平台/);
-  assert.match(view, /阶段/);
-  assert.match(view, /脱敏错误码/);
+  assert.match(view, /使用数据收集尚未开放/);
+  assert.match(view, /<Toggle checked=\{false\} disabled label=\{shellLabels\.telemetry\} \/>/);
 });
 
 test("React entry renders only LumioApp", async () => {

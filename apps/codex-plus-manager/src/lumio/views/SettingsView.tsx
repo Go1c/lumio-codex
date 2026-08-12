@@ -9,7 +9,6 @@ import {
   exportLogs,
   restoreConfig,
   selectCodexApp,
-  setTelemetry,
   shellLabels,
 } from "../invoke.ts";
 import type { LumioCodexApp } from "../types.ts";
@@ -18,10 +17,12 @@ import type { ToastTone } from "./Toast.tsx";
 
 const DETECT_FLASH_MS = 1200;
 
-// Neither switch has a command behind it this cycle, so both stay disabled with
-// a stated reason rather than pretending to take effect.
+// Out-of-scope switches stay disabled with a stated reason rather than pretending
+// to take effect. Telemetry is in the same bucket: the backend only flips an
+// in-memory flag and never sends or persists anything.
 const LAUNCH_AT_LOGIN_NOTE = "本机开机启动尚未开放";
 const AUTO_UPDATE_NOTE = "自动更新尚未开放";
+const TELEMETRY_NOTE = "使用数据收集尚未开放";
 const INVALID_APP_COPY = "所选应用无法识别为官方 Codex";
 
 function errorCodeOf(error: unknown): string {
@@ -68,7 +69,7 @@ export function SettingsView({
   autoUpdateEnabled,
   codexApp,
   signedIn,
-  telemetryEnabled,
+  telemetryEnabled: _telemetryEnabled,
   onCodexAppChanged,
   onSignOut,
   pushToast,
@@ -80,8 +81,6 @@ export function SettingsView({
   // the row shows the freshest local pick either way.
   const [pickedApp, setPickedApp] = useState<LumioCodexApp | null>(null);
   const [flashPath, setFlashPath] = useState(false);
-  const [telemetryOn, setTelemetryOn] = useState(telemetryEnabled);
-  const [telemetryConfirmOpen, setTelemetryConfirmOpen] = useState(false);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -127,15 +126,6 @@ export function SettingsView({
         const code = errorCodeOf(error);
         setSelectErrorCode(code);
         pushToast(code);
-      });
-  };
-
-  const applyTelemetry = (enabled: boolean) => {
-    void setTelemetry(enabled)
-      .then((result) => setTelemetryOn(result.enabled))
-      .catch((error: unknown) => {
-        setTelemetryOn(!enabled);
-        pushToast(errorCodeOf(error));
       });
   };
 
@@ -226,19 +216,9 @@ export function SettingsView({
           <div>
             <strong>{shellLabels.telemetry}</strong>
             <p>默认关闭；开启后也只发送版本、平台、阶段和脱敏错误码</p>
+            <p className="lumio-setting-note">{TELEMETRY_NOTE}</p>
           </div>
-          <Toggle
-            checked={telemetryOn}
-            label={shellLabels.telemetry}
-            onToggle={() => {
-              if (telemetryOn) {
-                setTelemetryOn(false);
-                applyTelemetry(false);
-                return;
-              }
-              setTelemetryConfirmOpen(true);
-            }}
-          />
+          <Toggle checked={false} disabled label={shellLabels.telemetry} />
         </article>
 
         <article className="lumio-setting-row">
@@ -265,7 +245,7 @@ export function SettingsView({
           </span>
           <div>
             <strong>{shellLabels.restoreConfiguration}</strong>
-            <p>撤销 Lumio 管理的字段并保留其他本机设置</p>
+            <p>把配置文件还原到接管前的状态，接管后在这个文件里的修改会丢失</p>
           </div>
           <button
             className="lumio-small-button is-warning"
@@ -297,42 +277,6 @@ export function SettingsView({
         <ShieldCheck size={15} />
         不可用的选项会保持禁用，不会修改本机配置。
       </p>
-
-      {telemetryConfirmOpen ? (
-        <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">
-          <div className="lumio-modal">
-            <h3>开启{shellLabels.telemetry}？</h3>
-            <p>开启后只发送以下四类信息，用于改进产品稳定性：</p>
-            <ul>
-              <li>客户端版本</li>
-              <li>操作系统平台与架构</li>
-              <li>启动阶段</li>
-              <li>脱敏后的错误码</li>
-            </ul>
-            <p>永远不会发送：邮箱、任何凭据、提示词、代码、文件路径或请求内容。</p>
-            <div className="lumio-modal-actions">
-              <button
-                className="lumio-button is-secondary"
-                onClick={() => setTelemetryConfirmOpen(false)}
-                type="button"
-              >
-                取消
-              </button>
-              <button
-                className="lumio-button is-primary"
-                onClick={() => {
-                  setTelemetryConfirmOpen(false);
-                  setTelemetryOn(true);
-                  applyTelemetry(true);
-                }}
-                type="button"
-              >
-                确认开启
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {restoreConfirmOpen ? (
         <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">

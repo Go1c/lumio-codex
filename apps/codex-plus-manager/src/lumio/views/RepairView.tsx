@@ -5,8 +5,9 @@ import { lumioErrorCopy, lumioErrorLabel } from "../errors.ts";
 import { LumioCommandError, checkTakeover, exportLogs, restoreConfig } from "../invoke.ts";
 import type { ToastTone } from "./Toast.tsx";
 
+/** 恢复写回的是接管前的整份快照，不是逐字段撤销，二次确认必须说清这个后果。 */
 export const RESTORE_CONFIRM_COPY =
-  "将撤销由 Lumio 管理的配置字段并恢复接管前内容，你的其他本机设置不受影响。";
+  "恢复会把本机的 Codex 配置文件整份还原到 Lumio 接管前的状态：接管之后你在这个文件里做的修改都会丢失，包括你自己新增或改过的设置。";
 const CREDENTIAL_CODES = ["AUTH_SESSION_EXPIRED", "KEY_STORAGE_UNAVAILABLE"];
 
 function errorCodeOf(error: unknown): string {
