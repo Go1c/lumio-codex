@@ -23,22 +23,50 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 
 适用：受控内测、渠道包、尚未拿到平台签名证书时。
 
-### 2.1 用 CI
+**主分发：** S3 CDN（`https://s3.lumio.games/lumio-codex/releases/`）  
+**回退：** 同批文件挂到 GitHub Release（`prerelease`）
 
-1. 合并到 `publish`（或对已对齐 commit 跑 `workflow_dispatch`）  
-2. 打开 Actions → **Internal unsigned build artifacts**  
-3. 下载四个 artifact：  
-   - Windows setup / portable  
-   - macOS arm64 / x64 DMG  
-4. 分发给内测用户；明确告知「未签名 / 右键打开 / SmartScreen」  
+### 2.0 一次性：GitHub Secrets
 
-分支名为 `publish` 时 CI 版本号常为 `0.0.0-internal-<run>`。若要以真实 semver 命名制品：在本地按 [01](./01-local-build.md) §5 打包，或打 tag 后再跑构建（视你们后续是否给 workflow 加 `tags` 触发而定）。
+在 `Go1c/lumio-codex` → Settings → Secrets（或本地 `gh secret set`）：
 
-### 2.2 用本地打包 + 手工上传
+| Secret | 示例 |
+|--------|------|
+| `S3_ENDPOINT` | `https://s3.lumio.games` |
+| `S3_ACCESS_KEY_ID` | （RustFS Access Key） |
+| `S3_SECRET_ACCESS_KEY` | （RustFS Secret） |
+| `S3_BUCKET` | `lumio-codex` |
+| `S3_PUBLIC_BASE` | `https://s3.lumio.games/lumio-codex/releases` |
+
+### 2.1 自动：打 tag → 构建 → S3 + GitHub prerelease
+
+```bash
+# 版本号已对齐后
+git tag -a v1.2.46 -m "Lumio Codex 1.2.46 internal-unsigned"
+git push origin v1.2.46
+```
+
+Actions → **Internal unsigned build artifacts** 会在三平台构建成功后跑 **Publish S3 + GitHub prerelease**：
+
+- 上传到 `s3://lumio-codex/releases/<version>/`（含 `SHA256SUMS.txt`）  
+- 写指针 `releases/latest-internal.json`  
+- 创建/更新 tag 对应的 **prerelease**（附件与 CDN 同文件）  
+
+也可在 `publish` 上 **Run workflow**，勾选 `publish`：版本号为 `0.0.0-internal-<run>`，Release tag 为 `internal-run-<run>`。
+
+### 2.2 只构建、不分发
+
+1. 合并到 `publish`（或不勾选 `publish` 的 `workflow_dispatch`）  
+2. Actions → **Internal unsigned build artifacts**  
+3. 下载四个 artifact 手工分发；告知「未签名 / 右键打开 / SmartScreen」  
+
+分支名为 `publish` 时 CI 版本号常为 `0.0.0-internal-<run>`。要 semver 文件名：打 `v*` tag（§2.1）。
+
+### 2.3 用本地打包 + 手工上传
 
 1. 按 [01](./01-local-build.md) 打出四平台包  
 2. 计算 SHA-256 并保存到发布说明  
-3. 上传到 GitHub Release（可标 `prerelease`）或内部分发盘  
+3. 上传到 S3 `releases/<version>/` 与/或 GitHub Release（可标 `prerelease`）
 
 ## 3. 创建 GitHub Release（驱动 App「更新提醒」）
 
