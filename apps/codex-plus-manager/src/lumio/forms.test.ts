@@ -56,6 +56,30 @@ test("a whitelist rejects other suffixes case-insensitively", () => {
   );
 });
 
+test("a whitelist entry without a leading @ still matches whole domains only", () => {
+  assert.equal(emailSuffixError("user@example.com", ["example.com"]), null);
+  assert.equal(emailSuffixError("user@EXAMPLE.com", [" Example.com "]), null);
+  assert.equal(
+    emailSuffixError("user@evil-example.com", ["example.com"]),
+    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
+  );
+  assert.equal(
+    emailSuffixError("user@notexample.com", ["example.com"]),
+    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
+  );
+});
+
+test("a subdomain of an allowed suffix is not allowed", () => {
+  assert.equal(
+    emailSuffixError("user@sub.example.com", ["@example.com"]),
+    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
+  );
+  assert.equal(
+    emailSuffixError("user@sub.example.com", ["example.com"]),
+    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
+  );
+});
+
 test("the suffix hint lists every allowed suffix", () => {
   assert.equal(
     formatEmailSuffixHint(["@example.com", "@lumio.games"]),
@@ -76,15 +100,19 @@ test("password strength grows with length and character variety", () => {
   assert.equal(passwordStrength("Abcdefg1!"), "strong");
 });
 
+test("a long passphrase outgrows weak even with a single character class", () => {
+  assert.equal(passwordStrength("a".repeat(15)), "weak");
+  assert.equal(passwordStrength("a".repeat(16)), "medium");
+  assert.equal(passwordStrength("a".repeat(32)), "medium");
+  assert.equal(passwordStrength("correcthorsebattery1"), "strong");
+});
+
 test("a complete form produces no error", () => {
   assert.equal(registerFormError(VALID, SETTINGS), null);
 });
 
 test("form validation reports the first blocking problem as a stable code", () => {
-  assert.equal(
-    registerFormError({ ...VALID, email: "nope" }, SETTINGS),
-    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
-  );
+  assert.equal(registerFormError({ ...VALID, email: "nope" }, SETTINGS), "EMAIL_FORMAT_INVALID");
   assert.equal(registerFormError({ ...VALID, verifyCode: "" }, SETTINGS), "AUTH_CODE_REQUIRED");
   assert.equal(registerFormError({ ...VALID, verifyCode: "123" }, SETTINGS), "AUTH_CODE_REQUIRED");
   assert.equal(
@@ -99,6 +127,31 @@ test("form validation reports the first blocking problem as a stable code", () =
     registerFormError({ ...VALID, acceptedDocumentIds: ["terms"] }, SETTINGS),
     "AGREEMENTS_NOT_ACCEPTED",
   );
+});
+
+test("a malformed address and an unsupported suffix are separate outcomes", () => {
+  assert.equal(registerFormError({ ...VALID, email: "" }, SETTINGS), "EMAIL_FORMAT_INVALID");
+  assert.equal(registerFormError({ ...VALID, email: "user@" }, SETTINGS), "EMAIL_FORMAT_INVALID");
+  assert.equal(
+    registerFormError({ ...VALID, email: "user@other.dev" }, SETTINGS),
+    "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
+  );
+});
+
+test("the verification code must be six digits, not merely six characters", () => {
+  assert.equal(
+    registerFormError({ ...VALID, verifyCode: "abcdef" }, SETTINGS),
+    "AUTH_CODE_REQUIRED",
+  );
+  assert.equal(
+    registerFormError({ ...VALID, verifyCode: "12a456" }, SETTINGS),
+    "AUTH_CODE_REQUIRED",
+  );
+  assert.equal(
+    registerFormError({ ...VALID, verifyCode: " 12345" }, SETTINGS),
+    "AUTH_CODE_REQUIRED",
+  );
+  assert.equal(registerFormError({ ...VALID, verifyCode: "654321" }, SETTINGS), null);
 });
 
 test("verification code is not required when the server does not enforce it", () => {
