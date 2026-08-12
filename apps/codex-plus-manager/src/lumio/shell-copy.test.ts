@@ -215,6 +215,18 @@ test("the login view carries the spec copy including the two-factor step", async
   assert.match(view, /没有账户？创建账户/);
 });
 
+test("the register form has somewhere to type the invitation code it demands", async () => {
+  const view = await readFile(new URL("./views/RegisterView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /邀请码/);
+  assert.match(view, /invitationCode/);
+  // 显示与否由服务端开关决定；开关缺席时靠错误码兜底展开并聚焦，见交互规格 §7。
+  assert.match(view, /invitationCodeEnabled/);
+  assert.match(view, /AUTH_INVITATION_CODE_REQUIRED/);
+  assert.match(view, /AUTH_INVITATION_CODE_INVALID/);
+  assert.match(view, /focus\(\)/);
+});
+
 test("neither auth view hardcodes business rules the server owns", async () => {
   const register = await readFile(new URL("./views/RegisterView.tsx", import.meta.url), "utf8");
 

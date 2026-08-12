@@ -164,12 +164,15 @@ export async function registerAccount(input: {
   password: string;
   verifyCode: string;
   acceptedRevision: string;
+  invitationCode: string;
 }): Promise<LumioAuthResult> {
   return runCommand<LumioAuthResult>(LUMIO_COMMANDS.register, {
     email: input.email,
     password: input.password,
     verifyCode: input.verifyCode,
     acceptedRevision: input.acceptedRevision,
+    // 空串由命令层归一化成「未填写」，前端不替服务端判断这个字段是否必填。
+    invitationCode: input.invitationCode,
   });
 }
 

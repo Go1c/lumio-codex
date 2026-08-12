@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { lumioErrorCopy, lumioErrorLabel } from "../errors.ts";
 import {
@@ -15,6 +15,9 @@ import type { LumioAccountSummary, LumioServiceSettings } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
 
 const RESEND_SECONDS = 60;
+
+const INVITATION_REQUIRED_CODE = "AUTH_INVITATION_CODE_REQUIRED";
+const INVITATION_INVALID_CODE = "AUTH_INVITATION_CODE_INVALID";
 
 /**
  * Client-side field codes from `registerFormError` deliberately live outside
@@ -65,6 +68,10 @@ export function RegisterView({
 }: RegisterViewProps) {
   const [email, setEmail] = useState("");
   const [verifyCode, setVerifyCode] = useState("");
+  const [invitationCode, setInvitationCode] = useState("");
+  // 服务端没下发开关时，错误码是唯一能证明「这台服务端要邀请码」的信号（交互规格 §7）。
+  const [invitationDemanded, setInvitationDemanded] = useState(false);
+  const invitationField = useRef<HTMLInputElement>(null);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [acceptedDocumentIds, setAcceptedDocumentIds] = useState<string[]>([]);
@@ -81,6 +88,14 @@ export function RegisterView({
     const timer = setTimeout(() => setCountdown((current) => current - 1), 1000);
     return () => clearTimeout(timer);
   }, [countdown]);
+
+  const invitationVisible = settings.invitationCodeEnabled === true || invitationDemanded;
+
+  useEffect(() => {
+    if (!invitationVisible) return;
+    if (bannerCode !== INVITATION_REQUIRED_CODE && bannerCode !== INVITATION_INVALID_CODE) return;
+    invitationField.current?.focus();
+  }, [bannerCode, invitationVisible]);
 
   if (!settings.registrationEnabled) {
     return (
@@ -150,6 +165,7 @@ export function RegisterView({
       password,
       verifyCode,
       acceptedRevision: settings.agreementRevision,
+      invitationCode: invitationCode.trim(),
     })
       .then((result) => {
         if (result.requiresTwoFactor) {
@@ -158,7 +174,12 @@ export function RegisterView({
         }
         if (result.account !== null) onAuthenticated(result.account);
       })
-      .catch((error: unknown) => setBannerCode(errorCodeOf(error)))
+      .catch((error: unknown) => {
+        const code = errorCodeOf(error);
+        setBannerCode(code);
+        if (code === INVITATION_REQUIRED_CODE) setInvitationDemanded(true);
+        if (code === INVITATION_INVALID_CODE) setInvitationCode("");
+      })
       .finally(() => setSubmitting(false));
   };
 
@@ -227,6 +248,23 @@ export function RegisterView({
                   {countdown > 0 ? `重新发送 (${countdown}s)` : "发送验证码"}
                 </button>
               </div>
+            </div>
+          ) : null}
+
+          {invitationVisible ? (
+            <div className="lumio-field">
+              <label htmlFor="lumio-register-invitation">邀请码</label>
+              <input
+                className="lumio-input"
+                disabled={submitting}
+                id="lumio-register-invitation"
+                onChange={(event) => setInvitationCode(event.target.value)}
+                placeholder="填写你收到的邀请码"
+                ref={invitationField}
+                type="text"
+                value={invitationCode}
+              />
+              <p className="lumio-field-hint">这台服务端目前需要邀请码才能注册</p>
             </div>
           ) : null}
 

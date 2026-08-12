@@ -50,6 +50,9 @@ export interface LumioServiceSettings {
   agreementDocuments: LumioAgreementDocument[];
   defaultModel: string | null;
   siteBaseUrl: string;
+  // Optional while the command layer lands: the register form must stay usable
+  // against public settings that predate the invitation switch.
+  invitationCodeEnabled?: boolean;
 }
 
 export interface LumioAuthResult {
