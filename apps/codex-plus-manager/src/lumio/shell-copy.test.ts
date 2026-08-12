@@ -172,6 +172,40 @@ test("the home view explains every disabled action instead of hiding it", async 
   assert.match(view, /已配置/);
 });
 
+test("the repair view offers the three spec actions and never a force overwrite", async () => {
+  const view = await readFile(new URL("./views/RepairView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /需要检查配置/);
+  assert.match(view, /重新检查/);
+  assert.match(view, /恢复本机配置/);
+  assert.match(view, /将撤销由 Lumio 管理的配置字段并恢复接管前内容，你的其他本机设置不受影响。/);
+  assert.match(view, /导出诊断日志/);
+  assert.match(view, /导出前会再次扫描并移除敏感内容/);
+  assert.match(view, /问题仍未解决/);
+  assert.match(view, /本机保存的登录凭据已失效，请重新登录/);
+  assert.doesNotMatch(view, /强制覆盖/);
+});
+
+test("the settings view keeps every approved row and its explanation", async () => {
+  const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /你仍会收到重要安全更新提示/);
+  assert.match(view, /重新检测/);
+  assert.match(view, /手动选择…/);
+  assert.match(view, /未检测到，可手动选择/);
+  assert.match(view, /所选应用无法识别为官方 Codex/);
+  assert.match(view, /不可用的选项会保持禁用，不会修改本机配置。/);
+});
+
+test("enabling telemetry requires an explicit confirmation that lists the collected fields", async () => {
+  const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /版本/);
+  assert.match(view, /平台/);
+  assert.match(view, /阶段/);
+  assert.match(view, /脱敏错误码/);
+});
+
 test("React entry renders only LumioApp", async () => {
   const main = await readFile(new URL("../main.tsx", import.meta.url), "utf8");
 

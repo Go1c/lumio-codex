@@ -212,7 +212,7 @@ a:focus-visible {
 .lumio-dashboard,
 .lumio-settings-page,
 .lumio-loading,
-.lumio-repair-panel {
+.lumio-repair-card {
   width: min(1180px, calc(100% - 56px));
   margin: 0 auto;
 }
@@ -523,7 +523,7 @@ a:focus-visible {
 
 .lumio-welcome-row h1,
 .lumio-page-heading h1,
-.lumio-repair-panel h1 {
+.lumio-repair-card h1 {
   margin: 0;
   color: #f4f4f8;
   font-size: 30px;
@@ -533,7 +533,7 @@ a:focus-visible {
 
 .lumio-welcome-row > div > p:last-child,
 .lumio-page-heading > p:last-child,
-.lumio-repair-panel p {
+.lumio-repair-card p {
   margin: 8px 0 0;
   color: #85899e;
   font-size: 13px;
@@ -560,7 +560,7 @@ a:focus-visible {
 .lumio-card,
 .lumio-action-panel,
 .lumio-settings-list,
-.lumio-repair-panel {
+.lumio-repair-card {
   border: 1px solid rgb(255 255 255 / 7%);
   background: rgb(255 255 255 / 3.2%);
   box-shadow:
@@ -776,15 +776,62 @@ a:focus-visible {
   font-size: 12px;
 }
 
-.lumio-repair-panel {
+.lumio-repair {
+  display: grid;
+  place-content: center;
+  min-height: 100%;
+  padding: 40px 0;
+}
+
+.lumio-repair-card {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
   gap: 18px;
-  max-width: 720px;
-  margin-top: 11vh;
+  width: min(660px, calc(100vw - 56px));
   padding: 28px;
   border-radius: 16px;
+}
+
+.lumio-repair-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.lumio-code-chip {
+  display: inline-block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 4%);
+  color: #8a8fa4;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+}
+
+.lumio-setting-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.lumio-setting-note {
+  margin-top: 5px !important;
+  color: #c4a074 !important;
+}
+
+.lumio-path-value.is-flash {
+  animation: lumio-flash 1200ms ease;
+}
+
+@keyframes lumio-flash {
+  from {
+    color: #6fbfa8;
+  }
+}
+
+.lumio-spin {
+  animation: lumio-spin 900ms linear infinite;
 }
 
 .lumio-panel-icon.is-warning {
@@ -793,7 +840,7 @@ a:focus-visible {
   color: #d7aa69;
 }
 
-.lumio-repair-panel code {
+.lumio-repair-card code {
   display: inline-block;
   margin-top: 16px;
   padding: 6px 8px;
@@ -1391,7 +1438,7 @@ a:focus-visible {
   .lumio-dashboard,
   .lumio-settings-page,
   .lumio-loading,
-  .lumio-repair-panel {
+  .lumio-repair-card {
     width: min(100% - 30px, 1180px);
   }
 

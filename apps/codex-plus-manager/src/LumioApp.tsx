@@ -1,18 +1,6 @@
-import {
-  Activity,
-  Download,
-  FileArchive,
-  Home,
-  Laptop,
-  RefreshCw,
-  Rocket,
-  RotateCcw,
-  Settings,
-  ShieldCheck,
-} from "lucide-react";
+import { Home, RefreshCw, Settings } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
-import { lumioErrorLabel } from "./lumio/errors.ts";
 import {
   LumioCommandError,
   loadLumioBootstrap,
@@ -27,6 +15,8 @@ import { HomeView } from "./lumio/views/HomeView.tsx";
 import { LoginView } from "./lumio/views/LoginView.tsx";
 import { ProvisioningView } from "./lumio/views/ProvisioningView.tsx";
 import { RegisterView } from "./lumio/views/RegisterView.tsx";
+import { RepairView } from "./lumio/views/RepairView.tsx";
+import { SettingsView } from "./lumio/views/SettingsView.tsx";
 import { SignedOutView } from "./lumio/views/SignedOutView.tsx";
 import { ToastHost, useToasts } from "./lumio/views/Toast.tsx";
 
@@ -46,21 +36,6 @@ const phaseCopy: Record<LumioPhase, string> = {
 
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
-}
-
-function Toggle({ checked, label }: { checked: boolean; label: string }) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-label={label}
-      className={`lumio-toggle${checked ? " is-on" : ""}`}
-      disabled
-      role="switch"
-      type="button"
-    >
-      <span />
-    </button>
-  );
 }
 
 export function LumioApp() {
@@ -155,6 +130,27 @@ export function LumioApp() {
       defaultModel: stateRef.current.defaultModel,
     });
   }, []);
+  // A repaired takeover has no cached account until the surface reloads, so a
+  // clean health check restarts provisioning instead of faking a ready home.
+  const onRepaired = useCallback(() => {
+    const current = stateRef.current;
+    if (current.account === null) {
+      dispatch({ type: "signed-out" });
+      return;
+    }
+    dispatch({ type: "authenticated", account: current.account });
+  }, []);
+  const onCodexAppChanged = useCallback((app: LumioCodexApp) => {
+    const current = stateRef.current;
+    if (current.account === null || current.phase !== "ready-online") return;
+    dispatch({
+      type: "online-ready",
+      account: current.account,
+      cachedAt: current.cachedAt ?? new Date().toISOString(),
+      codexApp: app,
+      defaultModel: current.defaultModel,
+    });
+  }, []);
 
   const online = state.phase === "ready-online";
   const offline = state.phase === "ready-offline";
@@ -214,11 +210,18 @@ export function LumioApp() {
             <p>正在检测官方应用并读取本机状态…</p>
           </section>
         ) : state.phase === "needs-repair" ? (
-          <BootstrapFailurePanel errorCode={state.errorCode} />
+          <RepairView
+            errorCode={state.errorCode}
+            onResolved={onRepaired}
+            onSignOut={onDeferred}
+            pushToast={pushToast}
+          />
         ) : view === "settings" ? (
           <SettingsView
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
+            onCodexAppChanged={onCodexAppChanged}
+            pushToast={pushToast}
             telemetryEnabled={state.telemetryEnabled}
           />
         ) : state.phase === "signed-out" ? (
@@ -289,119 +292,5 @@ export function LumioApp() {
 
       <ToastHost onDismiss={dismiss} toasts={toasts} />
     </div>
-  );
-}
-
-function BootstrapFailurePanel({ errorCode }: { errorCode: string | null }) {
-  return (
-    <section className="lumio-repair-panel">
-      <span className="lumio-panel-icon is-warning">
-        <ShieldCheck size={24} />
-      </span>
-      <div>
-        <p className="lumio-eyebrow">启动检查未完成</p>
-        <h1>需要检查配置</h1>
-        <p>本机配置尚未被修改。</p>
-        <code>{lumioErrorLabel(errorCode)}</code>
-      </div>
-    </section>
-  );
-}
-
-interface SettingsViewProps {
-  autoUpdateEnabled: boolean;
-  codexApp: LumioCodexApp | null;
-  telemetryEnabled: boolean;
-}
-
-function SettingsView({ autoUpdateEnabled, codexApp, telemetryEnabled }: SettingsViewProps) {
-  return (
-    <section className="lumio-settings-page">
-      <div className="lumio-page-heading">
-        <p className="lumio-eyebrow">桌面偏好</p>
-        <h1>{shellLabels.settings}</h1>
-        <p>这里只保留 Lumio Codex 运行所需的本机选项。</p>
-      </div>
-
-      <div className="lumio-settings-list">
-        <article className="lumio-setting-row">
-          <span className="lumio-setting-icon">
-            <Rocket size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.launchAtLogin}</strong>
-            <p>登录电脑后自动准备 Lumio Codex</p>
-          </div>
-          <Toggle checked={false} label={shellLabels.launchAtLogin} />
-        </article>
-
-        <article className="lumio-setting-row">
-          <span className="lumio-setting-icon">
-            <Download size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.automaticUpdates}</strong>
-            <p>仅安装经过校验且适用于当前平台的版本</p>
-          </div>
-          <Toggle checked={autoUpdateEnabled} label={shellLabels.automaticUpdates} />
-        </article>
-
-        <article className="lumio-setting-row is-path-row">
-          <span className="lumio-setting-icon">
-            <Laptop size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.officialAppPath}</strong>
-            <p className="lumio-path-value">{codexApp?.path ?? "未自动检测到，可在功能接入后手动选择"}</p>
-          </div>
-          <button className="lumio-small-button" disabled type="button">
-            <RefreshCw size={15} />
-            {shellLabels.recheck}
-          </button>
-        </article>
-
-        <article className="lumio-setting-row">
-          <span className="lumio-setting-icon">
-            <Activity size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.telemetry}</strong>
-            <p>默认关闭；开启后也只发送版本、平台、阶段和脱敏错误码</p>
-          </div>
-          <Toggle checked={telemetryEnabled} label={shellLabels.telemetry} />
-        </article>
-
-        <article className="lumio-setting-row">
-          <span className="lumio-setting-icon">
-            <FileArchive size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.exportLogs}</strong>
-            <p>导出前会再次扫描并移除敏感内容</p>
-          </div>
-          <button className="lumio-small-button" disabled type="button">
-            导出
-          </button>
-        </article>
-
-        <article className="lumio-setting-row">
-          <span className="lumio-setting-icon is-warning">
-            <RotateCcw size={19} />
-          </span>
-          <div>
-            <strong>{shellLabels.restoreConfiguration}</strong>
-            <p>撤销 Lumio 管理的字段并保留其他本机设置</p>
-          </div>
-          <button className="lumio-small-button is-warning" disabled type="button">
-            恢复
-          </button>
-        </article>
-      </div>
-
-      <p className="lumio-settings-note">
-        <ShieldCheck size={15} />
-        不可用的选项会保持禁用，不会修改本机配置。
-      </p>
-    </section>
   );
 }
