@@ -16,8 +16,13 @@ pub const CLIENT_ID: &str = "cchaven-desktop";
 /// Scopes the desktop app requests; the seed row allows exactly these three.
 pub const SCOPE: &str = "profile workspace offline_access";
 
-const DEFAULT_API_BASE: &str = "https://cchaven.cn";
-const DEFAULT_WEB_BASE: &str = "https://cchaven.cn";
+/// 控制面 API 主机（运维文档 `docs/ops/01-architecture.md` 的权威取值）。
+const DEFAULT_API_BASE: &str = "https://api.cc.lumiogame.com";
+/// CC 产品站：下载、文档、账户页。
+const DEFAULT_WEB_BASE: &str = "https://cc.lumiogame.com";
+/// 统一门户（Lumio 账号中心）。注册、登录与桌面授权确认页都在这里——
+/// 账号已收口到 Sub2API，只有门户上才有可用的账号中心会话。
+const DEFAULT_PORTAL_BASE: &str = "https://lumiogame.com";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 // --- Wire types (must stay in sync with the Go service) ---
@@ -171,13 +176,16 @@ struct ErrorBody {
 pub struct ControlConfig {
     pub api_base: String,
     pub web_base: String,
+    /// 统一门户，授权确认页开在这里。
+    pub portal_base: String,
     pub mock: bool,
 }
 
 impl ControlConfig {
-    /// `CCHAVEN_API_BASE` / `CCHAVEN_WEB_BASE` point at a local control plane;
-    /// `CCHAVEN_CONTROL_MOCK=0|1` forces the backing implementation. Debug
-    /// builds default to the mock because the control plane needs PostgreSQL.
+    /// `CCHAVEN_API_BASE` / `CCHAVEN_WEB_BASE` / `CCHAVEN_PORTAL_BASE` point at a
+    /// local control plane and portal; `CCHAVEN_CONTROL_MOCK=0|1` forces the
+    /// backing implementation. Debug builds default to the mock because the
+    /// control plane needs PostgreSQL.
     pub fn from_env() -> Self {
         let mock = match std::env::var("CCHAVEN_CONTROL_MOCK").as_deref() {
             Ok("0") | Ok("false") => false,
@@ -187,6 +195,7 @@ impl ControlConfig {
         Self {
             api_base: env_or("CCHAVEN_API_BASE", DEFAULT_API_BASE),
             web_base: env_or("CCHAVEN_WEB_BASE", DEFAULT_WEB_BASE),
+            portal_base: env_or("CCHAVEN_PORTAL_BASE", DEFAULT_PORTAL_BASE),
             mock,
         }
     }
@@ -245,6 +254,10 @@ impl ControlClient {
     }
 
     /// Build the browser URL for 5.1「通过浏览器登录」.
+    ///
+    /// 页面开在统一门户：账号已收口到 Sub2API，授权时的用户身份由门户的账号中心
+    /// 会话决定（控制面的 `POST /api/v1/oauth/authorize` 只认 Sub2API 令牌）。
+    /// 查询参数与 PKCE 契约保持不变，回跳仍走本机回环。
     pub fn authorize_url(&self, redirect_uri: &str, code_challenge: &str, state: &str) -> String {
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("client_id", CLIENT_ID)
@@ -254,7 +267,7 @@ impl ControlClient {
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", state)
             .finish();
-        format!("{}/authorize?{}", self.config().web_base, query)
+        format!("{}/authorize?{}", self.config().portal_base, query)
     }
 
     pub async fn exchange_code(
@@ -625,21 +638,38 @@ mod tests {
     fn mock() -> ControlClient {
         ControlClient::new(ControlConfig {
             api_base: "http://127.0.0.1:0".into(),
-            web_base: "https://cchaven.cn".into(),
+            web_base: "https://cc.lumiogame.com".into(),
+            portal_base: "https://lumiogame.com".into(),
             mock: true,
         })
     }
 
     #[test]
-    fn authorize_url_carries_pkce_and_the_loopback_redirect() {
+    fn authorize_url_targets_the_unified_portal_with_pkce() {
         let url = mock().authorize_url("http://127.0.0.1:53682/callback", "chal", "st4te");
-        assert!(url.starts_with("https://cchaven.cn/authorize?"));
+        // 授权确认页必须开在账号中心所在的门户：只有那里能拿到 Sub2API 会话。
+        assert!(url.starts_with("https://lumiogame.com/authorize?"));
+        // PKCE 契约一个字都不能变——存量客户端与控制面都按它对齐。
         assert!(url.contains("client_id=cchaven-desktop"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback"));
         assert!(url.contains("scope=profile+workspace+offline_access"));
         assert!(url.contains("code_challenge=chal"));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("state=st4te"));
+    }
+
+    #[test]
+    fn defaults_target_the_lumio_domains() {
+        assert_eq!(DEFAULT_WEB_BASE, "https://cc.lumiogame.com");
+        assert_eq!(DEFAULT_API_BASE, "https://api.cc.lumiogame.com");
+        assert_eq!(DEFAULT_PORTAL_BASE, "https://lumiogame.com");
+    }
+
+    #[test]
+    fn env_or_trims_trailing_slash_and_ignores_empty_values() {
+        // 覆盖能力是本地联调的唯一入口，同时末尾斜杠必须去掉，
+        // 否则拼出来的地址会变成 //authorize。
+        assert_eq!(env_or("CCHAVEN_UNSET_FOR_TEST", "https://x.test/"), "https://x.test");
     }
 
     #[tokio::test]

@@ -74,6 +74,27 @@ src-tauri/src/              后端
 `sync-state/{id}/endpoint` + 钥匙串 `sync-agent-token:{id}`。Linux agent 的打包与
 部署仍见 `docs/spec-gaps.md` B2。
 
+## 账号在哪（先读这段）
+
+终端用户的邮箱、口令与账号状态**全部在 Lumio 账号中心（Sub2API，`api.lumio.games`）**，
+控制面 `services/cchaven-control` 只保管 CC 自己的业务数据（订阅 / 邀请 / 设备 / 同步）。
+
+对桌面端意味着三件事：
+
+1. 浏览器授权页开在统一门户 `https://lumiogame.com/authorize`，不再是 CC 站点——
+   只有门户上才有账号中心会话；注册、登录、找回密码也都在那里完成。
+2. 授权之后仍由 `cchaven-control` 签发 CC 的 access / refresh token，
+   PKCE 契约与令牌处置一个字都没改。
+3. 充值跳 `https://api.lumio.games/purchase`（与 Lumio Codex 同一个收银入口）。
+
+默认域名（都可用环境变量覆盖，见下表）：
+
+| 用途 | 默认值 | 覆盖变量 |
+| --- | --- | --- |
+| 控制面 API | `https://api.cc.lumiogame.com` | `CCHAVEN_API_BASE` |
+| CC 产品站（下载 / 文档 / 账户页） | `https://cc.lumiogame.com` | `CCHAVEN_WEB_BASE` |
+| 统一门户（授权页 / 账号中心） | `https://lumiogame.com` | `CCHAVEN_PORTAL_BASE` |
+
 ## 与控制面的对接约定
 
 控制面为 `services/cchaven-control`，响应体统一为 `{"data": …}`，错误为
@@ -81,7 +102,7 @@ src-tauri/src/              后端
 
 | 用途 | 端点 | 说明 |
 | --- | --- | --- |
-| 浏览器授权 | 打开 `{web}/authorize?…` | `client_id=cchaven-desktop`、`scope=profile workspace offline_access`、PKCE `S256` |
+| 浏览器授权 | 打开 `{portal}/authorize?…` | `client_id=cchaven-desktop`、`scope=profile workspace offline_access`、PKCE `S256`；页面自身带 Sub2API 令牌调 `POST /api/v1/oauth/authorize` |
 | 换取令牌 | `POST /api/v1/oauth/token` | `grant_type=authorization_code`，响应含 `activation`（首月试用）与 `entitlement` |
 | 静默续期 | `POST /api/v1/oauth/token` | `grant_type=refresh_token`，启动时调用 |
 | 退出登录 | `POST /api/v1/oauth/revoke` | 撤销会话族，随后清钥匙串 |
@@ -91,6 +112,11 @@ src-tauri/src/              后端
 回调地址：主用回环 `http://127.0.0.1:{ephemeral}/callback`（已在
 `migrations/0002_seed.sql` 注册为白名单模式），自定义 scheme `cchaven://auth/callback`
 作兜底。APP 先绑定端口再拼 `authorize` URL，令牌兑换时原样回传同一个 `redirect_uri`。
+
+已下线的端点：`/api/v1/auth/register|login|verify-email|password/*|refresh` 与
+`/api/v1/me/password|email-change*` 一律返回 **410 `auth_migrated`**，
+`details.portal_url` 指向账号中心。桌面端本来就不调它们，遇到这个错误码时
+不要重试，直接把用户引到门户。
 
 **令牌处置**：refresh token 只进 macOS 钥匙串（service `cn.cchaven.desktop`），
 access token 只存内存并在过期前 60 秒自动续期；两者都不落磁盘、不打日志。
@@ -109,6 +135,7 @@ access token 只存内存并在过期前 60 秒自动续期；两者都不落磁
 | --- | --- |
 | `CCHAVEN_CONTROL_MOCK=0` | 关闭 mock，改打真实控制面（release 构建默认即为真实） |
 | `CCHAVEN_API_BASE` / `CCHAVEN_WEB_BASE` | 指向本地控制面，如 `http://127.0.0.1:8080` |
+| `CCHAVEN_PORTAL_BASE` | 指向本地门户，授权页从这里打开 |
 | `CCHAVEN_MOCK_DAYS_LEFT=2` | 造出「剩余 ≤3 天」以验证到期横幅 |
 | `CCHAVEN_MOCK_SUBSCRIBED=1` | 由「试用中」切换为「已订阅」 |
 | `CCHAVEN_MOCK_INVITED=0` | 关闭邀请归因，首次登录不发试用 |

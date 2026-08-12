@@ -37,6 +37,11 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, result)
 }
 
+// codeRequest 承载一次性验证码（管理端两步验证）。
+type codeRequest struct {
+	Code string `json:"code"`
+}
+
 func (s *Server) handleAdminTOTP(w http.ResponseWriter, r *http.Request) {
 	var req codeRequest
 	if err := httpx.DecodeJSON(w, r, &req); err != nil {

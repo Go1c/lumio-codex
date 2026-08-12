@@ -13,13 +13,31 @@ import (
 // devAdminURL 是管理后台的本地开发地址，取自 apps/admin/vite.config.ts 的 server.port。
 const devAdminURL = "http://localhost:5183"
 
+// 身份收口到 Sub2API 之后的默认地址。
+const (
+	// DefaultSub2APIBase 是 Lumio 账号中心（Sub2API）的线上地址，
+	// 终端用户的邮箱、口令与账号状态全部由它保管。
+	DefaultSub2APIBase = "https://api.lumio.games"
+	// DefaultPortalURL 是统一门户，注册 / 登录 / 找回密码都在这里完成。
+	DefaultPortalURL = "https://lumiogame.com"
+	// DefaultSub2APICacheTTL 是身份校验结果的缓存时长。
+	DefaultSub2APICacheTTL = time.Minute
+	// purchasePath 是 Sub2API 的充值页路径；CC 与 Codex 共用同一个收银入口。
+	purchasePath = "/purchase"
+)
+
 // Config 是服务的完整运行配置。
 type Config struct {
 	Env        string // dev | prod
 	HTTPAddr   string
-	PublicURL  string // 官网地址，用于拼接邀请链接与邮件里的重设链接
+	PublicURL  string // CC 产品站地址，用于拼接邀请链接与支付回跳
 	AdminURL   string // 管理后台地址；后台独立部署，不是官网的子路径
+	PortalURL  string // 统一门户（账号中心）地址，自有认证接口的 410 响应指向它
 	CookieName CookieNames
+
+	// Sub2APIBase 是身份真源的地址；Sub2APICacheTTL 是校验结果的缓存时长。
+	Sub2APIBase     string
+	Sub2APICacheTTL time.Duration
 
 	DatabaseURL string
 
@@ -39,25 +57,44 @@ type Config struct {
 	SMTP SMTPConfig
 }
 
-// TrustedOrigins 返回允许携带 cookie 访问控制面的前端来源。
+// TrustedOrigins 返回允许跨源访问控制面的前端来源。
 //
-// 恰好两个，因为本系统有两套独立部署、互不相干的前端：
-//   - PublicURL —— 官网 apps/web（cchaven.cn）
+// 三个，因为本系统面向三套独立部署、互不相干的前端：
+//   - PublicURL —— CC 产品站（cc.lumiogame.com）
 //   - AdminURL  —— 管理后台 apps/admin（admin.cchaven.cn）。交互设计第 7 章要求后台
 //     与官网、APP 完全隔离，它不是官网的子路径，因此必须单独列为可信来源，
 //     否则后台在生产环境会被 CORS 与写操作的同源校验一起挡死。
+//   - PortalURL —— 统一门户 / 账号中心（lumiogame.com）。它拿 Sub2API 令牌来读 CC 的
+//     权益与邀请数据，不在这里放行的话生产环境会被 CORS 全量挡下。
 //
 // CORS 响应头与 cookie 写操作的 CSRF 校验都读这一处，两者永远一致。
 // 将来再加前端（比如独立的状态页），在 Config 里加字段并追加到这里即可，
 // 不要在 api 层另开一个 if 分支。
 func (c Config) TrustedOrigins() []string {
-	origins := make([]string, 0, 2)
-	for _, origin := range []string{c.PublicURL, c.AdminURL} {
+	origins := make([]string, 0, 3)
+	for _, origin := range []string{c.PublicURL, c.AdminURL, c.PortalURL} {
 		if origin != "" {
 			origins = append(origins, origin)
 		}
 	}
 	return origins
+}
+
+// PurchaseURL 返回统一充值页。CC 与 Codex 都跳这里，本服务不再自建收银台。
+func (c Config) PurchaseURL() string {
+	return baseOr(c.Sub2APIBase, DefaultSub2APIBase) + purchasePath
+}
+
+// PortalLoginURL 返回账号中心的登录页，供已下线的自有认证接口指路。
+func (c Config) PortalLoginURL() string {
+	return baseOr(c.PortalURL, DefaultPortalURL) + "/login"
+}
+
+func baseOr(value, fallback string) string {
+	if trimmed := strings.TrimRight(strings.TrimSpace(value), "/"); trimmed != "" {
+		return trimmed
+	}
+	return fallback
 }
 
 // Warnings 返回启动时应当提醒运维、但还不足以阻止服务启动的配置问题。
@@ -120,6 +157,10 @@ func Load() (Config, error) {
 		HTTPAddr:  env("CCHAVEN_HTTP_ADDR", ":8080"),
 		PublicURL: strings.TrimRight(env("CCHAVEN_PUBLIC_URL", "http://localhost:5173"), "/"),
 		AdminURL:  adminURL,
+		PortalURL: strings.TrimRight(env("CCHAVEN_PORTAL_URL", DefaultPortalURL), "/"),
+		Sub2APIBase: strings.TrimRight(
+			env("CCHAVEN_SUB2API_BASE", DefaultSub2APIBase), "/"),
+		Sub2APICacheTTL: duration("CCHAVEN_SUB2API_CACHE_TTL", DefaultSub2APICacheTTL),
 		CookieName: CookieNames{
 			Session:  "cch_sess",
 			Refresh:  "cch_refresh",

@@ -24,10 +24,13 @@ func authorizeRequestFrom(r *http.Request) service.AuthorizeRequest {
 
 // handleAuthorizeContext 供 /authorize 确认页渲染。
 // 未登录也返回 200：页面要先告诉用户「谁在请求什么权限」，再引导登录。
+//
+// 「谁」只认 Sub2API 令牌——与 handleAuthorizeApprove 同一个身份来源，
+// 否则确认页显示的账号会和实际被授权的账号对不上。
 func (s *Server) handleAuthorizeContext(w http.ResponseWriter, r *http.Request) {
 	var viewer *domain.User
-	if token, viaCookie := s.accessTokenFrom(r); token != "" && viaCookie {
-		if principal, err := s.svc.AuthenticateAccess(r.Context(), token); err == nil {
+	if token, viaCookie := s.accessTokenFrom(r); token != "" && !viaCookie {
+		if principal, err := s.authenticateLumio(r, token); err == nil {
 			viewer = &principal.User
 		}
 	}

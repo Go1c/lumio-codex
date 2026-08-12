@@ -60,6 +60,48 @@ func TestCodeInvalidCarriesRemainingAttempts(t *testing.T) {
 	}
 }
 
+// TestAuthMigratedPointsAtTheAccountCentre 锁住自有认证接口下线后的契约。
+//
+// 存量客户端仍会打这些端点，必须拿到「为什么没了、去哪」的可解释响应：
+// 410 表示资源永久消失（区别于 404 的「可能拼错了」），reason 稳定供机器分支，
+// portal_url 让前端能直接把用户送到账号中心。
+func TestAuthMigratedPointsAtTheAccountCentre(t *testing.T) {
+	err := AuthMigrated("https://lumiogame.com/login")
+
+	if err.Status != http.StatusGone {
+		t.Errorf("状态码 = %d, want 410", err.Status)
+	}
+	if err.Code != "auth_migrated" {
+		t.Errorf("错误码 = %q, want auth_migrated", err.Code)
+	}
+	if got := err.Details["portal_url"]; got != "https://lumiogame.com/login" {
+		t.Errorf("details.portal_url = %v", got)
+	}
+	if got := err.Details["reason"]; got != "identity_moved_to_lumio" {
+		t.Errorf("details.reason = %v, want identity_moved_to_lumio", got)
+	}
+	want := "账号体系已统一到 Lumio 账号中心，请前往 https://lumiogame.com/login 登录。"
+	if got := i18n.T(i18n.ZhCN, err.Message, err.Args); got != want {
+		t.Errorf("文案 = %q, want %q", got, want)
+	}
+}
+
+// TestIdentityUnavailableIsA503 锁住降级策略：Sub2API 不可用时必须明确失败。
+// 用 5xx 而不是 401，前端才不会把「上游抖动」误判成「登录失效」把用户踢出去。
+func TestIdentityUnavailableIsA503(t *testing.T) {
+	err := IdentityUnavailable()
+
+	if err.Status != http.StatusServiceUnavailable {
+		t.Errorf("状态码 = %d, want 503", err.Status)
+	}
+	if err.Code != "identity_unavailable" {
+		t.Errorf("错误码 = %q, want identity_unavailable", err.Code)
+	}
+	if got := i18n.T(i18n.ZhCN, err.Message, nil); got != "账号服务暂时不可用，请稍后重试。" {
+		t.Errorf("文案 = %q", got)
+	}
+}
+
 // TestFromFoldsUnknownErrors 确认非本包错误不会把内部细节泄露到响应里。
 func TestFromFoldsUnknownErrors(t *testing.T) {
 	internal := errors.New("pq: relation \"users\" does not exist")

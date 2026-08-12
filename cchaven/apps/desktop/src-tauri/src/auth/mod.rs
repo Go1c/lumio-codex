@@ -561,7 +561,8 @@ mod tests {
         AuthState {
             control: ControlClient::new(ControlConfig {
                 api_base: "http://127.0.0.1:0".into(),
-                web_base: "https://cchaven.cn".into(),
+                web_base: "https://cc.lumiogame.com".into(),
+                portal_base: "https://lumiogame.com".into(),
                 mock: true,
             }),
             secrets: Secrets::new(Box::new(keychain::MemoryStore::new())),

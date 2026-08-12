@@ -50,6 +50,8 @@ const (
 	MsgPasswordUpdatedSelf ID = "auth.password_updated_self" // 5.6 修改密码成功
 	MsgCurrentPasswordBad  ID = "auth.current_password_bad"  // 5.6 修改密码失败
 	MsgPasswordMismatch    ID = "auth.password_mismatch"     // 原型 重设密码页
+	MsgAuthMigrated        ID = "auth.migrated"              // 身份收口到 Sub2API 后的下线回执
+	MsgIdentityUnavailable ID = "auth.identity_unavailable"  // Sub2API 不可达时的降级回执
 	MsgUnauthorized        ID = "common.unauthorized"
 	MsgForbidden           ID = "common.forbidden"
 	MsgNotFound            ID = "common.not_found"
@@ -86,6 +88,8 @@ var dictionaries = map[Lang]map[ID]string{
 		MsgPasswordUpdatedSelf: "密码已更新，其他设备已退出登录。",
 		MsgCurrentPasswordBad:  "当前密码不正确。",
 		MsgPasswordMismatch:    "两次输入的密码不一致。",
+		MsgAuthMigrated:        "账号体系已统一到 Lumio 账号中心，请前往 {portal} 登录。",
+		MsgIdentityUnavailable: "账号服务暂时不可用，请稍后重试。",
 		MsgUnauthorized:        "请先登录。",
 		MsgForbidden:           "没有访问权限。",
 		MsgNotFound:            "请求的资源不存在。",

@@ -47,7 +47,7 @@ func TestAuthorizeContextForAnonymousVisitor(t *testing.T) {
 
 func TestAuthorizeContextForLoggedInUser(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 
 	resp := browser.Get("/api/v1/oauth/authorize/context?" + authorizeQuery(testsupport.NewPKCE("a"))).
 		ExpectStatus(http.StatusOK)
@@ -63,7 +63,7 @@ func TestAuthorizeContextForLoggedInUser(t *testing.T) {
 // TestAuthorizeRejectsUnregisteredRedirectURI 是防开放重定向的关键用例。
 func TestAuthorizeRejectsUnregisteredRedirectURI(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	pkce := testsupport.NewPKCE("evil")
 
 	query := url.Values{
@@ -83,7 +83,7 @@ func TestAuthorizeRejectsUnregisteredRedirectURI(t *testing.T) {
 // TestAuthorizeRequiresS256 验证 PKCE 只接受 S256，不允许降级为 plain。
 func TestAuthorizeRequiresS256(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 
 	query := url.Values{
 		"client_id":             {"cchaven-desktop"},
@@ -104,10 +104,39 @@ func TestAuthorizeRequiresLogin(t *testing.T) {
 		ExpectStatus(http.StatusUnauthorized)
 }
 
+// TestAuthorizeOnlyAcceptsAccountCentreTokens 锁住授权端点的身份来源。
+//
+// 本服务仍为桌面端签发会话，但「现在坐在浏览器前的是谁」只能由 Sub2API 回答。
+// 拿本服务自己签的 access token 来授权新设备等于自我背书，必须拒绝——
+// 否则一个被偷走的 APP 令牌就能无限繁殖出新的授权设备。
+func TestAuthorizeOnlyAcceptsAccountCentreTokens(t *testing.T) {
+	env := testsupport.New(t)
+	browser, _ := env.SignUp("alice@example.com")
+	session := env.AuthorizeApp(browser, "device-1")
+
+	env.NewClient().WithBearer(session.AccessToken).
+		Post("/api/v1/oauth/authorize?"+authorizeQuery(testsupport.NewPKCE("self")), nil).
+		ExpectStatus(http.StatusUnauthorized)
+}
+
+// TestAuthorizeFailsClosedWhenTheAccountCentreIsDown 账号中心不可用时不得放行授权。
+func TestAuthorizeFailsClosedWhenTheAccountCentreIsDown(t *testing.T) {
+	env := testsupport.New(t)
+	browser, _ := env.SignUp("alice@example.com")
+
+	env.Sub2API.SetUnavailable(true)
+
+	resp := browser.Post("/api/v1/oauth/authorize?"+authorizeQuery(testsupport.NewPKCE("down")), nil).
+		ExpectStatus(http.StatusServiceUnavailable)
+	if resp.ErrorCode() != "identity_unavailable" {
+		t.Errorf("错误码 = %q, want identity_unavailable", resp.ErrorCode())
+	}
+}
+
 // TestApproveReturnsCodeAndRedirect 验证授权码同时用于自动跳转与手动粘贴兜底。
 func TestApproveReturnsCodeAndRedirect(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	pkce := testsupport.NewPKCE("desktop")
 
 	resp := browser.Post("/api/v1/oauth/authorize?"+authorizeQuery(pkce), nil).
@@ -134,7 +163,7 @@ func TestApproveReturnsCodeAndRedirect(t *testing.T) {
 // 截获授权码但没有 verifier 的攻击者无法换取令牌。
 func TestTokenExchangeRejectsWrongVerifier(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	pkce := testsupport.NewPKCE("real")
 
 	approve := browser.Post("/api/v1/oauth/authorize?"+authorizeQuery(pkce), nil).
@@ -156,7 +185,7 @@ func TestTokenExchangeRejectsWrongVerifier(t *testing.T) {
 // TestAuthorizationCodeIsSingleUse 验证授权码不可重放。
 func TestAuthorizationCodeIsSingleUse(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	pkce := testsupport.NewPKCE("once")
 
 	approve := browser.Post("/api/v1/oauth/authorize?"+authorizeQuery(pkce), nil).
@@ -178,7 +207,7 @@ func TestAuthorizationCodeIsSingleUse(t *testing.T) {
 
 func TestAuthorizationCodeExpires(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	pkce := testsupport.NewPKCE("expiring")
 
 	approve := browser.Post("/api/v1/oauth/authorize?"+authorizeQuery(pkce), nil).
@@ -198,7 +227,7 @@ func TestAuthorizationCodeExpires(t *testing.T) {
 // TestRefreshTokenRotation 验证轮换：旧令牌立即失效，新令牌可用。
 func TestRefreshTokenRotation(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 
 	app := env.NewClient()
@@ -221,7 +250,7 @@ func TestRefreshTokenRotation(t *testing.T) {
 // 已轮换过的 refresh token 被再次出示，说明令牌外泄，整个会话族立即撤销。
 func TestRefreshTokenReuseRevokesFamily(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 
 	app := env.NewClient()
@@ -255,44 +284,45 @@ func TestRefreshTokenReuseRevokesFamily(t *testing.T) {
 }
 
 // TestAppSessionAppearsInDeviceList 验证经浏览器授权的 APP 出现在「登录设备与授权」列表里。
+//
+// 列表里只有 APP 会话：官网侧拿的是 Sub2API 令牌，本服务不再为浏览器建会话族。
 func TestAppSessionAppearsInDeviceList(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
-	env.AuthorizeApp(browser, "device-1")
+	browser, _ := env.SignUp("alice@example.com")
+	session := env.AuthorizeApp(browser, "device-1")
 
 	items := browser.Get("/api/v1/me/sessions").ExpectStatus(http.StatusOK).Array("items")
-	if len(items) != 2 {
-		t.Fatalf("应有浏览器与 APP 两个会话, got %d", len(items))
+	if len(items) != 1 {
+		t.Fatalf("应只有 APP 一个会话, got %d", len(items))
 	}
 
-	var foundApp, foundCurrent bool
-	for _, raw := range items {
-		item := raw.(map[string]any)
-		if item["kind"] == "app" {
-			foundApp = true
-			if got := item["device_name"]; got != "MacBook Pro — CC避风港 APP 1.4.2" {
-				t.Errorf("设备名 = %v", got)
-			}
-			if got := item["platform_detail"]; got != "macOS 15 · Apple Silicon" {
-				t.Errorf("平台信息 = %v", got)
-			}
-		}
-		if item["current"] == true {
-			foundCurrent = true
-		}
+	item := items[0].(map[string]any)
+	if item["kind"] != "app" {
+		t.Errorf("会话类型 = %v, want app", item["kind"])
 	}
-	if !foundApp {
-		t.Error("列表中应包含 APP 会话")
+	if got := item["device_name"]; got != "MacBook Pro — CC避风港 APP 1.4.2" {
+		t.Errorf("设备名 = %v", got)
 	}
-	if !foundCurrent {
-		t.Error("当前浏览器会话应标记为本设备")
+	if got := item["platform_detail"]; got != "macOS 15 · Apple Silicon" {
+		t.Errorf("平台信息 = %v", got)
+	}
+	// 门户不是本地会话，因此在它眼里没有「本设备」。
+	if item["current"] == true {
+		t.Error("从账号中心看列表时不应把 APP 标成本设备")
+	}
+
+	// APP 自己看列表时，才认得出哪一条是自己。
+	fromApp := env.NewClient().WithBearer(session.AccessToken).
+		Get("/api/v1/me/sessions").ExpectStatus(http.StatusOK).Array("items")
+	if fromApp[0].(map[string]any)["current"] != true {
+		t.Error("APP 应把自己的会话标记为本设备")
 	}
 }
 
 // TestRevokeSessionLogsOutThatDevice 验证「在这里退出即可撤销该设备的授权」。
 func TestRevokeSessionLogsOutThatDevice(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 
 	appClient := env.NewClient().WithBearer(session.AccessToken)
@@ -315,13 +345,31 @@ func TestRevokeSessionLogsOutThatDevice(t *testing.T) {
 // TestRevokeOtherSessionsKeepsCurrent 验证「退出所有其他设备」保留当前会话。
 func TestRevokeOtherSessionsKeepsCurrent(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
+	first := env.AuthorizeApp(browser, "device-1")
+	second := env.AuthorizeApp(browser, "device-2")
+
+	app := env.NewClient().WithBearer(first.AccessToken)
+	resp := app.Post("/api/v1/me/sessions/revoke-others", nil).ExpectStatus(http.StatusOK)
+	if got := resp.Number("revoked"); got != 1 {
+		t.Errorf("应撤销 1 个其他会话, got %v", got)
+	}
+
+	app.Get("/api/v1/me").ExpectStatus(http.StatusOK)
+	env.NewClient().WithBearer(second.AccessToken).Get("/api/v1/me").ExpectStatus(http.StatusUnauthorized)
+}
+
+// TestPortalRevokeOtherSessionsClearsEveryDevice 从账号中心发起时没有「本设备」，
+// 因此所有 APP 会话都会被清掉。
+func TestPortalRevokeOtherSessionsClearsEveryDevice(t *testing.T) {
+	env := testsupport.New(t)
+	browser, _ := env.SignUp("alice@example.com")
 	first := env.AuthorizeApp(browser, "device-1")
 	second := env.AuthorizeApp(browser, "device-2")
 
 	resp := browser.Post("/api/v1/me/sessions/revoke-others", nil).ExpectStatus(http.StatusOK)
 	if got := resp.Number("revoked"); got != 2 {
-		t.Errorf("应撤销 2 个其他会话, got %v", got)
+		t.Errorf("应撤销 2 个会话, got %v", got)
 	}
 
 	browser.Get("/api/v1/me").ExpectStatus(http.StatusOK)

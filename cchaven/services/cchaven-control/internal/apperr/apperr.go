@@ -185,6 +185,30 @@ func CurrentPasswordInvalid() *Error {
 	return newError(http.StatusBadRequest, "current_password_invalid", i18n.MsgCurrentPasswordBad)
 }
 
+// —— 身份收口到 Sub2API ——
+
+// AuthMigrated 表示该端点承载的能力已迁到 Lumio 账号中心。
+//
+// 用 410 而不是删路由：存量客户端打过来时要能拿到「为什么没了、该去哪」，
+// 404 会被误读成拼错路径，静默 200 更会让前端以为登录成功了。
+func AuthMigrated(portalURL string) *Error {
+	err := newError(http.StatusGone, "auth_migrated", i18n.MsgAuthMigrated)
+	err.Args = map[string]string{"portal": portalURL}
+	err.Details = map[string]any{
+		"reason":     "identity_moved_to_lumio",
+		"portal_url": portalURL,
+	}
+	return err
+}
+
+// IdentityUnavailable 表示无法向 Sub2API 求证调用者身份。
+//
+// 校验不了就明确失败，绝不放行；同时必须与 401 区分开，
+// 否则上游抖一下就会把所有在线用户踢回登录页。
+func IdentityUnavailable() *Error {
+	return newError(http.StatusServiceUnavailable, "identity_unavailable", i18n.MsgIdentityUnavailable)
+}
+
 // —— 订阅与邀请 ——
 
 // TrialAlreadyUsed 表示该账号已享用过试用，或命中防滥用指纹。

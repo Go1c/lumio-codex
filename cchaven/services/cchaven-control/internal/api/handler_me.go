@@ -8,7 +8,6 @@ import (
 
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/apperr"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/httpx"
-	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/i18n"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/service"
 )
 
@@ -52,80 +51,6 @@ func (s *Server) handleEntitlement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, entitlement)
-}
-
-type changePasswordRequest struct {
-	CurrentPassword string `json:"current_password"`
-	NewPassword     string `json:"new_password"`
-}
-
-func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	var req changePasswordRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-
-	principal := principalOf(r)
-	if err := s.svc.ChangePassword(r.Context(), principal.User.ID, principal.SessionID,
-		req.CurrentPassword, req.NewPassword); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, map[string]any{
-		"message": i18n.T(httpx.LangOf(r), i18n.MsgPasswordUpdatedSelf, nil),
-	})
-}
-
-type emailChangeRequest struct {
-	NewEmail string `json:"new_email"`
-}
-
-func (s *Server) handleRequestEmailChange(w http.ResponseWriter, r *http.Request) {
-	var req emailChangeRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-
-	devCode, err := s.svc.RequestEmailChange(r.Context(), principalOf(r).User.ID, req.NewEmail)
-	if err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-
-	body := map[string]any{"sent": true}
-	if devCode != "" {
-		body["dev_code"] = devCode
-	}
-	httpx.JSON(w, http.StatusAccepted, body)
-}
-
-type codeRequest struct {
-	Code string `json:"code"`
-}
-
-func (s *Server) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
-	var req codeRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-
-	view, err := s.svc.ConfirmEmailChange(r.Context(), principalOf(r).User.ID, req.Code)
-	if err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, view)
-}
-
-func (s *Server) handleCancelEmailChange(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.CancelEmailChange(r.Context(), principalOf(r).User.ID); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-	httpx.NoContent(w)
 }
 
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {

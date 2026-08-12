@@ -12,7 +12,7 @@ import (
 func TestCurrentInviteReflectsCookie(t *testing.T) {
 	env := testsupport.New(t)
 
-	_, inviterID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, inviterID := env.SignUp("alice@example.com")
 	code := env.ReferralCodeOf(inviterID)
 
 	visitor := env.NewClient()
@@ -63,7 +63,7 @@ func TestCurrentInviteReflectsCookie(t *testing.T) {
 func TestCurrentInviteDoesNotRecordVisit(t *testing.T) {
 	env := testsupport.New(t)
 
-	_, inviterID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, inviterID := env.SignUp("alice@example.com")
 	code := env.ReferralCodeOf(inviterID)
 
 	visitor := env.NewClient()

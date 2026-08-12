@@ -25,25 +25,51 @@ func notify(t *testing.T, env *testsupport.Env, orderNo string, paid bool, amoun
 	return payload, env.Mock.Sign(payload)
 }
 
+// TestCheckoutRedirectsToTheLumioPurchasePage 锁住充值入口的去向。
+//
+// CC 不再自建收银台：钱包与充值都在 Lumio 账号中心，与 Codex 共用同一个入口。
+// 浏览器跟随 303，XHR 客户端读 data.purchase_url。
+func TestCheckoutRedirectsToTheLumioPurchasePage(t *testing.T) {
+	env := testsupport.New(t)
+	browser, _ := env.SignUp("alice@example.com")
+
+	resp := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
+		ExpectStatus(http.StatusSeeOther)
+
+	want := env.Cfg.PurchaseURL()
+	if got := resp.String("purchase_url"); got != want {
+		t.Errorf("purchase_url = %q, want %q", got, want)
+	}
+
+	// 未登录也能拿到跳转目标：充值页自己会要求登录。
+	env.NewClient().Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
+		ExpectStatus(http.StatusSeeOther)
+
+	// 下线的收银台不得再产生订单。
+	var orders int
+	if err := env.Pool.QueryRow(t.Context(), `SELECT count(*) FROM orders`).Scan(&orders); err != nil {
+		t.Fatalf("查询订单失败: %v", err)
+	}
+	if orders != 0 {
+		t.Errorf("跳转端点不应建单, got %d 条", orders)
+	}
+}
+
 // TestCheckoutToPaidExtendsSubscription 验证下单 → 回调 → 订阅入账的完整链路。
+//
+// 新订单已不再由 HTTP 端点创建，但存量订单的回调与入账仍要继续工作，
+// 因此从服务层注入订单再走回调。
 func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 
-	checkout := browser.Post("/api/v1/billing/checkout", map[string]string{
-		"channel": "mock",
-	}).ExpectStatus(http.StatusOK)
-
-	orderNo := checkout.String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 	// 订单号格式 CC{YYYYMMDD}-{6 位序号}，与原型 CC20260812-100486 一致。
 	if !regexp.MustCompile(`^CC\d{8}-\d{6}$`).MatchString(orderNo) {
 		t.Errorf("订单号格式不符: %q", orderNo)
 	}
-	if got := checkout.Number("amount_cents"); got != 6800 {
+	if got := browser.Get("/api/v1/billing/orders/" + orderNo).Number("amount_cents"); got != 6800 {
 		t.Errorf("金额应取自运营配置, got %v", got)
-	}
-	if checkout.String("pay_url") == "" {
-		t.Error("应返回支付服务商托管页地址")
 	}
 
 	// 付款前未订阅。
@@ -72,10 +98,9 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 // TestWebhookIsIdempotent 验证支付渠道重投回调不会重复延长订阅。
 func TestWebhookIsIdempotent(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 
 	payload, signature := notify(t, env, orderNo, true, 6800)
 	headers := map[string]string{"X-CCHaven-Signature": signature}
@@ -103,10 +128,9 @@ func TestWebhookIsIdempotent(t *testing.T) {
 // TestWebhookRejectsBadSignature 验证伪造回调被拒且留痕。
 func TestWebhookRejectsBadSignature(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 
 	payload, _ := notify(t, env, orderNo, true, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
@@ -130,10 +154,9 @@ func TestWebhookRejectsBadSignature(t *testing.T) {
 // TestFailedPaymentMarksOrderFailed 验证支付失败的回调。
 func TestFailedPaymentMarksOrderFailed(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 
 	payload, signature := notify(t, env, orderNo, false, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
@@ -150,12 +173,11 @@ func TestFailedPaymentMarksOrderFailed(t *testing.T) {
 // TestOrderNumbersAreSequentialPerDay 验证同一天的订单号连续且不重号。
 func TestOrderNumbersAreSequentialPerDay(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
 	seen := map[string]bool{}
 	for range 5 {
-		orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-			ExpectStatus(http.StatusOK).String("order_no")
+		orderNo := env.Checkout(userID, "mock")
 		if seen[orderNo] {
 			t.Fatalf("订单号重复: %s", orderNo)
 		}
@@ -167,48 +189,37 @@ func TestOrderNumbersAreSequentialPerDay(t *testing.T) {
 // 支付宝与微信在 M1 尚未接入，只保留接口。
 func TestUnknownChannelIsRejected(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
 	for _, channel := range []string{"alipay", "wechat", "bogus"} {
-		resp := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": channel})
-		if resp.Status != http.StatusBadRequest {
-			t.Errorf("渠道 %q 应被拒绝, got %d", channel, resp.Status)
+		if _, err := env.Svc.Checkout(t.Context(), userID, channel, ""); err == nil {
+			t.Errorf("渠道 %q 应被拒绝", channel)
 		}
 	}
-}
-
-// TestCheckoutRequiresLogin 验证付款接口必须登录（付款只在官网发生）。
-func TestCheckoutRequiresLogin(t *testing.T) {
-	env := testsupport.New(t)
-
-	env.NewClient().Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusUnauthorized)
 }
 
 // TestUserCannotReadOthersOrder 验证订单查询的越权防护。
 func TestUserCannotReadOthersOrder(t *testing.T) {
 	env := testsupport.New(t)
 
-	alice, _ := env.SignUp("alice@example.com", "Passw0rd!")
-	orderNo := alice.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	_, aliceID := env.SignUp("alice@example.com")
+	orderNo := env.Checkout(aliceID, "mock")
 
-	bob, _ := env.SignUp("bob@example.com", "Passw0rd!")
+	bob, _ := env.SignUp("bob@example.com")
 	bob.Get("/api/v1/billing/orders/" + orderNo).ExpectStatus(http.StatusNotFound)
 }
 
 // TestTrialThenPurchaseStacks 验证试用期内付款按顺延而非覆盖计算到期时间。
 func TestTrialThenPurchaseStacks(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 
 	env.AuthorizeApp(browser, "device-1")
 	if got := env.EntitlementOf(userID)["days_left"]; got != 30 {
 		t.Fatalf("试用应为 30 天, got %v", got)
 	}
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 	payload, signature := notify(t, env, orderNo, true, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
@@ -239,7 +250,7 @@ func TestPlanReflectsOpsConfig(t *testing.T) {
 // TestHeartbeatFeedsTelemetry 验证心跳记录设备与活跃度，并回传到期提醒。
 func TestHeartbeatFeedsTelemetry(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 
 	app := env.NewClient().WithBearer(session.AccessToken)
@@ -278,10 +289,9 @@ func TestHeartbeatFeedsTelemetry(t *testing.T) {
 
 func TestMockRefundFlow(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 	payload, signature := notify(t, env, orderNo, true, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)

@@ -9,6 +9,7 @@ import (
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/payments"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/ratelimit"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/security"
+	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/sub2api"
 )
 
 // 安全策略常量，全部来自交互设计 6.2 节与 3.1 / 3.3 节。
@@ -82,6 +83,8 @@ type Service struct {
 	Cipher   *security.Cipher
 	Limiter  *ratelimit.Limiter
 	Payments *payments.Registry
+	// Sub2API 是终端用户身份的真源客户端；测试可替换为指向假上游的实例。
+	Sub2API *sub2api.Client
 
 	// Now 允许测试注入可控时钟；生产环境为 time.Now。
 	Now func() time.Time
@@ -100,7 +103,11 @@ func New(
 		Cipher:   cipher,
 		Limiter:  ratelimit.New(),
 		Payments: registry,
-		Now:      time.Now,
+		Sub2API: sub2api.New(sub2api.Options{
+			BaseURL:  cfg.Sub2APIBase,
+			CacheTTL: cfg.Sub2APICacheTTL,
+		}),
+		Now: time.Now,
 	}
 }
 

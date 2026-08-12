@@ -76,12 +76,12 @@ mod tests {
 
     #[test]
     fn payment_url_targets_api_purchase_page() {
-        // 充值只允许 API 站 /purchase；禁止落到营销站 lumio.games。
+        // 充值只允许 API 站 /purchase；禁止落到产品站。存量客户端硬编码了这个地址。
         assert_eq!(product::payment_url(), "https://api.lumio.games/purchase");
         assert!(product::payment_url().starts_with("https://api.lumio.games/"));
         assert!(!product::payment_url().starts_with(product::SITE_BASE_URL));
         assert!(!product::payment_url().contains("lumio.games/payment"));
-        assert!(product::SITE_BASE_URL.starts_with("https://lumio.games"));
+        assert_eq!(product::SITE_BASE_URL, "https://codex.lumiogame.com");
         assert_ne!(
             product::SITE_BASE_URL,
             product::API_BASE_URL.trim_end_matches('/')

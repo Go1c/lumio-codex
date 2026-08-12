@@ -29,31 +29,37 @@ func NewPKCE(seed string) PKCE {
 	return PKCE{Verifier: verifier, Challenge: base64.RawURLEncoding.EncodeToString(sum[:])}
 }
 
-// Register 提交注册并返回验证码（非生产环境由接口回传）。
-func (e *Env) Register(c *Client, email, password string) string {
+// Identify 让指定浏览器带上某个账号中心用户的令牌，并触发本地开户。
+//
+// 注册与登录都发生在 Sub2API，本服务能观察到的第一件事就是「一个带令牌的请求」，
+// 影子账号在那一刻建立——因此这里打一次 /me 就等价于旧流程里的注册 + 验证邮箱。
+// 复用传入的 client（而不是新建）是为了保留它已有的 cookie，邀请归因依赖 cch_ref。
+func (e *Env) Identify(c *Client, email string) (*Client, int64) {
 	e.T.Helper()
-	resp := c.Post("/api/v1/auth/register", map[string]string{
-		"email": email, "password": password,
-	}).ExpectStatus(http.StatusCreated)
-	return resp.String("dev_code")
+
+	authed := c.WithBearer(e.Sub2API.Issue(email))
+	authed.Get("/api/v1/me").ExpectStatus(http.StatusOK)
+	return authed, e.UserIDOf(email)
 }
 
-// VerifyEmail 提交验证码，成功后客户端持有官网会话 cookie。
-func (e *Env) VerifyEmail(c *Client, email, code string) {
+// SignUp 建立一个已在账号中心登录的浏览器会话，返回它与本地用户 ID。
+func (e *Env) SignUp(email string) (*Client, int64) {
 	e.T.Helper()
-	c.Post("/api/v1/auth/verify-email", map[string]string{
-		"email": email, "code": code,
-	}).ExpectStatus(http.StatusOK)
+	return e.Identify(e.NewClient(), email)
 }
 
-// SignUp 完成「注册 + 邮箱验证」，返回已登录的浏览器会话与用户 ID。
-func (e *Env) SignUp(email, password string) (*Client, int64) {
+// Checkout 直接经服务层下单。
+//
+// HTTP 侧的 /billing/checkout 已改为跳转到 Sub2API 的充值页，不再产生订单；
+// 但订单、支付回调与退款仍要为迁移前的存量订单服务，测试从这里注入。
+func (e *Env) Checkout(userID int64, channel string) string {
 	e.T.Helper()
 
-	client := e.NewClient()
-	code := e.Register(client, email, password)
-	e.VerifyEmail(client, email, code)
-	return client, e.UserIDOf(email)
+	result, err := e.Svc.Checkout(context.Background(), userID, channel, "")
+	if err != nil {
+		e.T.Fatalf("创建订单失败: %v", err)
+	}
+	return result.OrderNo
 }
 
 // UserIDOf 按邮箱查出用户 ID。

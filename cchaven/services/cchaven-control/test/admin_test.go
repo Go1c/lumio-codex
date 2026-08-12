@@ -43,11 +43,12 @@ func newOpsClient(t *testing.T, env *testsupport.Env) *testsupport.Client {
 }
 
 // paidOrder 下一笔单并用回调把它置为已支付，供退款用例使用。
-func paidOrder(t *testing.T, env *testsupport.Env, browser *testsupport.Client) string {
+//
+// 新订单不再经 HTTP 创建（充值已跳 Sub2API），这里从服务层注入。
+func paidOrder(t *testing.T, env *testsupport.Env, userID int64) string {
 	t.Helper()
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 	payload, signature := notify(t, env, orderNo, true, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
@@ -67,7 +68,7 @@ func loginAdmin(t *testing.T, env *testsupport.Env, email, password string) *tes
 // TestAdminIsSeparateFromUserAccounts 验证管理员与普通用户是两套完全隔离的体系。
 func TestAdminIsSeparateFromUserAccounts(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 
 	// 普通用户会话访问管理端应被拒。
 	browser.Get("/api/admin/v1/metrics/overview").ExpectStatus(http.StatusUnauthorized)
@@ -98,7 +99,7 @@ func TestAdminLoginRejectsWrongPassword(t *testing.T) {
 // 生产环境下禁用用户、退款、改运营配置会全部 403，而 dev 放行 localhost 看不出来。
 func TestAdminWriteFromAdminOrigin(t *testing.T) {
 	env := testsupport.New(t)
-	_, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
 	admin := newAdminClient(t, env)
 
@@ -174,7 +175,7 @@ func TestAdminTOTPEnrollmentAndGate(t *testing.T) {
 // TestAdminDisableUserLogsOutImmediately 验证禁用用户「立即被登出且无法登录」，并留审计。
 func TestAdminDisableUserLogsOutImmediately(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 	appClient := env.NewClient().WithBearer(session.AccessToken)
 
@@ -218,9 +219,9 @@ func TestAdminDisableUserLogsOutImmediately(t *testing.T) {
 func TestAdminUserListMasksEmailAndFilters(t *testing.T) {
 	env := testsupport.New(t)
 
-	trialBrowser, _ := env.SignUp("trial@example.com", "Passw0rd!")
+	trialBrowser, _ := env.SignUp("trial@example.com")
 	env.AuthorizeApp(trialBrowser, "device-trial")
-	env.SignUp("plain@example.com", "Passw0rd!")
+	env.SignUp("plain@example.com")
 
 	admin := newAdminClient(t, env)
 
@@ -261,13 +262,12 @@ func TestAdminUserListMasksEmailAndFilters(t *testing.T) {
 func TestAdminUserListShowsPlatformAndSource(t *testing.T) {
 	env := testsupport.New(t)
 
-	inviterBrowser, inviterID := env.SignUp("alice@example.com", "Passw0rd!")
+	inviterBrowser, inviterID := env.SignUp("alice@example.com")
 	code := env.ReferralCodeOf(inviterID)
 
 	inviteeBrowser := env.NewClient()
 	inviteeBrowser.Get("/api/v1/invites/" + code).ExpectStatus(http.StatusOK)
-	verifyCode := env.Register(inviteeBrowser, "bob@example.com", "Passw0rd!")
-	env.VerifyEmail(inviteeBrowser, "bob@example.com", verifyCode)
+	inviteeBrowser, _ = env.Identify(inviteeBrowser, "bob@example.com")
 	session := env.AuthorizeApp(inviteeBrowser, "device-bob")
 
 	// 心跳补全设备信息后，列表才有「使用平台」。
@@ -304,7 +304,7 @@ func TestAdminUserListShowsPlatformAndSource(t *testing.T) {
 func TestAdminUserDetailReturnsPlainEmailAndSnapshots(t *testing.T) {
 	env := testsupport.New(t)
 
-	inviterBrowser, inviterID := env.SignUp("alice@example.com", "Passw0rd!")
+	inviterBrowser, inviterID := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(inviterBrowser, "device-alice")
 	env.NewClient().WithBearer(session.AccessToken).
 		Post("/api/v1/app/heartbeat", map[string]string{
@@ -316,12 +316,10 @@ func TestAdminUserDetailReturnsPlainEmailAndSnapshots(t *testing.T) {
 	code := env.ReferralCodeOf(inviterID)
 	invitee := env.NewClient()
 	invitee.Get("/api/v1/invites/" + code).ExpectStatus(http.StatusOK)
-	verifyCode := env.Register(invitee, "bob@example.com", "Passw0rd!")
-	env.VerifyEmail(invitee, "bob@example.com", verifyCode)
+	invitee, _ = env.Identify(invitee, "bob@example.com")
 	env.AuthorizeApp(invitee, "device-bob")
 
-	orderNo := inviterBrowser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(inviterID, "mock")
 
 	admin := newAdminClient(t, env)
 	detail := admin.Get(userPath(inviterID)).ExpectStatus(http.StatusOK)
@@ -410,7 +408,7 @@ func TestAdminUserDetailReturnsPlainEmailAndSnapshots(t *testing.T) {
 // support 角色被挡在外面，且这次越权尝试同样留痕。
 func TestAdminUserDetailNeedsElevatedRole(t *testing.T) {
 	env := testsupport.New(t)
-	_, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
 	support, supportID := newSupportClient(t, env)
 	denied := support.Get(userPath(userID)).ExpectStatus(http.StatusForbidden)
@@ -464,8 +462,8 @@ func TestAdminUserDetailNeedsElevatedRole(t *testing.T) {
 // 使一个连邮箱都看不到的账号可以把真实客户锁在门外。
 func TestAdminSupportCannotWrite(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
-	orderNo := paidOrder(t, env, browser)
+	_, userID := env.SignUp("alice@example.com")
+	orderNo := paidOrder(t, env, userID)
 
 	support, supportID := newSupportClient(t, env)
 
@@ -572,9 +570,9 @@ func TestAdminSupportCannotWrite(t *testing.T) {
 // 两者当前没有能力差异，这个用例就是那句「暂无差异」的可执行版本。
 func TestAdminOwnerAndOpsShareFullAccess(t *testing.T) {
 	env := testsupport.New(t)
-	browser, userID := env.SignUp("alice@example.com", "Passw0rd!")
-	firstOrder := paidOrder(t, env, browser)
-	secondOrder := paidOrder(t, env, browser)
+	_, userID := env.SignUp("alice@example.com")
+	firstOrder := paidOrder(t, env, userID)
+	secondOrder := paidOrder(t, env, userID)
 
 	owner := newAdminClient(t, env)
 	ops := newOpsClient(t, env)
@@ -623,8 +621,8 @@ func TestAdminOwnerAndOpsShareFullAccess(t *testing.T) {
 // 那么真正发生了外带的那一次比被拒的那一次更该可追溯。只审计失败是自相矛盾。
 func TestAdminSuccessfulExportIsAudited(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
-	paidOrder(t, env, browser)
+	_, userID := env.SignUp("alice@example.com")
+	paidOrder(t, env, userID)
 
 	admin := newAdminClient(t, env)
 	admin.Get("/api/admin/v1/orders/export?status=paid").ExpectStatus(http.StatusOK)
@@ -661,7 +659,7 @@ func TestAdminUserDetailNotFound(t *testing.T) {
 // TestAdminAuditLogFilters 验证按操作人、按动作以及两者组合筛选审计日志。
 func TestAdminAuditLogFilters(t *testing.T) {
 	env := testsupport.New(t)
-	_, userID := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
 	ownerID := env.CreateAdmin(adminEmail, adminPassword)
 	owner := loginAdmin(t, env, adminEmail, adminPassword)
@@ -708,7 +706,7 @@ func TestAdminAuditLogFilters(t *testing.T) {
 // TestAdminMetricsOverview 验证六张指标卡，特别是缺数时返回 null 而非 0。
 func TestAdminMetricsOverview(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	env.AuthorizeApp(browser, "device-1")
 
 	admin := newAdminClient(t, env)
@@ -737,7 +735,7 @@ func TestAdminMetricsOverview(t *testing.T) {
 
 func TestAdminDistributions(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	browser, _ := env.SignUp("alice@example.com")
 	session := env.AuthorizeApp(browser, "device-1")
 
 	env.NewClient().WithBearer(session.AccessToken).
@@ -805,10 +803,9 @@ func TestAdminOpsConfigUpdateIsAudited(t *testing.T) {
 
 func TestAdminRefundRejectsUnpaidOrder(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 
 	admin := newAdminClient(t, env)
 	resp := admin.Post("/api/admin/v1/orders/"+orderNo+"/refund", nil).
@@ -821,10 +818,9 @@ func TestAdminRefundRejectsUnpaidOrder(t *testing.T) {
 
 func TestAdminOrderListIncludesTodaySummary(t *testing.T) {
 	env := testsupport.New(t)
-	browser, _ := env.SignUp("alice@example.com", "Passw0rd!")
+	_, userID := env.SignUp("alice@example.com")
 
-	orderNo := browser.Post("/api/v1/billing/checkout", map[string]string{"channel": "mock"}).
-		ExpectStatus(http.StatusOK).String("order_no")
+	orderNo := env.Checkout(userID, "mock")
 	payload, signature := notify(t, env, orderNo, true, 6800)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)

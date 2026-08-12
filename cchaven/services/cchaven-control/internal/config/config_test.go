@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setBaseEnv 铺好一份能让 Load 成功返回的最小环境。
@@ -34,8 +35,77 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.AdminURL != devAdminURL {
 		t.Errorf("dev 环境 AdminURL = %q, want %q", cfg.AdminURL, devAdminURL)
 	}
-	if got := cfg.TrustedOrigins(); !slices.Equal(got, []string{cfg.PublicURL, devAdminURL}) {
-		t.Errorf("可信来源 = %v, want 官网与后台两项", got)
+	want := []string{cfg.PublicURL, devAdminURL, DefaultPortalURL}
+	if got := cfg.TrustedOrigins(); !slices.Equal(got, want) {
+		t.Errorf("可信来源 = %v, want %v", got, want)
+	}
+}
+
+// TestLoadIdentityDefaults 锁住身份收口后的默认值：漏配也必须指向线上账号中心，
+// 而不是空地址（空地址会让令牌校验对所有人失败，且错误现象极难定位）。
+func TestLoadIdentityDefaults(t *testing.T) {
+	setBaseEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() 失败: %v", err)
+	}
+
+	if cfg.Sub2APIBase != DefaultSub2APIBase {
+		t.Errorf("Sub2APIBase = %q, want %q", cfg.Sub2APIBase, DefaultSub2APIBase)
+	}
+	if cfg.PortalURL != DefaultPortalURL {
+		t.Errorf("PortalURL = %q, want %q", cfg.PortalURL, DefaultPortalURL)
+	}
+	if cfg.Sub2APICacheTTL != DefaultSub2APICacheTTL {
+		t.Errorf("Sub2APICacheTTL = %v, want %v", cfg.Sub2APICacheTTL, DefaultSub2APICacheTTL)
+	}
+	// 充值页由 Sub2API 地址推导，不在别处再硬编码一份。
+	if got, want := cfg.PurchaseURL(), "https://api.lumio.games/purchase"; got != want {
+		t.Errorf("PurchaseURL() = %q, want %q", got, want)
+	}
+	if got, want := cfg.PortalLoginURL(), "https://lumiogame.com/login"; got != want {
+		t.Errorf("PortalLoginURL() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CCHAVEN_SUB2API_BASE", "https://staging-api.lumio.games/")
+	t.Setenv("CCHAVEN_PORTAL_URL", "https://staging.lumiogame.com/")
+	t.Setenv("CCHAVEN_SUB2API_CACHE_TTL", "15s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() 失败: %v", err)
+	}
+
+	if cfg.Sub2APIBase != "https://staging-api.lumio.games" {
+		t.Errorf("Sub2APIBase = %q", cfg.Sub2APIBase)
+	}
+	if cfg.PortalURL != "https://staging.lumiogame.com" {
+		t.Errorf("PortalURL = %q", cfg.PortalURL)
+	}
+	if cfg.Sub2APICacheTTL != 15*time.Second {
+		t.Errorf("Sub2APICacheTTL = %v, want 15s", cfg.Sub2APICacheTTL)
+	}
+	if got, want := cfg.PurchaseURL(), "https://staging-api.lumio.games/purchase"; got != want {
+		t.Errorf("PurchaseURL() = %q, want %q", got, want)
+	}
+}
+
+// TestTrustedOriginsIncludesThePortal 保证统一账号中心能跨源读 CC 的权益数据。
+// 漏了它，门户在生产环境的每个请求都会被 CORS 挡下，而 dev 放行 localhost 看不出来。
+func TestTrustedOriginsIncludesThePortal(t *testing.T) {
+	cfg := Config{
+		PublicURL: "https://cc.lumiogame.com",
+		AdminURL:  "https://admin.cchaven.cn",
+		PortalURL: "https://lumiogame.com",
+	}
+
+	want := []string{"https://cc.lumiogame.com", "https://admin.cchaven.cn", "https://lumiogame.com"}
+	if got := cfg.TrustedOrigins(); !slices.Equal(got, want) {
+		t.Errorf("可信来源 = %v, want %v", got, want)
 	}
 }
 

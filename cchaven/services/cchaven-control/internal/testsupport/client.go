@@ -197,6 +197,21 @@ func (r *Response) ErrorMessage() string {
 	return message
 }
 
+// ErrorDetail 读取失败响应 details 下的一项，供断言「错误里给没给出路」。
+func (r *Response) ErrorDetail(key string) any {
+	r.t.Helper()
+
+	errObj, ok := r.body["error"].(map[string]any)
+	if !ok {
+		r.t.Fatalf("响应缺少 error 对象: %s", r.Raw)
+	}
+	details, ok := errObj["details"].(map[string]any)
+	if !ok {
+		r.t.Fatalf("响应缺少 error.details: %s", r.Raw)
+	}
+	return details[key]
+}
+
 // String 读取 data 下的字符串字段。
 func (r *Response) String(key string) string {
 	r.t.Helper()

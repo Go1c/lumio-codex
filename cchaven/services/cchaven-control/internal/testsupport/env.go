@@ -27,6 +27,8 @@ type Env struct {
 	Cfg    config.Config
 	Mock   *payments.Mock
 	Server *httptest.Server
+	// Sub2API 是假的账号中心；终端用户身份全部由它签发。
+	Sub2API *FakeSub2API
 
 	clock time.Time
 }
@@ -55,12 +57,19 @@ func New(t *testing.T) *Env {
 	}
 	resetDatabase(t, pool)
 
+	fakeSub2API := NewFakeSub2API(t)
+
 	cfg := config.Config{
 		Env: "test",
-		// 官网与管理后台是两个独立来源，测试环境照生产的样子摆开，
+		// 官网、管理后台与统一门户是三个独立来源，测试环境照生产的样子摆开，
 		// 免得「只有官网能过同源校验」这类问题又躲过集成测试。
-		PublicURL: "https://cchaven.test",
-		AdminURL:  "https://admin.cchaven.test",
+		PublicURL:   "https://cchaven.test",
+		AdminURL:    "https://admin.cchaven.test",
+		PortalURL:   "https://portal.test",
+		Sub2APIBase: fakeSub2API.URL(),
+		// 集成测试要看到账号中心的最新状态（改邮箱、被停用即时生效），
+		// 缓存本身由 internal/sub2api 的单测覆盖。
+		Sub2APICacheTTL: time.Nanosecond,
 		CookieName: config.CookieNames{
 			Session: "cch_sess", Refresh: "cch_refresh",
 			Referral: "cch_ref", Admin: "cch_admin",
@@ -87,7 +96,10 @@ func New(t *testing.T) *Env {
 	// 测试用低代价 Argon2 参数，否则大量注册会把测试拖到分钟级。
 	svc := service.New(pool, cfg, security.NewHasher(security.TestArgon2Params()), cipher, registry)
 
-	env := &Env{T: t, Pool: pool, Svc: svc, Cfg: cfg, Mock: mock, clock: time.Now().UTC()}
+	env := &Env{
+		T: t, Pool: pool, Svc: svc, Cfg: cfg, Mock: mock,
+		Sub2API: fakeSub2API, clock: time.Now().UTC(),
+	}
 	svc.Now = func() time.Time { return env.clock }
 
 	env.Server = httptest.NewServer(api.NewServer(svc, cfg).Routes())
@@ -109,7 +121,8 @@ func (e *Env) SetClock(t time.Time) { e.clock = t.UTC() }
 // schema_migrations 不在其列——表结构本身跨测试复用。
 var truncatedTables = []string{
 	"audit_logs", "email_outbox", "payment_events", "refunds", "orders", "order_sequences",
-	"user_activity_days", "user_devices", "trial_fingerprints", "referral_attributions",
+	"sub2api_identities", "user_activity_days", "user_devices", "trial_fingerprints",
+	"referral_attributions",
 	"referral_visits", "referral_codes", "subscription_events", "subscriptions",
 	"oauth_authorization_codes", "refresh_tokens", "session_families",
 	"password_reset_tokens", "email_verification_codes", "admin_sessions", "admins",

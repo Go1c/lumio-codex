@@ -19,26 +19,7 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, plan)
 }
 
-type checkoutRequest struct {
-	Channel        string `json:"channel"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
-}
-
-func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
-	var req checkoutRequest
-	if err := httpx.DecodeJSON(w, r, &req); err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-
-	result, err := s.svc.Checkout(r.Context(), principalOf(r).User.ID, req.Channel, req.IdempotencyKey)
-	if err != nil {
-		httpx.Fail(w, r, err)
-		return
-	}
-	httpx.JSON(w, http.StatusOK, result)
-}
-
+// handleListMyOrders 列出迁移前产生的历史订单；新订单不再由本服务创建（见 handleCheckout）。
 func (s *Server) handleListMyOrders(w http.ResponseWriter, r *http.Request) {
 	orders, err := s.svc.ListMyOrders(r.Context(), principalOf(r).User.ID)
 	if err != nil {

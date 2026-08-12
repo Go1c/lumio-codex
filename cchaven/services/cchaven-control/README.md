@@ -1,11 +1,43 @@
 # cchaven-control — CC避风港 控制面服务（M1）
 
-账号、订阅、邀请裂变、支付与运营后台的唯一后端。官网（M2）、桌面 APP（M3）与运营后台（M4）都通过本服务的 HTTP API 工作。
+订阅、邀请裂变、设备与心跳、订单与运营后台的唯一后端。CC 产品站、桌面 APP 与运营后台都通过本服务的 HTTP API 工作。
+
+**终端用户账号不在这里。** 邮箱、口令与账号状态由 Lumio 账号中心（Sub2API，`api.lumio.games`）保管；
+本服务只拿请求里的 Sub2API 令牌认人，再映射到本地的「CC 影子账号」。详见下面「身份从哪来」。
 
 - **正式部署 / 发版 / 编译**：[`docs/ops/`](../../docs/ops/README.md)（生产环境以该目录为准）
+- 账号体系边界（权威）：[`docs/ops/01-architecture.md`](../../docs/ops/01-architecture.md)
 - 权威规范：[`docs/design/interaction-design.md`](../../docs/design/interaction-design.md)
-- 表结构与 API 清单：[`docs/m1-spec.md`](./docs/m1-spec.md)
+- 表结构与 API 清单：[`docs/m1-spec.md`](./docs/m1-spec.md)（身份相关章节已过期，见文首提示）
 - 为什么新建服务而不改造 `fast-note-sync-service`：[`docs/adr-0001-new-service.md`](./docs/adr-0001-new-service.md)
+
+## 身份从哪来
+
+```
+浏览器 / 桌面端 ──Bearer <Sub2API access token>──► cchaven-control
+                                                      │
+                                       GET /api/v1/auth/me（带短 TTL 缓存）
+                                                      ▼
+                                            Sub2API（账号真源）
+```
+
+- **认人**：`internal/sub2api` 拿令牌换回 `{id, email, balance, status}`，
+  结果按令牌摘要缓存 `CCHAVEN_SUB2API_CACHE_TTL`（默认 1 分钟）。
+  上游不可用时返回 **503 `identity_unavailable`**——**绝不静默放行**，也不伪装成 401
+  （那会让上游抖一下就把全部在线用户踢回登录页）。
+- **映射**：`sub2api_identities` 是 `sub2api_user_id ↔ users.id` 的权威映射。
+  某个 Sub2API 用户首次出现时即开出影子账号（直接 `active`，邮箱已由上游验证），
+  同邮箱的存量账号按邮箱认领而不新建，历史数据一行不动。
+- **已下线**：`/api/v1/auth/register|login|verify-email|verification-code/resend|password/*|refresh`
+  与 `/api/v1/me/password|email-change*` 返回 **410 `auth_migrated`**，
+  `details.portal_url` 指向账号中心。保留路由是为了给存量客户端一个可解释的答复。
+- **桌面 OAuth**：本服务仍是 CC 桌面端的 token issuer，但 `POST /api/v1/oauth/authorize`
+  **只认 Sub2API 令牌**（`requireLumioUser`），拿本服务自己签的令牌来授权新设备会被拒。
+- **充值**：`POST /api/v1/billing/checkout` 改为 303 跳 `{Sub2API}/purchase`，不再建单。
+- **管理后台**：`/api/admin/v1` 的管理员账号与强制 TOTP **完全没有变**，仍在本地。
+- **存量用户迁移**：`cmd/migrate-identities`（一次性、幂等、默认 dry-run）。
+  **写生产数据 + 在外部系统建号，执行前必须取得负责人确认**，步骤见
+  [`docs/ops/02-deploy-production.md`](../../docs/ops/02-deploy-production.md) 第 10 节。
 
 ## 技术选型
 
@@ -22,26 +54,36 @@ curl localhost:8080/api/v1/health
 
 没有 Docker 时，把 `CCHAVEN_DATABASE_URL` 指向任意可用的 PostgreSQL 14+ 实例即可。
 
-### 部署前必须想清楚的两件事
+### 部署前必须想清楚的三件事
 
-**两个前端来源都要配。** 本系统有两套独立部署的前端：官网 `apps/web`（`cchaven.cn`，配 `CCHAVEN_PUBLIC_URL`）
-与管理后台 `apps/admin`（`admin.cchaven.cn`，配 `CCHAVEN_ADMIN_URL`）。交互设计第 7 章要求后台独立入口、
-与官网完全隔离，所以它不是官网的子路径，必须单独列为可信来源。漏配 `CCHAVEN_ADMIN_URL` 的后果是后台在生产环境
-彻底不可用：CORS 不下发 `Access-Control-Allow-Origin`，浏览器直接拦；即便绕过，禁用用户、退款、改运营配置这些
-写操作还会被 CSRF 同源校验判成 403。dev 环境放行 localhost 任意端口，因此本地完全看不出这个问题——
-生产漏配时服务启动会打一条 `slog.Warn`。可信来源的唯一出处是 `config.Config.TrustedOrigins`，
-新增前端时在那里加一处即可，CORS 与同源校验会同时生效。
+**身份真源要配对。** `CCHAVEN_SUB2API_BASE` 指向账号中心（默认 `https://api.lumio.games`），
+配错域名的后果是**全部**终端用户请求 401 或 503——管理后台不受影响，所以只测后台是发现不了的。
+上线前务必从控制面主机实打实地打一次 `GET {base}/api/v1/auth/me`。
+
+**三个前端来源都要配。** CC 产品站（`cc.lumiogame.com`，配 `CCHAVEN_PUBLIC_URL`）、
+管理后台 `apps/admin`（`admin.cchaven.cn`，配 `CCHAVEN_ADMIN_URL`）、
+统一门户 / 账号中心（`lumiogame.com`，配 `CCHAVEN_PORTAL_URL`）。交互设计第 7 章要求后台独立入口、
+与官网完全隔离，所以它不是官网的子路径，必须单独列为可信来源；门户则是跨源带令牌来读 CC 的权益与邀请数据。
+漏配 `CCHAVEN_ADMIN_URL` 的后果是后台在生产环境彻底不可用：CORS 不下发 `Access-Control-Allow-Origin`，
+浏览器直接拦；即便绕过，禁用用户、退款、改运营配置这些写操作还会被 CSRF 同源校验判成 403。
+漏配 `CCHAVEN_PORTAL_URL` 则是账号中心读不到 CC 数据。dev 环境放行 localhost 任意端口，
+因此本地完全看不出这类问题——生产漏配 admin URL 时服务启动会打一条 `slog.Warn`。
+可信来源的唯一出处是 `config.Config.TrustedOrigins`，新增前端时在那里加一处即可，
+CORS 与同源校验会同时生效。
 
 **`CCHAVEN_COOKIE_SAMESITE` 按同站与否来选。** 判断依据是控制面与前端的 eTLD+1 是否相同：
 
 | 部署形态 | 取值 | 说明 |
 | --- | --- | --- |
-| 控制面与前端同站（`cchaven.cn` / `admin.cchaven.cn` / `api.cchaven.cn`，eTLD+1 都是 `cchaven.cn`） | `lax`（默认） | 顶层导航照常带 cookie，跨站表单提交天然带不上，更安全，不要改 |
+| 控制面与前端同站（`cc.lumiogame.com` / `api.cc.lumiogame.com`，eTLD+1 都是 `lumiogame.com`） | `lax`（默认） | 顶层导航照常带 cookie，跨站表单提交天然带不上，更安全，不要改 |
 | 控制面在另一个站点（不同 eTLD+1，如前端托管在 `*.vercel.app`、控制面在自有域名） | `none` | 否则浏览器根本不发送 cookie，登录直接失效 |
 
 配成 `none` 时服务会强制 `Secure=true`（浏览器对 `SameSite=None` 的硬性要求），控制面因此必须走 HTTPS；
 在非 prod 环境配 `none` 会收到一条启动告警，提示 cookie 可能被浏览器丢弃。不提供 `strict`：
 它会让用户从邮件里点重设密码链接跳回来时也不带 cookie，破坏现有链路。
+
+> 身份收口之后，会话 cookie 只剩存量会话与管理后台在用：终端用户的新会话已无从建立
+> （官网登录端点返回 410），门户与桌面端都走 Bearer。这些配置保留是为了兼容，不是主路径。
 
 ### 创建首个管理员
 
@@ -80,13 +122,19 @@ make test               # 全部
 
 ### 关键链路端到端测试
 
-`test/referral_e2e_test.go` 覆盖 M1 的验收主线：邀请链接访问 → 注册（邀请码随 cookie 自动带入）→ 邮箱验证 →
-首次登录 APP → 发放 30 天试用 + 邀请者延长 7 天，并断言归因状态、账户中心汇总数字与双方通知邮件。
-同文件还覆盖「每账号一次试用」、同设备指纹重复领取被拒、奖励天数配 0 时的降级行为。
+`test/referral_e2e_test.go` 覆盖 M1 的验收主线：邀请链接访问 → 被邀请者带 Sub2API 令牌首次到访（开户，
+邀请码随 cookie 自动带入）→ 首次登录 APP → 发放 30 天试用 + 邀请者延长 7 天，并断言归因状态、
+账户中心汇总数字与双方通知邮件。同文件还覆盖「每账号一次试用」、同设备指纹重复领取被拒、
+奖励天数配 0 时的降级行为。
+
+`test/identity_test.go` 覆盖身份收口本身：首次到访开户、换令牌仍是同一账号、上游改邮箱后本地同步、
+同邮箱的存量账号被认领、令牌无效 401、上游停用 403、**上游不可用 503（fail-closed）**、
+本地封禁不被上游覆盖。集成测试用 `testsupport.FakeSub2API` 顶替真实账号中心。
 
 ```bash
 make test-integration
 go test ./test/ -run TestReferralClosureEndToEnd -v   # 只跑主线
+go test ./test/ -run TestIdentity -v                  # 只跑身份链路
 ```
 
 ## 目录结构
@@ -94,11 +142,13 @@ go test ./test/ -run TestReferralClosureEndToEnd -v   # 只跑主线
 ```
 cmd/control/           服务入口
 cmd/admin-bootstrap/   创建首个管理员
+cmd/migrate-identities/ 存量用户对齐到 Sub2API 的一次性脚本（默认 dry-run）
 migrations/            SQL 迁移脚本（随代码发布，启动时自动执行）
 internal/
   api/                 HTTP 传输层：路由、中间件、handler
-  service/             业务逻辑与跨表不变量
+  service/             业务逻辑与跨表不变量（identity.go 负责身份映射与开户）
   store/               数据访问，手写 SQL
+  sub2api/             账号中心客户端：令牌校验 + 短 TTL 缓存 + 降级策略
   domain/              领域类型与派生规则（不依赖 DB 与 HTTP）
   security/            Argon2id、随机令牌、JWT、AES-GCM、PKCE
   i18n/                界面文案字典（含 6.2 节固定文案）
@@ -106,7 +156,7 @@ internal/
   payments/            支付渠道适配器（M1 只接入 mock）
   mailer/              发件箱消费与邮件模板
   ratelimit/           进程内限频
-  testsupport/         集成测试夹具
+  testsupport/         集成测试夹具（含假的 Sub2API）
 test/                  集成与端到端测试
 ```
 
@@ -139,6 +189,14 @@ test/                  集成与端到端测试
 
 ## 尚未接入的部分
 
+- **订单与支付回调只服务存量数据**：新订单不再由本服务创建（充值跳 Sub2API），
+  `/billing/orders*`、`/billing/webhook/*` 与后台退款仍能处理迁移前的订单。
+  待 Sub2API 的订单 / 权益回传接口定稿后，要么改为消费上游账单、要么整体下线，
+  代码里有对应的 `TODO(billing)`。
+- **邀请归因依赖 `cch_ref` cookie 与控制面同站**：开户时读它做归因。门户在别的站点上
+  完成注册时，需要门户把邀请码带回 CC 侧（跨站 cookie 带不过来）——尚未接通。
 - 支付宝与微信支付：`payments.Provider` 接口已就绪，M1 只实现了 mock 渠道。
 - IP 归属地：`session_families.ip_region` 已建列，等接入 IP 库后填充。
 - zh-HK 文案：字典已分层，词条待补，缺失时回落 zh-CN。
+- `internal/service` 里的注册 / 登录 / 改口令 / 改邮箱实现仍在（历史与回溯用），
+  但已无路由可达；等确认无需回滚后再清理。

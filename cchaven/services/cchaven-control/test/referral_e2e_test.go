@@ -10,14 +10,16 @@ import (
 )
 
 // TestReferralClosureEndToEnd 覆盖 M1 的关键链路：
-// 邀请链接访问 → 被邀请者注册 → 邮箱验证 → 首次登录 APP → 试用发放 + 邀请者奖励。
+// 邀请链接访问 → 被邀请者首次带令牌到访（开户）→ 首次登录 APP → 试用发放 + 邀请者奖励。
 //
 // 这条链路横跨 identity、OAuth、订阅与邀请四个模块，是本里程碑的验收主线。
+// 注册已经搬到 Lumio 账号中心，归因因此改在「影子账号被创建」那一刻结算——
+// 那是本服务最后一次还能看到 cch_ref cookie 的机会。
 func TestReferralClosureEndToEnd(t *testing.T) {
 	env := testsupport.New(t)
 
 	// —— 第 0 步：邀请者注册并拿到自己的邀请链接 ——
-	inviterBrowser, inviterID := env.SignUp("alice@example.com", "Passw0rd!")
+	inviterBrowser, inviterID := env.SignUp("alice@example.com")
 	code := env.ReferralCodeOf(inviterID)
 
 	referrals := inviterBrowser.Get("/api/v1/me/referrals").ExpectStatus(http.StatusOK)
@@ -47,25 +49,18 @@ func TestReferralClosureEndToEnd(t *testing.T) {
 		t.Errorf("应记录 1 次邀请链接访问，got %d", visits)
 	}
 
-	// —— 第 2 步：注册（邀请码随 cookie 自动带入，用户无需手输）——
-	verifyCode := env.Register(inviteeBrowser, "bob@example.com", "Passw0rd!")
-	inviteeID := env.UserIDOf("bob@example.com")
+	// —— 第 2 步：被邀请者在账号中心注册完回到 CC，开户（邀请码随 cookie 自动带入）——
+	inviteeBrowser, inviteeID := env.Identify(inviteeBrowser, "bob@example.com")
 
 	assertAttribution(t, env, inviteeID, "registered", inviterID)
 	assertRegistrationSource(t, env, inviteeID, "invite")
 
-	// 注册完成但尚未登录 APP，此时不得发放试用。
+	// 开户完成但尚未登录 APP，此时不得发放试用。
 	if got := env.EntitlementOf(inviteeID)["status"]; got != "none" {
 		t.Errorf("闭环未完成前不应有订阅，got %v", got)
 	}
 
-	// —— 第 3 步：邮箱验证 ——
-	env.VerifyEmail(inviteeBrowser, "bob@example.com", verifyCode)
-	if got := env.EntitlementOf(inviteeID)["status"]; got != "none" {
-		t.Errorf("仅验证邮箱不应发放试用，got %v", got)
-	}
-
-	// —— 第 4 步：首次登录 APP，触发发放 ——
+	// —— 第 3 步：首次登录 APP，触发发放 ——
 	session := env.AuthorizeApp(inviteeBrowser, "device-bob-1")
 
 	if session.Activation["trial_granted"] != true {
@@ -130,7 +125,7 @@ func TestReferralClosureEndToEnd(t *testing.T) {
 func TestTrialGrantedOnlyOncePerAccount(t *testing.T) {
 	env := testsupport.New(t)
 
-	browser, userID := env.SignUp("carol@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("carol@example.com")
 
 	first := env.AuthorizeApp(browser, "device-carol-1")
 	if first.Activation["trial_granted"] != true {
@@ -164,12 +159,12 @@ func TestTrialGrantedOnlyOncePerAccount(t *testing.T) {
 func TestTrialDeniedForReusedDeviceFingerprint(t *testing.T) {
 	env := testsupport.New(t)
 
-	firstBrowser, _ := env.SignUp("dave@example.com", "Passw0rd!")
+	firstBrowser, _ := env.SignUp("dave@example.com")
 	if got := env.AuthorizeApp(firstBrowser, "shared-device").Activation["trial_granted"]; got != true {
 		t.Fatalf("首个账号应获得试用，got %v", got)
 	}
 
-	secondBrowser, secondID := env.SignUp("erin@example.com", "Passw0rd!")
+	secondBrowser, secondID := env.SignUp("erin@example.com")
 	activation := env.AuthorizeApp(secondBrowser, "shared-device").Activation
 
 	if activation["trial_granted"] == true {
@@ -188,15 +183,13 @@ func TestInviterRewardDisabledWhenConfiguredZero(t *testing.T) {
 	env := testsupport.New(t)
 	env.SetOpsConfig("invite.reward_days", "0")
 
-	inviterBrowser, inviterID := env.SignUp("frank@example.com", "Passw0rd!")
+	inviterBrowser, inviterID := env.SignUp("frank@example.com")
 	code := env.ReferralCodeOf(inviterID)
 
 	inviteeBrowser := env.NewClient()
 	inviteeBrowser.Get("/api/v1/invites/" + code).ExpectStatus(http.StatusOK)
 
-	verifyCode := env.Register(inviteeBrowser, "grace@example.com", "Passw0rd!")
-	env.VerifyEmail(inviteeBrowser, "grace@example.com", verifyCode)
-	inviteeID := env.UserIDOf("grace@example.com")
+	inviteeBrowser, inviteeID := env.Identify(inviteeBrowser, "grace@example.com")
 
 	activation := env.AuthorizeApp(inviteeBrowser, "device-grace").Activation
 
@@ -227,7 +220,7 @@ func TestInviterRewardDisabledWhenConfiguredZero(t *testing.T) {
 func TestSelfInviteIsRejected(t *testing.T) {
 	env := testsupport.New(t)
 
-	browser, userID := env.SignUp("henry@example.com", "Passw0rd!")
+	browser, userID := env.SignUp("henry@example.com")
 	code := env.ReferralCodeOf(userID)
 
 	// 同一个浏览器带着自己的邀请 cookie 再注册一个账号是可以的，

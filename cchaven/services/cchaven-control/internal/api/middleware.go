@@ -15,6 +15,9 @@ import (
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/service"
 )
 
+// sessionExpiredCode 是「本服务不认识这个令牌」的信号，requireUser 据它决定是否改问账号中心。
+const sessionExpiredCode = "session_expired"
+
 type contextKey string
 
 const (
@@ -22,7 +25,14 @@ const (
 	adminPrincipalKey contextKey = "admin_principal"
 )
 
-// requireUser 校验用户会话。APP 走 Authorization: Bearer，官网走 HttpOnly cookie。
+// requireUser 校验调用者身份，接受两类令牌：
+//
+//  1. 本服务签发的 access token —— CC 桌面端经 OAuth 拿到的，本服务仍是它的
+//     token issuer；存量官网 cookie 会话也走这条（新会话已无从建立）。
+//  2. Sub2API 令牌 —— 统一门户与账号中心带着它来读 CC 的权益 / 邀请数据。
+//
+// 顺序是先本地后上游：本地校验不打外部网络，桌面端的高频心跳不该每次都惊动
+// 账号中心。只有本地判定「这不是我签的」时才去 Sub2API 求证。
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, viaCookie := s.accessTokenFrom(r)
@@ -38,11 +48,57 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 
 		principal, err := s.svc.AuthenticateAccess(r.Context(), token)
 		if err != nil {
+			// 只有「这不是我签的（或已作废）」才转问账号中心。
+			// 账号被停用这类明确结论必须原样返回，不给第二次机会。
+			if viaCookie || apperr.From(err).Code != sessionExpiredCode {
+				httpx.Fail(w, r, err)
+				return
+			}
+			principal, err = s.authenticateLumio(r, token)
+			if err != nil {
+				httpx.Fail(w, r, err)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, principal)))
+	})
+}
+
+// requireLumioUser 只接受 Sub2API 令牌。
+//
+// 桌面授权用它：签发 CC 会话之前，必须先向账号中心确认「现在坐在浏览器前的是谁」，
+// 拿本地会话冒名顶替是不允许的——本服务已经不是身份提供方了。
+func (s *Server) requireLumioUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, viaCookie := s.accessTokenFrom(r)
+		if token == "" || viaCookie {
+			httpx.Fail(w, r, apperr.Unauthorized())
+			return
+		}
+
+		principal, err := s.authenticateLumio(r, token)
+		if err != nil {
 			httpx.Fail(w, r, err)
 			return
 		}
 
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, principal)))
+	})
+}
+
+// authenticateLumio 拿 Sub2API 令牌换本地身份。
+//
+// 邀请归因随请求一起带上：影子账号是在这一刻创建的，这也是本服务最后一次
+// 还能看到 cch_ref cookie 的机会（注册已经不在这里发生了）。
+func (s *Server) authenticateLumio(r *http.Request, token string) (service.Principal, error) {
+	visitorID := s.referralVisitorFrom(r)
+	return s.svc.AuthenticateSub2API(r.Context(), service.IdentityInput{
+		Token:        token,
+		ReferralCode: s.referralCodeFrom(r),
+		VisitorID:    &visitorID,
+		IP:           httpx.ClientIP(r),
+		UserAgent:    httpx.UserAgent(r),
 	})
 }
 
