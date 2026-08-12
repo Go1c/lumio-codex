@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { initialLumioState, reduceLumioState } from "./state.ts";
+import {
+  PROVISIONING_STEP_IDS,
+  PROVISIONING_STEP_TITLES,
+} from "./state.ts";
+import type { LumioServiceSettings, LumioState } from "./state.ts";
 
 test("bootstrap without account enters signed-out", () => {
   const next = reduceLumioState(initialLumioState(), {
@@ -71,5 +76,280 @@ test("repair-required preserves no privileged actions", () => {
     canLaunch: false,
     canRefresh: false,
     canPay: false,
+    canRegister: false,
+    canSignIn: false,
   });
+});
+
+const SERVICE: LumioServiceSettings = {
+  registrationEnabled: true,
+  emailVerifyEnabled: true,
+  emailSuffixWhitelist: ["@example.com"],
+  passwordResetEnabled: true,
+  agreementEnabled: true,
+  agreementRevision: "v2026-03",
+  agreementDocuments: [{ id: "terms", title: "服务条款", contentMd: "# 条款" }],
+  defaultModel: "gpt-example",
+  siteBaseUrl: "https://api.lumio.games",
+};
+
+function signedOut(): LumioState {
+  return reduceLumioState(initialLumioState(), {
+    type: "bootstrapped",
+    payload: {
+      version: "1.0.0",
+      platform: "macos",
+      arch: "aarch64",
+      codexApp: null,
+      account: null,
+      telemetryEnabled: false,
+      autoUpdateEnabled: true,
+    },
+  });
+}
+
+test("provisioning step order matches the interaction spec", () => {
+  assert.deepEqual(PROVISIONING_STEP_IDS, [
+    "verify-account",
+    "prepare-connection",
+    "sync-models",
+    "write-config",
+  ]);
+  assert.deepEqual(
+    PROVISIONING_STEP_IDS.map((id) => PROVISIONING_STEP_TITLES[id]),
+    ["验证账户", "准备连接", "同步模型目录", "写入本机配置"],
+  );
+});
+
+test("service settings load enables both entry points", () => {
+  const next = reduceLumioState(signedOut(), { type: "service-settings-loaded", settings: SERVICE });
+
+  assert.equal(next.serviceAvailable, true);
+  assert.equal(next.service?.agreementRevision, "v2026-03");
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actions.canRegister, true);
+  assert.equal(next.errorCode, null);
+});
+
+test("registration disabled by the server disables only the register entry", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "service-settings-loaded",
+    settings: { ...SERVICE, registrationEnabled: false },
+  });
+
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actions.canRegister, false);
+  assert.equal(next.actionNotes.register, "注册暂未开放");
+});
+
+test("service unavailable disables both entry points and explains why", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "service-unavailable",
+    errorCode: "SERVICE_UNAVAILABLE",
+  });
+
+  assert.equal(next.serviceAvailable, false);
+  assert.equal(next.actions.canSignIn, false);
+  assert.equal(next.actions.canRegister, false);
+  assert.equal(next.errorCode, "SERVICE_UNAVAILABLE");
+  assert.equal(next.actionNotes.signIn, "服务暂时不可用，稍后自动重试");
+});
+
+test("two-factor requirement keeps the user inside the login card", () => {
+  const login = reduceLumioState(signedOut(), { type: "auth-step-changed", step: "login" });
+  const next = reduceLumioState(login, { type: "two-factor-required" });
+
+  assert.equal(next.phase, "authenticating");
+  assert.equal(next.authStep, "two-factor");
+});
+
+test("authentication resets provisioning to a clean pending run", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 0, planLabel: null },
+  });
+
+  assert.equal(next.phase, "provisioning");
+  assert.equal(next.authStep, "idle");
+  assert.equal(next.provisioning.failedStep, null);
+  assert.equal(next.provisioning.errorCode, null);
+  assert.equal(next.provisioning.attempts, 0);
+  for (const id of PROVISIONING_STEP_IDS) {
+    assert.equal(next.provisioning.steps[id], "pending");
+  }
+});
+
+test("provisioning steps advance independently and record failures", () => {
+  const authed = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 0, planLabel: null },
+  });
+  const running = reduceLumioState(authed, {
+    type: "provisioning-step-started",
+    step: "verify-account",
+  });
+  assert.equal(running.provisioning.steps["verify-account"], "running");
+
+  const done = reduceLumioState(running, {
+    type: "provisioning-step-completed",
+    step: "verify-account",
+  });
+  assert.equal(done.provisioning.steps["verify-account"], "done");
+
+  const failed = reduceLumioState(done, {
+    type: "provisioning-step-failed",
+    step: "prepare-connection",
+    errorCode: "KEY_PROVISION_FAILED",
+  });
+  assert.equal(failed.phase, "provisioning");
+  assert.equal(failed.provisioning.steps["prepare-connection"], "failed");
+  assert.equal(failed.provisioning.failedStep, "prepare-connection");
+  assert.equal(failed.provisioning.errorCode, "KEY_PROVISION_FAILED");
+  assert.equal(failed.provisioning.attempts, 1);
+  assert.equal(failed.provisioning.steps["sync-models"], "pending");
+});
+
+test("a second failure on the same run suggests the repair page", () => {
+  let state = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 0, planLabel: null },
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    state = reduceLumioState(state, {
+      type: "provisioning-step-failed",
+      step: "prepare-connection",
+      errorCode: "KEY_PROVISION_FAILED",
+    });
+  }
+
+  assert.equal(state.provisioning.attempts, 2);
+  assert.equal(state.provisioning.suggestRepair, true);
+});
+
+test("online readiness enables launch and refresh but never payment", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 12.5, planLabel: "Trial" },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: { path: "/Applications/Codex.app", version: "1.0.0", source: "automatic" },
+  });
+
+  assert.equal(next.phase, "ready-online");
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actions.canRefresh, true);
+  assert.equal(next.actions.canPay, false);
+  assert.equal(next.actionNotes.pay, "充值功能尚未开放");
+  assert.equal(next.defaultModel, "gpt-example");
+});
+
+test("online readiness without a detected app disables launch and explains why", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 1, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+
+  assert.equal(next.actions.canLaunch, false);
+  assert.equal(next.actionNotes.launch, "未检测到官方应用，去设置中选择");
+});
+
+test("offline readiness keeps launch but blocks refresh and payment", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "offline-ready",
+    cachedAt: "2026-08-12T00:00:00Z",
+  });
+
+  assert.equal(next.phase, "ready-offline");
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actions.canRefresh, false);
+  assert.equal(next.actions.canPay, false);
+  assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
+});
+
+test("reconnecting from offline restores the online surface", () => {
+  const offline = reduceLumioState(signedOut(), {
+    type: "offline-ready",
+    cachedAt: "2026-08-12T00:00:00Z",
+  });
+  const next = reduceLumioState(offline, {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T01:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: { path: "/Applications/Codex.app", version: null, source: "automatic" },
+  });
+
+  assert.equal(next.phase, "ready-online");
+  assert.equal(next.cachedAt, "2026-08-12T01:00:00Z");
+  assert.equal(next.actions.canRefresh, true);
+});
+
+test("signing out clears the account and returns to the signed-out surface", () => {
+  const online = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+  const next = reduceLumioState(online, { type: "signed-out" });
+
+  assert.equal(next.phase, "signed-out");
+  assert.equal(next.account, null);
+  assert.equal(next.authStep, "idle");
+  assert.deepEqual(next.actions, {
+    canLaunch: false,
+    canRefresh: false,
+    canPay: false,
+    canRegister: false,
+    canSignIn: false,
+  });
+});
+
+test("session expiry from any phase lands on signed-out with the code preserved", () => {
+  const online = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+  const next = reduceLumioState(online, {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.phase, "signed-out");
+  assert.equal(next.account, null);
+  assert.equal(next.errorCode, "AUTH_SESSION_EXPIRED");
+});
+
+test("account refresh updates the balance without changing phase", () => {
+  const online = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+  const next = reduceLumioState(online, {
+    type: "account-refreshed",
+    account: { email: "user@example.com", balance: 9.75, planLabel: "Pro" },
+    cachedAt: "2026-08-12T02:00:00Z",
+  });
+
+  assert.equal(next.phase, "ready-online");
+  assert.equal(next.account?.balance, 9.75);
+  assert.equal(next.cachedAt, "2026-08-12T02:00:00Z");
+});
+
+test("reducer never mutates the state it was given", () => {
+  const before = signedOut();
+  const snapshot = JSON.stringify(before);
+  reduceLumioState(before, { type: "service-settings-loaded", settings: SERVICE });
+
+  assert.equal(JSON.stringify(before), snapshot);
 });

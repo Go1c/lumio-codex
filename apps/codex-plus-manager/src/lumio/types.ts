@@ -28,3 +28,23 @@ export interface LumioBootstrap {
   telemetryEnabled: boolean;
   autoUpdateEnabled: boolean;
 }
+
+export interface LumioAgreementDocument {
+  id: string;
+  title: string;
+  contentMd: string;
+}
+
+export interface LumioServiceSettings {
+  registrationEnabled: boolean;
+  emailVerifyEnabled: boolean;
+  emailSuffixWhitelist: string[];
+  passwordResetEnabled: boolean;
+  agreementEnabled: boolean;
+  agreementRevision: string;
+  agreementDocuments: LumioAgreementDocument[];
+  defaultModel: string | null;
+  siteBaseUrl: string;
+}
+
+export type LumioCredentialStatus = "present" | "missing" | "invalid";
