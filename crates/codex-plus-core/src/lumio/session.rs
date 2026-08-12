@@ -52,6 +52,10 @@ impl AuthSession {
     }
 
     /// 登录 / 注册 / 2FA 成功后落地令牌对。已有的桌面 Key 保留：换令牌不该把它冲掉。
+    ///
+    /// 落盘失败时**不会**把新令牌留在内存里：Sub2API 的 refresh 是轮转式的，服务端一旦
+    /// 接受新 refresh，旧的立刻作废——若进程里假装续期成功、磁盘上却仍是旧 token，重启后
+    /// 每次续期都会注定失败。失败时清空两边，逼用户重新登录。
     pub fn adopt_tokens(
         &self,
         access_token: String,
@@ -65,7 +69,12 @@ impl AuthSession {
             email,
         };
         *lock(&self.state) = Some(credentials);
-        self.persist()
+        if let Err(error) = self.persist() {
+            *lock(&self.state) = None;
+            let _ = self.store.clear();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn set_api_key(&self, api_key: String) -> Result<(), String> {
@@ -346,6 +355,33 @@ mod tests {
         assert_eq!(error, SESSION_EXPIRED);
         assert_eq!(calls_to(&server, "/auth/me").await, 2);
         assert_eq!(calls_to(&server, "/auth/refresh").await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_persist_failure_after_token_rotation_does_not_pretend_renewal_succeeded() {
+        let server = MockServer::start().await;
+        mock_me(&server, STALE, expired_body(), 1).await;
+        mock_refresh(&server, renewed_body(), 1).await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let session = signed_in(dir.path());
+        // 把凭据路径换成目录，迫使后续 save 失败——模拟磁盘满 / 权限被夺。
+        let path = CredentialStore::new(dir.path()).path();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        let api = &client;
+        let error = session
+            .with_access_token(api, move |token| async move { api.me(&token).await })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, "KEY_STORAGE_UNAVAILABLE");
+        // 不能用轮转后的新 access token 去重试：那会假装续期成功。
+        assert_eq!(calls_to(&server, "/auth/me").await, 1);
+        assert!(session.access_token().is_err());
+        assert_eq!(session.credential_status(), CredentialStatus::Invalid);
     }
 
     #[tokio::test]
