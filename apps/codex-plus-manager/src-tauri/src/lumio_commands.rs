@@ -9,8 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use codex_plus_core::lumio::account::ensure_desktop_key;
 use codex_plus_core::lumio::api::{AccountProfile, AuthOutcome, LumioApiClient, RegisterRequest};
 use codex_plus_core::lumio::config_takeover::{self, TakeoverHealth, TakeoverRequest};
-use codex_plus_core::lumio::credentials::{CredentialStatus, CredentialStore, StoredCredentials};
+use codex_plus_core::lumio::credentials::{CredentialStatus, CredentialStore};
 use codex_plus_core::lumio::errors::redact;
+use codex_plus_core::lumio::session::AuthSession;
 use codex_plus_core::lumio::{launch, product};
 use serde::Serialize;
 
@@ -146,63 +147,33 @@ pub struct LumioExportLogsPayload {
 #[serde(rename_all = "camelCase")]
 pub struct LumioEmptyPayload {}
 
-/// 进程内会话。凭据只在这里与 [`CredentialStore`] 之间流转，不进 payload、不进日志。
+/// 进程内会话。令牌与桌面 Key 都由 [`AuthSession`] 持有，不进 payload、不进日志。
 pub struct LumioSession {
     client: LumioApiClient,
-    store: CredentialStore,
+    auth: AuthSession,
     pending_two_factor: Mutex<Option<String>>,
-    tokens: Mutex<Option<SessionTokens>>,
     account: Mutex<Option<AccountProfile>>,
-    desktop_key: Mutex<Option<String>>,
     model: Mutex<Option<String>>,
     accepted_agreement: Mutex<Option<String>>,
     codex_app: Mutex<Option<PathBuf>>,
     telemetry_enabled: AtomicBool,
 }
 
-struct SessionTokens {
-    access_token: String,
-    refresh_token: String,
-    email: String,
-}
-
 impl LumioSession {
     pub fn new() -> anyhow::Result<Self> {
         let client = LumioApiClient::new(product::API_BASE_URL)?;
-        let store = CredentialStore::default_store()?;
-        let restored = store.load();
-        let desktop_key = restored.as_ref().and_then(|stored| stored.api_key.clone());
-        let tokens = restored.map(|stored| SessionTokens {
-            access_token: stored.access_token,
-            refresh_token: stored.refresh_token,
-            email: stored.email,
-        });
+        let auth = AuthSession::new(CredentialStore::default_store()?);
 
         Ok(Self {
             client,
-            store,
+            auth,
             pending_two_factor: Mutex::new(None),
-            tokens: Mutex::new(tokens),
             account: Mutex::new(None),
-            desktop_key: Mutex::new(desktop_key),
             model: Mutex::new(None),
             accepted_agreement: Mutex::new(None),
             codex_app: Mutex::new(None),
             telemetry_enabled: AtomicBool::new(false),
         })
-    }
-
-    fn access_token(&self) -> Result<String, String> {
-        lock(&self.tokens)
-            .as_ref()
-            .map(|tokens| tokens.access_token.clone())
-            .ok_or_else(|| SESSION_EXPIRED.to_string())
-    }
-
-    fn signed_in_email(&self) -> Option<String> {
-        lock(&self.tokens)
-            .as_ref()
-            .map(|tokens| tokens.email.clone())
     }
 
     fn adopt(&self, outcome: AuthOutcome) -> Result<LumioAuthPayload, String> {
@@ -220,13 +191,12 @@ impl LumioSession {
             }
             AuthOutcome::Tokens { tokens, profile } => {
                 *lock(&self.pending_two_factor) = None;
-                *lock(&self.tokens) = Some(SessionTokens {
-                    access_token: tokens.access_token,
-                    refresh_token: tokens.refresh_token,
-                    email: profile.email.clone(),
-                });
+                self.auth.adopt_tokens(
+                    tokens.access_token,
+                    tokens.refresh_token,
+                    profile.email.clone(),
+                )?;
                 *lock(&self.account) = Some(profile.clone());
-                self.persist()?;
                 Ok(LumioAuthPayload {
                     requires_two_factor: false,
                     masked_email: None,
@@ -236,27 +206,9 @@ impl LumioSession {
         }
     }
 
-    fn persist(&self) -> Result<(), String> {
-        let credentials = {
-            let tokens = lock(&self.tokens);
-            let Some(tokens) = tokens.as_ref() else {
-                return Ok(());
-            };
-            StoredCredentials {
-                access_token: tokens.access_token.clone(),
-                refresh_token: tokens.refresh_token.clone(),
-                api_key: lock(&self.desktop_key).clone(),
-                email: tokens.email.clone(),
-            }
-        };
-        self.store.save(&credentials)
-    }
-
     fn forget(&self) {
         *lock(&self.pending_two_factor) = None;
-        *lock(&self.tokens) = None;
         *lock(&self.account) = None;
-        *lock(&self.desktop_key) = None;
         *lock(&self.model) = None;
     }
 }
@@ -307,7 +259,7 @@ pub fn lumio_bootstrap(
         .as_ref()
         .map(account_payload)
         .or_else(|| {
-            session.signed_in_email().map(|email| LumioAccountPayload {
+            session.auth.email().map(|email| LumioAccountPayload {
                 email,
                 balance: 0.0,
                 plan_label: None,
@@ -322,7 +274,7 @@ pub fn lumio_bootstrap(
         account,
         telemetry_enabled: session.telemetry_enabled.load(Ordering::SeqCst),
         auto_update_enabled: true,
-        credential_status: session.store.status(),
+        credential_status: session.auth.credential_status(),
     }))
 }
 
@@ -424,15 +376,12 @@ pub async fn lumio_login_two_factor(
 pub async fn lumio_logout(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioEmptyPayload>, ()> {
-    let refresh_token = lock(&session.tokens)
-        .as_ref()
-        .map(|tokens| tokens.refresh_token.clone());
-    if let Some(refresh_token) = refresh_token {
+    if let Some(refresh_token) = session.auth.refresh_token() {
         // 服务端撤销失败不该把用户困在已登录状态：本地凭据照样清掉。
         let _ = session.client.logout(&refresh_token).await;
     }
     session.forget();
-    let outcome = session.store.clear().map(|()| LumioEmptyPayload {});
+    let outcome = session.auth.clear().map(|()| LumioEmptyPayload {});
     result(outcome)
 }
 
@@ -440,14 +389,16 @@ pub async fn lumio_logout(
 pub async fn lumio_refresh_account(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioAccountPayload>, ()> {
-    let outcome = match session.access_token() {
-        Ok(token) => session.client.me(&token).await.map(|profile| {
+    let client = &session.client;
+    let outcome = session
+        .auth
+        .with_access_token(client, move |token| async move { client.me(&token).await })
+        .await
+        .map(|profile| {
             let payload = account_payload(&profile);
             *lock(&session.account) = Some(profile);
             payload
-        }),
-        Err(code) => Err(code),
-    };
+        });
     result(outcome)
 }
 
@@ -463,24 +414,31 @@ pub async fn lumio_provision_step(
 }
 
 async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), String> {
+    let client = &session.client;
     match step {
         "verify-account" => {
-            let token = session.access_token()?;
-            let profile = session.client.me(&token).await?;
+            let profile = session
+                .auth
+                .with_access_token(client, move |token| async move { client.me(&token).await })
+                .await?;
             *lock(&session.account) = Some(profile);
             Ok(())
         }
         "prepare-connection" => {
-            let token = session.access_token()?;
-            let key = ensure_desktop_key(&session.client, &token).await?;
-            *lock(&session.desktop_key) = Some(key);
-            session.persist()
+            let key = session
+                .auth
+                .with_access_token(client, move |token| async move {
+                    ensure_desktop_key(client, &token).await
+                })
+                .await?;
+            session.auth.set_api_key(key)
         }
         "sync-models" => {
-            let key = lock(&session.desktop_key)
-                .clone()
+            let key = session
+                .auth
+                .api_key()
                 .ok_or_else(|| KEY_PROVISION_FAILED.to_string())?;
-            let models = session.client.models(&key).await?;
+            let models = client.models(&key).await?;
             let preferred = lock(&session.model).clone();
             let selected = preferred
                 .filter(|model| models.iter().any(|candidate| candidate == model))
@@ -490,8 +448,9 @@ async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), St
             Ok(())
         }
         "write-config" => {
-            let api_key = lock(&session.desktop_key)
-                .clone()
+            let api_key = session
+                .auth
+                .api_key()
                 .ok_or_else(|| KEY_PROVISION_FAILED.to_string())?;
             let model = lock(&session.model)
                 .clone()
@@ -636,7 +595,7 @@ fn export_logs(session: &LumioSession) -> Result<String, String> {
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
-        credential_status_label(session.store.status()),
+        credential_status_label(session.auth.credential_status()),
         takeover,
         session.telemetry_enabled.load(Ordering::SeqCst),
     ));
