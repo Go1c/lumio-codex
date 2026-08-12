@@ -8,7 +8,7 @@ import type { LumioCodexApp } from "../types.ts";
 const PROMISES = [
   { title: "不修改官方应用", detail: "官方 Codex 保持原样，本工具不替代、不注入。" },
   { title: "配置可一键恢复", detail: "写入前先备份，随时恢复到接管前的状态。" },
-  { title: "凭据由系统保护", detail: "保存在钥匙串 / 凭据管理器，界面与日志不含明文。" },
+  { title: "凭据由系统保护", detail: "只保存在这台电脑上、仅你本人可读，界面与日志不含明文。" },
 ];
 
 interface SignedOutViewProps {

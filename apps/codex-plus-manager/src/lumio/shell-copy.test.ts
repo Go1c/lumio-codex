@@ -177,6 +177,19 @@ test("the signed-out surface states the positioning promise verbatim", async () 
   assert.match(signedOut, /凭据由系统保护/);
 });
 
+test("the credential promise describes the storage this release actually ships", async () => {
+  const signedOut = await readFile(new URL("./views/SignedOutView.tsx", import.meta.url), "utf8");
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  // 本期凭据落本机受限权限文件（ADR-0001），承诺卡不得再声称钥匙串 / 凭据管理器。
+  for (const source of [signedOut, home]) {
+    assert.doesNotMatch(source, /钥匙串/);
+    assert.doesNotMatch(source, /凭据管理器/);
+  }
+  assert.match(signedOut, /只保存在这台电脑上/);
+  assert.match(signedOut, /界面与日志不含明文/);
+});
+
 test("the register view carries the spec copy for every state", async () => {
   const view = await readFile(new URL("./views/RegisterView.tsx", import.meta.url), "utf8");
 
