@@ -383,8 +383,46 @@ test("signing out clears the account and returns to the signed-out surface", () 
     canRegister: false,
     canSignIn: false,
   });
+  assert.equal(next.serviceAvailable, false);
   assert.equal(next.actionNotes.signIn, "服务暂时不可用，稍后自动重试");
   assert.equal(next.actionNotes.register, "服务暂时不可用，稍后自动重试");
+});
+
+test("signing out without ever loading settings reports the service as unavailable", () => {
+  const online = reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+  const next = reduceLumioState(online, { type: "signed-out" });
+
+  assert.equal(next.service, null);
+  assert.equal(next.serviceAvailable, false);
+  assert.equal(next.actionNotes.signIn, "服务暂时不可用，稍后自动重试");
+  assert.equal(next.actionNotes.register, "服务暂时不可用，稍后自动重试");
+});
+
+test("signing out after the settings loaded leaves both entry points usable", () => {
+  const withService = reduceLumioState(signedOut(), {
+    type: "service-settings-loaded",
+    settings: { ...SERVICE, registrationEnabled: true },
+  });
+  const online = reduceLumioState(withService, {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 3, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+  const next = reduceLumioState(online, { type: "signed-out" });
+
+  assert.equal(next.serviceAvailable, true);
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actions.canRegister, true);
+  assert.equal(next.actionNotes.signIn, null);
+  assert.equal(next.actionNotes.register, null);
 });
 
 test("signing out drops the account cached on the bootstrap payload", () => {

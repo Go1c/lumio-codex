@@ -117,19 +117,25 @@ function noNotes(): LumioActionNotes {
 /**
  * Entry-point affordances for the signed-out surface. Every disabled button must
  * carry a note explaining why, otherwise the user is stuck with no way forward.
+ *
+ * Missing settings force `serviceAvailable` to false: the surface retries the
+ * public settings while that flag is false, so claiming availability here would
+ * suppress the retry and leave the sign-in button permanently dark.
  */
 function signedOutEntry(
   service: LumioServiceSettings | null,
   serviceAvailable: boolean,
-): Pick<LumioState, "actions" | "actionNotes"> {
+): Pick<LumioState, "actions" | "actionNotes" | "serviceAvailable"> {
   if (service === null || !serviceAvailable) {
     return {
+      serviceAvailable: false,
       actions: disabledActions(),
       actionNotes: { ...noNotes(), signIn: SERVICE_DOWN_NOTE, register: SERVICE_DOWN_NOTE },
     };
   }
 
   return {
+    serviceAvailable: true,
     actions: { ...disabledActions(), canSignIn: true, canRegister: service.registrationEnabled },
     actionNotes: {
       ...noNotes(),
@@ -353,7 +359,6 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         phase: "signed-out",
         bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
-        serviceAvailable: state.serviceAvailable,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
@@ -367,7 +372,6 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         phase: "signed-out",
         bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
-        serviceAvailable: state.serviceAvailable,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
