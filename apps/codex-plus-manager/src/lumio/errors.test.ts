@@ -26,6 +26,17 @@ test("interaction spec baseline codes map to their exact copy", () => {
   assert.equal(LUMIO_ERROR_COPY.UPDATE_VERIFY_FAILED, "更新包校验未通过，已放弃安装");
 });
 
+test("registration blockers the server can report all have their own copy", () => {
+  assert.equal(LUMIO_ERROR_COPY.AUTH_CODE_REQUIRED, "请先获取邮箱验证码");
+  assert.equal(LUMIO_ERROR_COPY.AUTH_EMAIL_ALREADY_REGISTERED, "该邮箱已注册，请直接登录");
+  assert.equal(LUMIO_ERROR_COPY.AUTH_EMAIL_INVALID, "请填写有效的邮箱地址");
+  assert.equal(LUMIO_ERROR_COPY.AUTH_INVITATION_CODE_REQUIRED, "注册需要邀请码，请填写后重试");
+  assert.equal(LUMIO_ERROR_COPY.AUTH_INVITATION_CODE_INVALID, "邀请码无效或已被使用");
+  assert.equal(LUMIO_ERROR_COPY.AUTH_2FA_UNAVAILABLE, "两步验证当前不可用，请联系支持");
+  assert.equal(LUMIO_ERROR_COPY.SERVICE_RATE_LIMITED, "请求过于频繁，请稍后再试");
+  assert.equal(LUMIO_ERROR_COPY.CODEX_CONFIG_WRITE_FAILED, "写入本机配置失败，已保留原始内容");
+});
+
 test("codes added beyond the baseline stay inside the six approved domains", () => {
   const domains = ["AUTH_", "KEY_", "SERVICE_", "CODEX_", "PAYMENT_HANDOFF_", "UPDATE_"];
   for (const code of Object.keys(LUMIO_ERROR_COPY)) {

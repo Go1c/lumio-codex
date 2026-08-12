@@ -25,14 +25,26 @@ pub fn normalize_reason(http_status: u16, reason: Option<&str>) -> String {
         Some("USER_NOT_ACTIVE") => "AUTH_ACCOUNT_DISABLED",
         Some("INVALID_VERIFY_CODE" | "VERIFY_CODE_MAX_ATTEMPTS") => "AUTH_CODE_INVALID",
         Some("VERIFY_CODE_TOO_FREQUENT") => "AUTH_CODE_RATE_LIMITED",
-        Some("EMAIL_VERIFY_REQUIRED") => "AUTH_CODE_REQUIRED",
+        Some("EMAIL_VERIFY_REQUIRED" | "VERIFY_CODE_REQUIRED") => "AUTH_CODE_REQUIRED",
         Some("REGISTRATION_DISABLED") => "AUTH_REGISTRATION_CLOSED",
         Some("EMAIL_SUFFIX_NOT_ALLOWED" | "EMAIL_RESERVED") => "AUTH_EMAIL_DOMAIN_NOT_ALLOWED",
         Some("EMAIL_EXISTS") => "AUTH_EMAIL_ALREADY_REGISTERED",
-        Some("TOTP_INVALID_CODE" | "TOTP_TOO_MANY_ATTEMPTS") => "AUTH_2FA_INVALID",
-        Some("TOTP_NOT_SETUP" | "TOTP_NOT_ENABLED" | "TOTP_SETUP_EXPIRED") => {
-            "AUTH_2FA_UNAVAILABLE"
+        Some("INVALID_EMAIL") => "AUTH_EMAIL_INVALID",
+        // 站点要求邀请码但用户没填 —— 可操作，绝不能伪装成服务故障让用户空转重试。
+        Some("INVITATION_CODE_REQUIRED") => "AUTH_INVITATION_CODE_REQUIRED",
+        // 填了但无效 / 已被使用；`DISABLED` 是邀请码功能整体关闭，用户填的码同样不会被接受，
+        // 归到「无效」而非「需要填」，否则会催用户去填一个根本用不上的码。
+        Some("INVITATION_CODE_INVALID" | "INVITATION_CODE_DISABLED") => {
+            "AUTH_INVITATION_CODE_INVALID"
         }
+        Some("TOTP_INVALID_CODE" | "TOTP_TOO_MANY_ATTEMPTS") => "AUTH_2FA_INVALID",
+        Some(
+            "TOTP_NOT_SETUP"
+            | "TOTP_NOT_ENABLED"
+            | "TOTP_SETUP_EXPIRED"
+            | "TOTP_VERIFY_ERROR"
+            | "EMAIL_VERIFY_NOT_ENABLED",
+        ) => "AUTH_2FA_UNAVAILABLE",
         Some(
             "INVALID_TOKEN"
             | "TOKEN_EXPIRED"
@@ -162,6 +174,10 @@ mod tests {
             normalize_reason(400, Some("EMAIL_VERIFY_REQUIRED")),
             "AUTH_CODE_REQUIRED"
         );
+        assert_eq!(
+            normalize_reason(400, Some("VERIFY_CODE_REQUIRED")),
+            "AUTH_CODE_REQUIRED"
+        );
     }
 
     #[test]
@@ -185,6 +201,31 @@ mod tests {
     }
 
     #[test]
+    fn invitation_code_reasons_stay_actionable_instead_of_reading_as_an_outage() {
+        assert_eq!(
+            normalize_reason(400, Some("INVITATION_CODE_REQUIRED")),
+            "AUTH_INVITATION_CODE_REQUIRED"
+        );
+        assert_eq!(
+            normalize_reason(400, Some("INVITATION_CODE_INVALID")),
+            "AUTH_INVITATION_CODE_INVALID"
+        );
+        // 服务端把这个 reason 放在 200 响应体里，归一化不能依赖状态码。
+        assert_eq!(
+            normalize_reason(200, Some("INVITATION_CODE_DISABLED")),
+            "AUTH_INVITATION_CODE_INVALID"
+        );
+    }
+
+    #[test]
+    fn a_malformed_email_is_not_reported_as_an_unsupported_domain() {
+        assert_eq!(
+            normalize_reason(400, Some("INVALID_EMAIL")),
+            "AUTH_EMAIL_INVALID"
+        );
+    }
+
+    #[test]
     fn two_factor_reasons_map_to_their_ux_codes() {
         assert_eq!(
             normalize_reason(400, Some("TOTP_INVALID_CODE")),
@@ -200,6 +241,14 @@ mod tests {
         );
         assert_eq!(
             normalize_reason(400, Some("TOTP_NOT_ENABLED")),
+            "AUTH_2FA_UNAVAILABLE"
+        );
+        assert_eq!(
+            normalize_reason(500, Some("TOTP_VERIFY_ERROR")),
+            "AUTH_2FA_UNAVAILABLE"
+        );
+        assert_eq!(
+            normalize_reason(400, Some("EMAIL_VERIFY_NOT_ENABLED")),
             "AUTH_2FA_UNAVAILABLE"
         );
     }
