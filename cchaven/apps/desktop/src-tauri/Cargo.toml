@@ -23,7 +23,6 @@ base64 = "0.22.1"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-shell = "2"
-base64 = "0.22"
 directories.workspace = true
 diffy.workspace = true
 fns-fs = { path = "../../../crates/fns-fs" }
@@ -50,10 +49,8 @@ zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
-
-[dev-dependencies]
-futures-util.workspace = true
-tokio-tungstenite.workspace = true
