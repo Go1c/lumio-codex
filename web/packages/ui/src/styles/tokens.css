@@ -1,0 +1,24 @@
+/*
+ * 设计 token —— 抽取自 cchaven/apps/web/src/styles.css，是三站统一视觉的唯一基准。
+ * 只放变量与全局排版基线；具体元素样式在 base.css / components.css。
+ */
+
+:root {
+  --blue: #2563eb;
+  --blue-dark: #1d4ed8;
+  --green: #16a34a;
+  --orange: #ea580c;
+  --red: #dc2626;
+  --ink: #16181d;
+  --gray: #6b7280;
+  --line: #e5e7eb;
+  --bg: #f7f8fa;
+  --term: #16181d;
+  --radius: 8px;
+  --radius-lg: 14px;
+
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  color: var(--ink);
+}

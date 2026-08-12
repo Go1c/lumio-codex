@@ -1,0 +1,22 @@
+{
+  "name": "@lumio/portal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "lumiogame.com 总门户：品牌首页与唯一的账号中心",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc -b",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@lumio/auth": "*",
+    "@lumio/ui": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1"
+  }
+}
