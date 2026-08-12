@@ -5,6 +5,7 @@ import { lumioErrorLabel } from "../errors.ts";
 import { LumioCommandError, runProvisioningStep } from "../invoke.ts";
 import { PROVISIONING_STEP_IDS, PROVISIONING_STEP_TITLES } from "../state.ts";
 import type { LumioProvisioning, ProvisioningStepId } from "../state.ts";
+import type { LumioAccountSummary } from "../types.ts";
 
 const SLOW_STEP_MS = 10_000;
 const SETTLE_MS = 600;
@@ -26,6 +27,7 @@ interface ProvisioningViewProps {
   onStepStarted: (step: ProvisioningStepId) => void;
   onStepCompleted: (step: ProvisioningStepId) => void;
   onStepFailed: (step: ProvisioningStepId, errorCode: string) => void;
+  onAccountResolved: (account: LumioAccountSummary) => void;
   onCompleted: () => void;
   onDeferred: () => void;
 }
@@ -36,6 +38,7 @@ export function ProvisioningView({
   onStepStarted,
   onStepCompleted,
   onStepFailed,
+  onAccountResolved,
   onCompleted,
   onDeferred,
 }: ProvisioningViewProps) {
@@ -53,7 +56,9 @@ export function ProvisioningView({
           const slowTimer = setTimeout(() => setSlowStep(step), SLOW_STEP_MS);
           timers.current.push(slowTimer);
           try {
-            await runProvisioningStep(step);
+            // `verify-account` 是这轮唯一一次真实拉取账户；不接住它，首页只有 bootstrap 的占位值。
+            const result = await runProvisioningStep(step);
+            if (result.account !== null) onAccountResolved(result.account);
           } catch (error: unknown) {
             onStepFailed(step, errorCodeOf(error));
             return;
@@ -69,7 +74,7 @@ export function ProvisioningView({
         running.current = false;
       }
     },
-    [onCompleted, onStepCompleted, onStepFailed, onStepStarted],
+    [onAccountResolved, onCompleted, onStepCompleted, onStepFailed, onStepStarted],
   );
 
   useEffect(() => {

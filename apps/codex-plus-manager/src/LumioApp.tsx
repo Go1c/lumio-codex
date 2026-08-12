@@ -175,6 +175,12 @@ export function LumioApp() {
       dispatch({ type: "provisioning-step-failed", step, errorCode }),
     [],
   );
+  // 真实账户在 provisioning 中途才拿到；立刻进状态机，首页就不会再渲染 bootstrap 的占位余额。
+  const onAccountResolved = useCallback(
+    (account: LumioAccountSummary) =>
+      dispatch({ type: "account-refreshed", account, cachedAt: new Date().toISOString() }),
+    [],
+  );
   const onProvisioned = useCallback(() => {
     const current = stateRef.current;
     if (current.account === null) return;
@@ -339,6 +345,7 @@ export function LumioApp() {
         ) : state.phase === "provisioning" ? (
           <ProvisioningView
             email={state.account?.email ?? null}
+            onAccountResolved={onAccountResolved}
             onCompleted={onProvisioned}
             onDeferred={onDeferred}
             onStepCompleted={onStepCompleted}

@@ -64,6 +64,8 @@ export interface LumioVerifyCodeResult {
 
 export interface LumioProvisionStepResult {
   step: string;
+  /** 只有 `verify-account` 带回真实账户，其余步骤为 null。 */
+  account: LumioAccountSummary | null;
 }
 
 export type LumioTakeoverHealthStatus = "not-applied" | "healthy" | "conflicted";

@@ -234,6 +234,16 @@ test("the provisioning view carries the spec copy for slow and failed steps", as
   assert.doesNotMatch(view, /返回/, "the provisioning page must not offer a back exit");
 });
 
+test("provisioning feeds the verified account back into the state machine", async () => {
+  const view = await readFile(new URL("./views/ProvisioningView.tsx", import.meta.url), "utf8");
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+
+  // `verify-account` 拉到的是真实 profile；不接住它，首页就会把 bootstrap 的占位余额当真值渲染。
+  assert.match(view, /result\.account/);
+  assert.match(view, /onAccountResolved/);
+  assert.match(shell, /type: "account-refreshed"/);
+});
+
 test("the home view explains every disabled action instead of hiding it", async () => {
   const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
 
