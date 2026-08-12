@@ -66,8 +66,10 @@ export interface LumioProvisionStepResult {
   step: string;
 }
 
+export type LumioTakeoverHealthStatus = "not-applied" | "healthy" | "conflicted";
+
 export interface LumioTakeoverHealth {
-  health: string;
+  health: LumioTakeoverHealthStatus;
   errorCode: string | null;
 }
 

@@ -73,20 +73,47 @@ export class LumioCommandError extends Error {
   }
 }
 
-interface CommandResult<T> {
+/**
+ * 命令层的 `payload` 是 `Option<T>`：失败分支没有合法 payload，`detectCodexApp`
+ * 这种命令成功时也可能为空。这里照实建模，不让缺失的 payload 变成视图层的 undefined。
+ */
+export interface LumioCommandResult<T> {
   ok: boolean;
   errorCode: string | null;
-  payload: T;
+  payload: T | null;
 }
 
 const UNKNOWN_ERROR_CODE = "UNKNOWN";
 
-async function runCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const result = await invoke<CommandResult<T>>(command, args);
+/** `ok` 为真却没有 payload 属于契约违约，用一个稳定错误码上报而不是静默放行。 */
+export const MISSING_PAYLOAD_ERROR_CODE = "COMMAND_PAYLOAD_MISSING";
+
+/** 失败分支抛稳定错误码；成功分支允许 payload 合法为空。 */
+export function readCommandResult<T>(result: LumioCommandResult<T>): T | null {
   if (!result.ok) {
     throw new LumioCommandError(result.errorCode ?? UNKNOWN_ERROR_CODE);
   }
-  return result.payload;
+  return result.payload ?? null;
+}
+
+/** 调用方需要 payload 必然存在时走这条。 */
+export function readRequiredCommandResult<T>(result: LumioCommandResult<T>): T {
+  const payload = readCommandResult(result);
+  if (payload === null) {
+    throw new LumioCommandError(MISSING_PAYLOAD_ERROR_CODE);
+  }
+  return payload;
+}
+
+async function runCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return readRequiredCommandResult(await invoke<LumioCommandResult<T>>(command, args));
+}
+
+async function runNullableCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T | null> {
+  return readCommandResult(await invoke<LumioCommandResult<T>>(command, args));
 }
 
 export async function loadLumioBootstrap(): Promise<LumioBootstrap> {
@@ -124,7 +151,7 @@ export async function submitTwoFactor(code: string): Promise<LumioAuthResult> {
 }
 
 export async function signOut(): Promise<void> {
-  await runCommand<unknown>(LUMIO_COMMANDS.logout);
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.logout);
 }
 
 export async function refreshAccount(): Promise<LumioAccountSummary> {
@@ -140,15 +167,16 @@ export async function checkTakeover(): Promise<LumioTakeoverHealth> {
 }
 
 export async function restoreConfig(): Promise<void> {
-  await runCommand<unknown>(LUMIO_COMMANDS.restoreConfig);
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.restoreConfig);
 }
 
 export async function launchCodex(): Promise<void> {
-  await runCommand<unknown>(LUMIO_COMMANDS.launchCodex);
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.launchCodex);
 }
 
+/** 未检测到官方应用时命令层返回空 payload，这是合法结果而不是失败。 */
 export async function detectCodexApp(): Promise<LumioCodexApp | null> {
-  return runCommand<LumioCodexApp | null>(LUMIO_COMMANDS.detectCodexApp);
+  return runNullableCommand<LumioCodexApp>(LUMIO_COMMANDS.detectCodexApp);
 }
 
 export async function selectCodexApp(path: string): Promise<LumioCodexApp> {
@@ -156,7 +184,7 @@ export async function selectCodexApp(path: string): Promise<LumioCodexApp> {
 }
 
 export async function openInBrowser(url: string): Promise<void> {
-  await runCommand<unknown>(LUMIO_COMMANDS.openBrowser, { url });
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.openBrowser, { url });
 }
 
 export async function setTelemetry(enabled: boolean): Promise<LumioTelemetryResult> {

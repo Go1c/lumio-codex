@@ -73,20 +73,25 @@ fn the_frontend_credential_status_union_matches_the_rust_enum() {
     assert_eq!(members, CREDENTIAL_STATUS_VALUES);
 }
 
-/// 前端每一处对 `health` 的字面量比较都必须是 Rust 真的会发出的取值。
-/// 一处都没有时不判失败（前端可能还没接这段分支），但只要出现就必须合法。
+/// 前端 `types.ts` 的 health 联合类型必须与命令层实际序列化出的取值逐项相等。
+/// 有了联合类型，前端拼错一个字母是编译错误，而不是静默走进 else 显示错误的修复引导。
 #[test]
-fn the_frontend_never_compares_health_against_a_value_rust_cannot_emit() {
-    for file in frontend_sources() {
-        let source = fs::read_to_string(&file).expect("frontend source");
-        for literal in health_comparison_literals(&source) {
-            assert!(
-                HEALTH_VALUES.contains(&literal.as_str()),
-                "{}: compares health against {literal:?}, which the command layer never emits",
-                file.display()
-            );
-        }
-    }
+fn the_frontend_health_union_matches_what_the_command_layer_serializes() {
+    let serialized = [
+        TakeoverHealth::NotApplied,
+        TakeoverHealth::Healthy,
+        TakeoverHealth::Conflicted {
+            error_code: "CODEX_CONFIG_CONFLICT".to_string(),
+        },
+    ]
+    .map(|health| takeover_health_payload(health).health);
+
+    let source = fs::read_to_string(frontend_dir().join("types.ts")).expect("lumio/types.ts");
+    let members = union_members(&source, "LumioTakeoverHealthStatus")
+        .expect("types.ts must declare the LumioTakeoverHealthStatus union");
+
+    assert_eq!(members, serialized);
+    assert_eq!(serialized, HEALTH_VALUES);
 }
 
 fn bootstrap_payload(credential_status: CredentialStatus) -> LumioBootstrapPayload {
@@ -106,27 +111,6 @@ fn frontend_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../src/lumio")
 }
 
-fn frontend_sources() -> Vec<PathBuf> {
-    let mut sources = Vec::new();
-    let mut pending = vec![frontend_dir()];
-    while let Some(dir) = pending.pop() {
-        let entries = fs::read_dir(&dir).unwrap_or_else(|_| panic!("read {}", dir.display()));
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if matches!(
-                path.extension().and_then(|value| value.to_str()),
-                Some("ts" | "tsx")
-            ) {
-                sources.push(path);
-            }
-        }
-    }
-    assert!(!sources.is_empty(), "no frontend sources under lumio/");
-    sources
-}
-
 /// 取出 `export type Name = "a" | "b";` 的成员。找不到声明时返回 `None`。
 fn union_members(source: &str, name: &str) -> Option<Vec<String>> {
     let declaration = source.split_once(&format!("type {name}"))?.1;
@@ -142,19 +126,4 @@ fn union_members(source: &str, name: &str) -> Option<Vec<String>> {
             .filter(|member| !member.is_empty())
             .collect(),
     )
-}
-
-/// 取出所有 `health === "…"` / `health !== "…"` 比较里的字面量。
-fn health_comparison_literals(source: &str) -> Vec<String> {
-    let mut literals = Vec::new();
-    for operator in ["health === ", "health !== "] {
-        for tail in source.split(operator).skip(1) {
-            let mut characters = tail.chars();
-            let Some(quote @ ('"' | '\'')) = characters.next() else {
-                continue;
-            };
-            literals.push(characters.take_while(|value| *value != quote).collect());
-        }
-    }
-    literals
 }
