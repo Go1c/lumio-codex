@@ -38,6 +38,8 @@ interface HomeViewProps {
 export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pushToast }: HomeViewProps) {
   const { account, actionNotes, actions, codexApp } = state;
   const offline = state.phase === "ready-offline";
+  // 没有同步时间就没有同步过：账户数值此刻是启动时的占位而非缓存下来的真值，不能当余额渲染。
+  const syncTimeUnknown = state.cachedAt === null;
   const [refreshing, setRefreshing] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [reconnected, setReconnected] = useState(false);
@@ -115,7 +117,9 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
       ) : offline ? (
         <p className="lumio-notice" role="status">
           <CloudOff size={15} />
-          无法连接服务，正在使用 {formatSyncTime(state.cachedAt)} 的本机缓存。你仍可以启动官方 Codex。
+          {syncTimeUnknown
+            ? "无法连接服务，正在使用本机缓存，上次同步时间未知。你仍可以启动官方 Codex。"
+            : `无法连接服务，正在使用 ${formatSyncTime(state.cachedAt)} 的本机缓存。你仍可以启动官方 Codex。`}
         </p>
       ) : null}
 
@@ -125,10 +129,12 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
             <WalletCards size={20} />
           </span>
           <p>{shellLabels.balanceAndPlan}</p>
-          <strong>{formatBalance(account.balance)}</strong>
+          <strong>{syncTimeUnknown ? "未知" : formatBalance(account.balance)}</strong>
           <small>
-            {offline ? <span className="lumio-tag is-warning">缓存值</span> : null}
-            {account.planLabel ?? "当前没有生效套餐"}
+            {offline ? (
+              <span className="lumio-tag is-warning">{syncTimeUnknown ? "尚未同步" : "缓存值"}</span>
+            ) : null}
+            {syncTimeUnknown ? "恢复网络后自动更新" : (account.planLabel ?? "当前没有生效套餐")}
           </small>
         </article>
 
@@ -139,7 +145,11 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
           <p>{shellLabels.connectionStatus}</p>
           <strong>{offline ? "本机就绪" : "在线"}</strong>
           <small>
-            {offline ? "使用本机缓存" : `上次同步 ${formatSyncTime(state.cachedAt)}`}
+            {offline
+              ? "使用本机缓存"
+              : syncTimeUnknown
+                ? "尚未同步"
+                : `上次同步 ${formatSyncTime(state.cachedAt)}`}
             <button
               className="lumio-small-button is-inline"
               disabled={!actions.canRefresh || refreshing}

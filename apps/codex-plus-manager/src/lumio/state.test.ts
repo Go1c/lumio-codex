@@ -345,6 +345,16 @@ test("offline readiness without a detected app disables launch and explains why"
   assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
 });
 
+test("offline readiness entered at startup carries no invented sync time", () => {
+  const next = reduceLumioState(signedOutWithApp(), { type: "offline-ready", cachedAt: null });
+
+  assert.equal(next.phase, "ready-offline");
+  assert.equal(next.cachedAt, null);
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actions.canRefresh, false);
+  assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
+});
+
 test("reconnecting from offline restores the online surface", () => {
   const offline = reduceLumioState(signedOut(), {
     type: "offline-ready",

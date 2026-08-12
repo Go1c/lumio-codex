@@ -233,7 +233,49 @@ test("the home view explains every disabled action instead of hiding it", async 
   assert.match(view, /你仍可以启动官方 Codex。/);
   assert.match(view, /已重新连接/);
   assert.match(view, /缓存值/);
+  // 离线首页可能在没有任何可信同步时间时进入，这时余额与时间都不许当作真值渲染。
+  assert.match(view, /上次同步时间未知/);
+  assert.match(view, /尚未同步/);
   assert.match(view, /已配置/);
+});
+
+/**
+ * 只断言「离线 / 修复文案存在」证明不了用户走得到它们——上一轮离线缺口正是这样通过审查的。
+ * 这里把启动编排整段取出来断言，语义是：这两个阶段的入口与探活 / 健康检查的结果绑在同一处决策里。
+ */
+function startupPlan(shell: string): string {
+  const start = shell.indexOf("async function planStartup");
+  assert.notEqual(start, -1, "LumioApp must own an explicit startup orchestration step");
+  const end = shell.indexOf("\n}", start);
+  assert.notEqual(end, -1, "the startup orchestration must be a closed function body");
+  return shell.slice(start, end);
+}
+
+test("startup orchestration decides the phase from the probe and the health check", async () => {
+  const plan = startupPlan(await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8"));
+
+  assert.match(plan, /loadLumioBootstrap\(\)/);
+  assert.match(plan, /checkTakeover\(\)/);
+  assert.match(plan, /"conflicted"/);
+  assert.match(plan, /type: "repair-required"/);
+  assert.match(plan, /loadPublicSettings\(\)/);
+  assert.match(plan, /type: "offline-ready"/);
+});
+
+test("the offline entry reports an unknown sync time instead of inventing one", async () => {
+  const plan = startupPlan(await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8"));
+
+  assert.match(plan, /cachedAt: null/);
+  assert.doesNotMatch(plan, /new Date\(\)/);
+});
+
+test("the consistency check runs before provisioning may touch the local config", async () => {
+  const plan = startupPlan(await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8"));
+
+  assert.ok(
+    plan.indexOf("checkTakeover()") < plan.indexOf("loadPublicSettings()"),
+    "a conflicted config must be caught before the surface can reach write-config",
+  );
 });
 
 test("the repair view offers the three spec actions and never a force overwrite", async () => {

@@ -87,7 +87,8 @@ export type LumioEvent =
       defaultModel: string | null;
       codexApp: LumioCodexApp | null;
     }
-  | { type: "offline-ready"; cachedAt: string }
+  // 启动时进入离线可能没有任何可信的同步时间，缺失要如实传下去，不许补一个假时间戳。
+  | { type: "offline-ready"; cachedAt: string | null }
   | { type: "account-refreshed"; account: LumioAccountSummary; cachedAt: string }
   | { type: "repair-required"; errorCode: string }
   | { type: "session-expired"; errorCode: string }

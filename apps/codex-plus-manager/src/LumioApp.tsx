@@ -3,14 +3,20 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   LumioCommandError,
+  checkTakeover,
   loadLumioBootstrap,
   loadPublicSettings,
   shellLabels,
   signOut,
 } from "./lumio/invoke.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
-import type { ProvisioningStepId } from "./lumio/state.ts";
-import type { LumioAccountSummary, LumioCodexApp, LumioPhase } from "./lumio/types.ts";
+import type { LumioEvent, ProvisioningStepId } from "./lumio/state.ts";
+import type {
+  LumioAccountSummary,
+  LumioBootstrap,
+  LumioCodexApp,
+  LumioPhase,
+} from "./lumio/types.ts";
 import { HomeView } from "./lumio/views/HomeView.tsx";
 import { LoginView } from "./lumio/views/LoginView.tsx";
 import { ProvisioningView } from "./lumio/views/ProvisioningView.tsx";
@@ -34,8 +40,60 @@ const phaseCopy: Record<LumioPhase, string> = {
   "needs-repair": "需要检查配置",
 };
 
+const CONFIG_CONFLICT_CODE = "CODEX_CONFIG_CONFLICT";
+
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
+}
+
+/**
+ * 本机凭据是否可用于免登录续跑。命令层还没带 `credentialStatus` 的旧 payload 只能靠
+ * 缓存账户判断，带了就以它为准——凭据失效时不该把用户当作已登录继续推进。
+ */
+function hasLocalCredentials(bootstrap: LumioBootstrap): boolean {
+  const status = bootstrap.credentialStatus;
+  return bootstrap.account !== null && (status === undefined || status === "present");
+}
+
+/**
+ * 启动编排：bootstrap 本身回答不了「下一站是哪」。它只说本机有没有凭据，
+ * 而 provisioning 会写本机配置，所以必须先把两件事定下来再决定阶段：
+ *
+ * 1. 本机接管记录是否与 `~/.codex` 现状一致——冲突就进修复页，绝不让 `write-config`
+ *    有机会把用户在别处改过的字段静默盖回去。
+ * 2. 服务是否可达——不可达但本机凭据与接管都在，就进离线首页，让用户仍能启动官方 Codex。
+ *
+ * 返回一串事件而不是边算边 dispatch：中间阶段一旦上屏，ProvisioningView 会立刻开跑，
+ * 而我们此刻已经知道它不该跑。
+ */
+async function planStartup(): Promise<LumioEvent[]> {
+  let bootstrap: LumioBootstrap;
+  try {
+    bootstrap = await loadLumioBootstrap();
+  } catch (error: unknown) {
+    return [{ type: "repair-required", errorCode: errorCodeOf(error) }];
+  }
+
+  const booted: LumioEvent = { type: "bootstrapped", payload: bootstrap };
+  if (!hasLocalCredentials(bootstrap)) return [booted];
+
+  // 检测本身失败（拿不到状态目录之类）不等于配置冲突，按未接管处理，交给 provisioning 如实报错。
+  const health = await checkTakeover().catch(() => null);
+  if (health !== null && health.health === "conflicted") {
+    return [booted, { type: "repair-required", errorCode: health.errorCode ?? CONFIG_CONFLICT_CODE }];
+  }
+
+  try {
+    const settings = await loadPublicSettings();
+    return [booted, { type: "service-settings-loaded", settings }];
+  } catch (error: unknown) {
+    const unavailable: LumioEvent = { type: "service-unavailable", errorCode: errorCodeOf(error) };
+    // 没接管过就没有可用的本机配置可离线启动；此时如实走 provisioning 失败态，
+    // 而不是端出一个「本机就绪」的假象。
+    if (health === null || health.health !== "healthy") return [booted, unavailable];
+    // 这台机器上最近一次成功同步的时间没有任何命令能提供，就让它保持未知。
+    return [booted, unavailable, { type: "offline-ready", cachedAt: null }];
+  }
 }
 
 export function LumioApp() {
@@ -48,13 +106,11 @@ export function LumioApp() {
 
   useEffect(() => {
     let active = true;
-    void loadLumioBootstrap()
-      .then((payload) => {
-        if (active) dispatch({ type: "bootstrapped", payload });
-      })
-      .catch((error: unknown) => {
-        if (active) dispatch({ type: "repair-required", errorCode: errorCodeOf(error) });
-      });
+    void planStartup().then((events) => {
+      // 一次性刷出：编排算出来的中间阶段不该被渲染出来。
+      if (!active) return;
+      for (const event of events) dispatch(event);
+    });
     return () => {
       active = false;
     };
@@ -62,8 +118,9 @@ export function LumioApp() {
 
   // The public settings gate every entry-point button, so an unreachable
   // service must keep retrying instead of leaving the surface permanently dark.
+  const startupPending = state.phase === "bootstrapping";
   useEffect(() => {
-    if (state.serviceAvailable) return;
+    if (state.serviceAvailable || startupPending) return;
     let active = true;
 
     const load = () => {
@@ -82,7 +139,8 @@ export function LumioApp() {
       active = false;
       clearInterval(timer);
     };
-  }, [state.serviceAvailable]);
+    // 启动编排在 bootstrapping 阶段自己探活一次，这里同时轮询会和它的判定赛跑。
+  }, [startupPending, state.serviceAvailable]);
 
   const openSettings = useCallback(() => setView("settings"), []);
 
