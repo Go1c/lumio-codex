@@ -1,0 +1,13 @@
+{
+  "channel": "internal-unsigned",
+  "version": "1.2.46",
+  "tag": "v1.2.46",
+  "published_at": "2026-08-12T12:31:26Z",
+  "commit": "3269405766fd195d274b0f5fcd34daffe3dfc97e",
+  "assets": [
+    {"name":"LumioCodex-1.2.46-macos-arm64-internal-unsigned.dmg","url":"https://s3.lumio.games/lumio-codex/releases/1.2.46/LumioCodex-1.2.46-macos-arm64-internal-unsigned.dmg"},
+    {"name":"LumioCodex-1.2.46-macos-x64-internal-unsigned.dmg","url":"https://s3.lumio.games/lumio-codex/releases/1.2.46/LumioCodex-1.2.46-macos-x64-internal-unsigned.dmg"},
+    {"name":"LumioCodex-1.2.46-windows-x64-portable-internal-unsigned.zip","url":"https://s3.lumio.games/lumio-codex/releases/1.2.46/LumioCodex-1.2.46-windows-x64-portable-internal-unsigned.zip"},
+    {"name":"LumioCodex-1.2.46-windows-x64-setup-internal-unsigned.exe","url":"https://s3.lumio.games/lumio-codex/releases/1.2.46/LumioCodex-1.2.46-windows-x64-setup-internal-unsigned.exe"}
+  ]
+}
