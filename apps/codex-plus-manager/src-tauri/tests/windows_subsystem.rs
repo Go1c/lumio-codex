@@ -198,10 +198,15 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     assert!(workflow.contains("LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"));
     assert!(workflow.contains("${TMPDIR:-/tmp}"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
+    assert!(workflow.contains("publish-internal:"));
+    assert!(workflow.contains("tags: [\"v*\"]"));
+    assert!(workflow.contains("s3 sync dist/publish"));
+    assert!(workflow.contains("latest-internal.json"));
+    assert!(workflow.contains("gh release create"));
+    assert!(workflow.contains("--prerelease"));
     assert!(!workflow.contains("codex-plus-plus"));
     assert!(!workflow.contains("CodexPlusPlus"));
     assert!(!workflow.contains("softprops/action-gh-release"));
-    assert!(!workflow.contains("gh release"));
 }
 
 #[test]
