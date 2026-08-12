@@ -114,6 +114,34 @@ function noNotes(): LumioActionNotes {
   return { launch: null, refresh: null, pay: PAY_DISABLED_NOTE, register: null, signIn: null };
 }
 
+/**
+ * Entry-point affordances for the signed-out surface. Every disabled button must
+ * carry a note explaining why, otherwise the user is stuck with no way forward.
+ */
+function signedOutEntry(
+  service: LumioServiceSettings | null,
+  serviceAvailable: boolean,
+): Pick<LumioState, "actions" | "actionNotes"> {
+  if (service === null || !serviceAvailable) {
+    return {
+      actions: disabledActions(),
+      actionNotes: { ...noNotes(), signIn: SERVICE_DOWN_NOTE, register: SERVICE_DOWN_NOTE },
+    };
+  }
+
+  return {
+    actions: { ...disabledActions(), canSignIn: true, canRegister: service.registrationEnabled },
+    actionNotes: {
+      ...noNotes(),
+      register: service.registrationEnabled ? null : REGISTRATION_CLOSED_NOTE,
+    },
+  };
+}
+
+function withoutCachedAccount(bootstrap: LumioBootstrap | null): LumioBootstrap | null {
+  return bootstrap === null ? null : { ...bootstrap, account: null };
+}
+
 function pendingProvisioning(): LumioProvisioning {
   return {
     steps: {
@@ -293,10 +321,15 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         phase: "ready-offline",
         cachedAt: event.cachedAt,
         serviceAvailable: false,
-        actions: { ...state.actions, canLaunch: true, canRefresh: false, canPay: false },
+        actions: {
+          ...state.actions,
+          canLaunch: state.codexApp !== null,
+          canRefresh: false,
+          canPay: false,
+        },
         actionNotes: {
           ...state.actionNotes,
-          launch: null,
+          launch: state.codexApp === null ? NO_APP_NOTE : null,
           refresh: OFFLINE_NOTE,
           pay: OFFLINE_NOTE,
         },
@@ -318,25 +351,27 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
       return {
         ...initialLumioState(),
         phase: "signed-out",
-        bootstrap: state.bootstrap,
+        bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
         serviceAvailable: state.serviceAvailable,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
         errorCode: event.errorCode,
+        ...signedOutEntry(state.service, state.serviceAvailable),
       };
 
     case "signed-out":
       return {
         ...initialLumioState(),
         phase: "signed-out",
-        bootstrap: state.bootstrap,
+        bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
         serviceAvailable: state.serviceAvailable,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
+        ...signedOutEntry(state.service, state.serviceAvailable),
       };
   }
 }

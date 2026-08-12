@@ -7,6 +7,11 @@ import {
   PROVISIONING_STEP_TITLES,
 } from "./state.ts";
 import type { LumioServiceSettings, LumioState } from "./state.ts";
+import type { LumioCodexApp } from "./types.ts";
+
+function detectedApp(): LumioCodexApp {
+  return { path: "/Applications/Codex.app", version: "1.0.0", source: "automatic" };
+}
 
 test("bootstrap without account enters signed-out", () => {
   const next = reduceLumioState(initialLumioState(), {
@@ -27,7 +32,7 @@ test("bootstrap without account enters signed-out", () => {
 });
 
 test("offline readiness never enables payment or refresh", () => {
-  const next = reduceLumioState(initialLumioState(), {
+  const next = reduceLumioState(signedOutWithApp(), {
     type: "offline-ready",
     cachedAt: "2026-08-11T00:00:00Z",
   });
@@ -108,6 +113,50 @@ function signedOut(): LumioState {
   });
 }
 
+function signedOutWithApp(): LumioState {
+  return reduceLumioState(initialLumioState(), {
+    type: "bootstrapped",
+    payload: {
+      version: "1.0.0",
+      platform: "macos",
+      arch: "aarch64",
+      codexApp: detectedApp(),
+      account: null,
+      telemetryEnabled: false,
+      autoUpdateEnabled: true,
+    },
+  });
+}
+
+function bootedWithAccount(): LumioState {
+  return reduceLumioState(initialLumioState(), {
+    type: "bootstrapped",
+    payload: {
+      version: "1.0.0",
+      platform: "macos",
+      arch: "aarch64",
+      codexApp: detectedApp(),
+      account: { email: "previous@example.com", balance: 42, planLabel: "Pro" },
+      telemetryEnabled: false,
+      autoUpdateEnabled: true,
+    },
+  });
+}
+
+function readyOnlineSession(registrationEnabled: boolean): LumioState {
+  const withService = reduceLumioState(bootedWithAccount(), {
+    type: "service-settings-loaded",
+    settings: { ...SERVICE, registrationEnabled },
+  });
+  return reduceLumioState(withService, {
+    type: "online-ready",
+    account: { email: "previous@example.com", balance: 42, planLabel: "Pro" },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: detectedApp(),
+  });
+}
+
 test("provisioning step order matches the interaction spec", () => {
   assert.deepEqual(PROVISIONING_STEP_IDS, [
     "verify-account",
@@ -164,7 +213,20 @@ test("two-factor requirement keeps the user inside the login card", () => {
 });
 
 test("authentication resets provisioning to a clean pending run", () => {
-  const next = reduceLumioState(signedOut(), {
+  const running = reduceLumioState(signedOut(), {
+    type: "provisioning-step-started",
+    step: "verify-account",
+  });
+  const dirty = reduceLumioState(running, {
+    type: "provisioning-step-failed",
+    step: "verify-account",
+    errorCode: "KEY_PROVISION_FAILED",
+  });
+  assert.equal(dirty.provisioning.attempts, 1);
+  assert.equal(dirty.provisioning.steps["verify-account"], "failed");
+  assert.equal(dirty.provisioning.failedStep, "verify-account");
+
+  const next = reduceLumioState(dirty, {
     type: "authenticated",
     account: { email: "user@example.com", balance: 0, planLabel: null },
   });
@@ -206,6 +268,7 @@ test("provisioning steps advance independently and record failures", () => {
   assert.equal(failed.provisioning.failedStep, "prepare-connection");
   assert.equal(failed.provisioning.errorCode, "KEY_PROVISION_FAILED");
   assert.equal(failed.provisioning.attempts, 1);
+  assert.equal(failed.provisioning.suggestRepair, false);
   assert.equal(failed.provisioning.steps["sync-models"], "pending");
 });
 
@@ -257,7 +320,7 @@ test("online readiness without a detected app disables launch and explains why",
 });
 
 test("offline readiness keeps launch but blocks refresh and payment", () => {
-  const next = reduceLumioState(signedOut(), {
+  const next = reduceLumioState(signedOutWithApp(), {
     type: "offline-ready",
     cachedAt: "2026-08-12T00:00:00Z",
   });
@@ -266,6 +329,19 @@ test("offline readiness keeps launch but blocks refresh and payment", () => {
   assert.equal(next.actions.canLaunch, true);
   assert.equal(next.actions.canRefresh, false);
   assert.equal(next.actions.canPay, false);
+  assert.equal(next.actionNotes.launch, null);
+  assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
+});
+
+test("offline readiness without a detected app disables launch and explains why", () => {
+  const next = reduceLumioState(signedOut(), {
+    type: "offline-ready",
+    cachedAt: "2026-08-12T00:00:00Z",
+  });
+
+  assert.equal(next.phase, "ready-offline");
+  assert.equal(next.actions.canLaunch, false);
+  assert.equal(next.actionNotes.launch, "未检测到官方应用，去设置中选择");
   assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
 });
 
@@ -307,17 +383,75 @@ test("signing out clears the account and returns to the signed-out surface", () 
     canRegister: false,
     canSignIn: false,
   });
+  assert.equal(next.actionNotes.signIn, "服务暂时不可用，稍后自动重试");
+  assert.equal(next.actionNotes.register, "服务暂时不可用，稍后自动重试");
+});
+
+test("signing out drops the account cached on the bootstrap payload", () => {
+  const next = reduceLumioState(readyOnlineSession(true), { type: "signed-out" });
+
+  assert.equal(next.account, null);
+  assert.equal(next.bootstrap?.account, null);
+  assert.equal(next.bootstrap?.version, "1.0.0");
+  assert.deepEqual(next.codexApp, detectedApp());
+});
+
+test("signing out while the service is reachable keeps both entry points open", () => {
+  const next = reduceLumioState(readyOnlineSession(true), { type: "signed-out" });
+
+  assert.equal(next.serviceAvailable, true);
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actions.canRegister, true);
+  assert.equal(next.actionNotes.signIn, null);
+  assert.equal(next.actionNotes.register, null);
+  assert.equal(next.actionNotes.pay, "充值功能尚未开放");
+});
+
+test("signing out with registration closed explains the disabled register entry", () => {
+  const next = reduceLumioState(readyOnlineSession(false), { type: "signed-out" });
+
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actions.canRegister, false);
+  assert.equal(next.actionNotes.signIn, null);
+  assert.equal(next.actionNotes.register, "注册暂未开放");
+});
+
+test("session expiry while the service is unreachable explains both entry points", () => {
+  const unreachable = reduceLumioState(readyOnlineSession(true), {
+    type: "service-unavailable",
+    errorCode: "SERVICE_UNAVAILABLE",
+  });
+  const next = reduceLumioState(unreachable, {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.serviceAvailable, false);
+  assert.equal(next.actions.canSignIn, false);
+  assert.equal(next.actions.canRegister, false);
+  assert.equal(next.actionNotes.signIn, "服务暂时不可用，稍后自动重试");
+  assert.equal(next.actionNotes.register, "服务暂时不可用，稍后自动重试");
+  assert.equal(next.errorCode, "AUTH_SESSION_EXPIRED");
+});
+
+test("session expiry while the service is reachable keeps the login entry open", () => {
+  const next = reduceLumioState(readyOnlineSession(true), {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.actions.canSignIn, true);
+  assert.equal(next.actionNotes.signIn, null);
+  assert.equal(next.errorCode, "AUTH_SESSION_EXPIRED");
 });
 
 test("session expiry from any phase lands on signed-out with the code preserved", () => {
-  const online = reduceLumioState(signedOut(), {
-    type: "online-ready",
-    account: { email: "user@example.com", balance: 3, planLabel: null },
-    cachedAt: "2026-08-12T00:00:00Z",
-    defaultModel: "gpt-example",
-    codexApp: null,
+  const dirty = reduceLumioState(readyOnlineSession(true), {
+    type: "provisioning-step-failed",
+    step: "sync-models",
+    errorCode: "KEY_PROVISION_FAILED",
   });
-  const next = reduceLumioState(online, {
+  const next = reduceLumioState(dirty, {
     type: "session-expired",
     errorCode: "AUTH_SESSION_EXPIRED",
   });
@@ -325,6 +459,15 @@ test("session expiry from any phase lands on signed-out with the code preserved"
   assert.equal(next.phase, "signed-out");
   assert.equal(next.account, null);
   assert.equal(next.errorCode, "AUTH_SESSION_EXPIRED");
+  assert.equal(next.bootstrap?.account, null);
+  assert.deepEqual(next.codexApp, detectedApp());
+  assert.equal(next.provisioning.failedStep, null);
+  assert.equal(next.provisioning.errorCode, null);
+  assert.equal(next.provisioning.attempts, 0);
+  assert.equal(next.provisioning.suggestRepair, false);
+  for (const id of PROVISIONING_STEP_IDS) {
+    assert.equal(next.provisioning.steps[id], "pending");
+  }
 });
 
 test("account refresh updates the balance without changing phase", () => {
