@@ -57,21 +57,26 @@ pub fn open_in_browser(url: &str) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        spawn_detached(
-            "cmd",
-            &[
-                "/C".to_string(),
-                "start".to_string(),
-                String::new(),
-                url.to_string(),
-            ],
-        )
+        let (program, args) = windows_browser_command(url);
+        spawn_detached(&program, &args)
     }
 
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     {
         spawn_detached("xdg-open", &[url.to_string()])
     }
+}
+
+/// Windows 上打开 URL 不经 `cmd`：`cmd /C start "" <url>` 会把 URL 里的 `&` `|` `^`
+/// 解释成命令分隔符，而 Rust std 只按 CommandLineToArgvW 的规则加引号、不按 cmd 的规则
+/// 转义。改用 `rundll32 url.dll,FileProtocolHandler`——由 CreateProcess 直接拉起，
+/// 整条路径上没有 shell，也就不需要维护一份元字符黑名单。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_browser_command(url: &str) -> (String, Vec<String>) {
+    (
+        "rundll32".to_string(),
+        vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()],
+    )
 }
 
 fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
@@ -152,6 +157,30 @@ mod tests {
             validate_selected_app(&plain).unwrap_err(),
             "CODEX_APP_INVALID"
         );
+    }
+
+    /// `cmd /C start "" <url>` 把 URL 里的 `&` `|` `^` 当成命令分隔符，而 Rust std
+    /// 不按 cmd 的解析规则转义参数——`lumio_open_browser` 在 IPC 白名单上，这个洞
+    /// 不该留。这条断言与平台无关：所有平台都必须构造出一条不经 shell 的命令。
+    #[test]
+    fn the_windows_browser_command_does_not_go_through_cmd() {
+        let url = "https://lumio.games/pay?session=1&plan=pro|tier^2";
+        let (program, args) = windows_browser_command(url);
+
+        assert_eq!(program, "rundll32");
+        assert_eq!(
+            args,
+            vec!["url.dll,FileProtocolHandler".to_string(), url.to_string()]
+        );
+        for token in std::iter::once(&program).chain(args.iter()) {
+            assert!(
+                !token.eq_ignore_ascii_case("cmd") && !token.eq_ignore_ascii_case("cmd.exe"),
+                "the url still reaches a command interpreter: {token}"
+            );
+            assert_ne!(token, "start");
+        }
+        // URL 必须整体作为一个参数传下去，不能被拆开或与别的 token 拼接。
+        assert_eq!(args.iter().filter(|arg| arg.contains(url)).count(), 1);
     }
 
     #[test]
