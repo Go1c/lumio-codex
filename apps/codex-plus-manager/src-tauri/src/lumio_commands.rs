@@ -479,10 +479,18 @@ pub fn lumio_takeover_health(
     let Some(state_dir) = product::state_dir() else {
         return result(Err(KEY_STORAGE_UNAVAILABLE.to_string()));
     };
-    let payload = match config_takeover::check_takeover(
-        &codex_plus_core::codex_home::default_codex_home_dir(),
-        &state_dir,
-    ) {
+    result(Ok(takeover_health_payload(
+        config_takeover::check_takeover(
+            &codex_plus_core::codex_home::default_codex_home_dir(),
+            &state_dir,
+        ),
+    )))
+}
+
+/// `health` 的三个取值是跨语言契约：前端按它们分支。取值本身由
+/// `tests/lumio_contract_literals.rs` 用实际序列化钉住。
+pub fn takeover_health_payload(health: TakeoverHealth) -> LumioTakeoverHealthPayload {
+    match health {
         TakeoverHealth::NotApplied => LumioTakeoverHealthPayload {
             health: HEALTH_NOT_APPLIED.to_string(),
             error_code: None,
@@ -495,8 +503,7 @@ pub fn lumio_takeover_health(
             health: HEALTH_CONFLICTED.to_string(),
             error_code: Some(error_code),
         },
-    };
-    result(Ok(payload))
+    }
 }
 
 #[tauri::command]
