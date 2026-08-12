@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 首页（离线缓存）</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/home-offline.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav" aria-label="主导航">
+        <a href="home-offline.html" class="is-active">首页</a>
+        <a href="settings.html">设置</a>
+      </nav>
+      <span class="lx-phase is-offline" id="phase"><i></i>使用本机缓存</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-dashboard">
+        <section class="lx-welcome">
+          <div>
+            <p class="lx-eyebrow">账户状态</p>
+            <h1>欢迎回来</h1>
+            <p class="email">mary@example.com</p>
+          </div>
+          <span class="lx-chip is-ok">🛡 凭据由系统保护</span>
+        </section>
+
+        <div class="lx-notice" id="offline-notice">
+          <span>⚠</span>
+          <span>无法连接服务，正在使用 <strong>今天 08:47</strong> 的本机缓存。你仍可以启动官方 Codex。</span>
+          <span class="lx-chip is-code" style="margin-left: auto;">SERVICE_UNAVAILABLE</span>
+        </div>
+        <div class="lx-notice is-ok" id="online-notice" style="display: none;">
+          <span>✓</span>
+          <span>已重新连接，数据已自动刷新。</span>
+        </div>
+
+        <div class="lx-metrics">
+          <article class="lx-metric is-cached">
+            <span class="ico">💳</span>
+            <p>余额与套餐</p>
+            <strong id="balance">128.50</strong>
+            <small id="balance-note"><span class="lx-chip is-warn" style="padding: 3px 8px;">缓存值</span> 以恢复连接后的数据为准</small>
+          </article>
+          <article class="lx-metric">
+            <span class="ico">📶</span>
+            <p>连接状态</p>
+            <strong id="conn-state">本机就绪</strong>
+            <small id="conn-note">
+              使用本机缓存
+              <button class="lx-small-button" type="button" id="refresh" disabled title="需要恢复网络连接" style="margin-left: 8px; min-height: 24px;">刷新</button>
+            </small>
+          </article>
+          <article class="lx-metric">
+            <span class="ico">✦</span>
+            <p>默认模型</p>
+            <strong>gpt-lumio-pro</strong>
+            <small><span class="lx-chip is-ok" style="padding: 3px 8px;">已配置</span> 本机配置校验通过</small>
+          </article>
+        </div>
+
+        <section class="lx-action-panel">
+          <div>
+            <p class="lx-eyebrow">官方 Codex</p>
+            <h2>已检测到官方应用</h2>
+            <p class="sub">版本 2.4.1 · /Applications/Codex.app</p>
+          </div>
+          <div class="lx-actions">
+            <button class="lx-button is-secondary" type="button" id="pay" disabled title="需要恢复网络连接">💳 充值</button>
+            <button class="lx-button is-primary" type="button" id="launch">🚀 启动 Codex</button>
+          </div>
+        </section>
+        <p class="lx-settings-note">离线时禁用充值与刷新；网络恢复后自动重新验证账户并刷新数据。</p>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#reconnect", label: "演示网络恢复" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const launch = document.getElementById("launch");
+      launch.addEventListener("click", () => {
+        launch.disabled = true;
+        launch.innerHTML = '<span class="lx-spin"></span>正在启动…';
+        setTimeout(() => {
+          launch.disabled = false;
+          launch.textContent = "🚀 启动 Codex";
+          Proto.toast("官方 Codex 已启动（本机缓存配置）", "ok");
+        }, 1400);
+      });
+
+      // 变体：网络恢复 → 信息条变绿、按钮解禁、数据刷新，3 秒后信息条消失
+      const applyVariant = () => {
+        if (location.hash !== "#reconnect") return;
+        document.getElementById("offline-notice").style.display = "none";
+        const ok = document.getElementById("online-notice");
+        ok.style.display = "flex";
+        document.getElementById("phase").className = "lx-phase is-online";
+        document.getElementById("phase").lastChild.textContent = "服务连接正常";
+        document.getElementById("pay").disabled = false;
+        document.getElementById("pay").removeAttribute("title");
+        document.getElementById("refresh").disabled = false;
+        document.getElementById("refresh").removeAttribute("title");
+        document.getElementById("balance").parentElement.classList.remove("is-cached");
+        document.getElementById("balance-note").innerHTML = "专业套餐 · 2026-09-10 到期";
+        document.getElementById("conn-state").textContent = "在线";
+        document.getElementById("conn-note").firstChild.textContent = "刚刚同步 ";
+        setTimeout(() => { ok.style.display = "none"; }, 3000);
+      };
+      window.addEventListener("hashchange", applyVariant);
+      applyVariant();
+    });
+  </script>
+</body>
+</html>

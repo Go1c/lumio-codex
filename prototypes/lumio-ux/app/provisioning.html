@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 自动配置</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/provisioning.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav is-locked" aria-label="主导航">
+        <a href="#" class="is-active">首页</a>
+        <a href="#">设置</a>
+      </nav>
+      <span class="lx-phase"><i></i>正在准备连接</span>
+    </header>
+
+    <main class="lx-main">
+      <section class="lx-provision" aria-live="polite">
+        <h1>正在准备官方 Codex</h1>
+        <p class="lead">mary@example.com</p>
+
+        <div class="lx-steps" id="steps">
+          <div class="lx-step" data-step="0">
+            <span class="dot">1</span>
+            <span class="body"><strong>验证账户</strong><small>确认登录状态与账户资格</small></span>
+            <span class="state"></span>
+          </div>
+          <div class="lx-step" data-step="1">
+            <span class="dot">2</span>
+            <span class="body"><strong>准备连接</strong><small>初始化本机的服务连接</small></span>
+            <span class="state"></span>
+          </div>
+          <div class="lx-step" data-step="2">
+            <span class="dot">3</span>
+            <span class="body"><strong>同步模型目录</strong><small>获取服务端提供的模型列表</small></span>
+            <span class="state"></span>
+          </div>
+          <div class="lx-step" data-step="3">
+            <span class="dot">4</span>
+            <span class="body"><strong>写入本机配置</strong><small>先备份原始配置，再原子写入</small></span>
+            <span class="state"></span>
+          </div>
+        </div>
+
+        <div class="fail-actions" id="fail-actions" hidden>
+          <button class="lx-button is-primary" type="button" id="retry">重试</button>
+          <a class="lx-button is-secondary" href="signed-out.html">稍后处理</a>
+        </div>
+
+        <p class="foot" id="foot">不需要手动操作，完成后自动进入首页</p>
+      </section>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#fail", label: "第 2 步失败" },
+      { hash: "#slow", label: "慢网络提示" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const steps = Array.from(document.querySelectorAll(".lx-step"));
+      const failActions = document.getElementById("fail-actions");
+      const foot = document.getElementById("foot");
+      let timer = null;
+
+      const setStep = (el, mode, stateText) => {
+        el.classList.remove("is-doing", "is-done", "is-fail");
+        const dot = el.querySelector(".dot");
+        const state = el.querySelector(".state");
+        if (mode === "doing") {
+          el.classList.add("is-doing");
+          dot.innerHTML = '<span class="lx-spin"></span>';
+          state.textContent = stateText || "进行中…";
+        } else if (mode === "done") {
+          el.classList.add("is-done");
+          dot.textContent = "✓";
+          state.textContent = "完成";
+        } else if (mode === "fail") {
+          el.classList.add("is-fail");
+          dot.textContent = "✕";
+          state.textContent = "";
+          const detail = el.querySelector(".body small");
+          detail.innerHTML = '连接初始化失败，可重试 <span class="lx-chip is-code is-danger" style="margin-left:4px;">KEY_PROVISION_FAILED</span>';
+        } else {
+          dot.textContent = String(Number(el.dataset.step) + 1);
+          state.textContent = "";
+          const detail = el.querySelector(".body small");
+          if (el.dataset.step === "1") detail.textContent = "初始化本机的服务连接";
+        }
+      };
+
+      const run = () => {
+        clearTimeout(timer);
+        steps.forEach((s) => setStep(s, "idle"));
+        failActions.hidden = true;
+        foot.textContent = "不需要手动操作，完成后自动进入首页";
+
+        const failAt = location.hash === "#fail" ? 1 : -1;
+        const slow = location.hash === "#slow";
+        let i = 0;
+
+        const advance = () => {
+          if (i > 0) setStep(steps[i - 1], "done");
+          if (i >= steps.length) {
+            foot.textContent = "全部完成，正在进入首页…";
+            timer = setTimeout(() => (location.href = "home-online.html"), 700);
+            return;
+          }
+          if (i === failAt) {
+            setStep(steps[i], "fail");
+            failActions.hidden = false;
+            foot.textContent = "遇到问题时你的本机配置不会被修改";
+            return;
+          }
+          setStep(steps[i], "doing", slow && i === 1 ? "比平时慢一些，仍在继续…" : undefined);
+          i += 1;
+          timer = setTimeout(advance, slow && i === 2 ? 3200 : 1100);
+        };
+        advance();
+      };
+
+      document.getElementById("retry").addEventListener("click", () => {
+        // 演示：重试后从失败步继续并成功
+        history.replaceState(null, "", location.pathname);
+        run();
+      });
+
+      window.addEventListener("hashchange", run);
+      run();
+    });
+  </script>
+</body>
+</html>

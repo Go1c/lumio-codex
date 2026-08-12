@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 首页（在线）</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/home-online.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav" aria-label="主导航">
+        <a href="home-online.html" class="is-active">首页</a>
+        <a href="settings.html">设置</a>
+      </nav>
+      <span class="lx-phase is-online"><i></i>服务连接正常</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-dashboard">
+        <section class="lx-welcome">
+          <div>
+            <p class="lx-eyebrow">账户状态</p>
+            <h1>欢迎回来</h1>
+            <p class="email">mary@example.com</p>
+          </div>
+          <span class="lx-chip is-ok">🛡 凭据由系统保护</span>
+        </section>
+
+        <div class="lx-metrics">
+          <article class="lx-metric">
+            <span class="ico">💳</span>
+            <p>余额与套餐</p>
+            <strong id="balance">128.50</strong>
+            <small>专业套餐 · 2026-09-10 到期</small>
+          </article>
+          <article class="lx-metric">
+            <span class="ico">📶</span>
+            <p>连接状态</p>
+            <strong>在线</strong>
+            <small>
+              上次同步 09:20
+              <button class="lx-small-button" type="button" id="refresh" style="margin-left: 8px; min-height: 24px;">刷新</button>
+            </small>
+          </article>
+          <article class="lx-metric">
+            <span class="ico">✦</span>
+            <p>默认模型</p>
+            <strong>gpt-lumio-pro</strong>
+            <small><span class="lx-chip is-ok" style="padding: 3px 8px;">已配置</span> 由服务端管理</small>
+          </article>
+        </div>
+
+        <section class="lx-action-panel">
+          <div>
+            <p class="lx-eyebrow">官方 Codex</p>
+            <h2 id="codex-title">已检测到官方应用</h2>
+            <p class="sub" id="codex-sub">版本 2.4.1 · /Applications/Codex.app</p>
+          </div>
+          <div class="lx-actions">
+            <button class="lx-button is-secondary" type="button" id="pay">💳 充值</button>
+            <button class="lx-button is-primary" type="button" id="launch">🚀 启动 Codex</button>
+          </div>
+        </section>
+        <p class="lx-settings-note" id="no-codex-note" hidden>
+          未检测到官方应用，<a href="settings.html">去设置中选择</a>
+        </p>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <!-- 充值等待卡（5.6 流程的 App 内部分） -->
+  <div class="lx-modal-backdrop" id="pay-wait" role="dialog" aria-modal="true" aria-labelledby="pay-wait-title">
+    <div class="lx-modal">
+      <div id="pay-waiting">
+        <h3 id="pay-wait-title">已在浏览器中打开支付页面</h3>
+        <p>完成支付后回到这里，余额会自动更新。此窗口不影响浏览器中的支付。</p>
+        <p style="display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px;">
+          <span class="lx-spin"></span>正在等待支付结果…（演示 6 秒后自动成功）
+        </p>
+        <div class="lx-modal-actions">
+          <button class="lx-button is-secondary" type="button" id="pay-reopen">重新打开浏览器</button>
+          <button class="lx-button is-secondary" type="button" data-close-modal="pay-wait">关闭</button>
+        </div>
+      </div>
+      <div id="pay-success" hidden>
+        <h3>余额已更新</h3>
+        <p>本次充值已到账，当前余额 <strong style="color: var(--ok);">228.50</strong>。</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#no-codex", label: "未检测到官方应用" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const refresh = document.getElementById("refresh");
+      refresh.addEventListener("click", () => {
+        refresh.disabled = true;
+        refresh.innerHTML = '<span class="lx-spin" style="width:10px;height:10px;"></span>';
+        setTimeout(() => {
+          refresh.disabled = false;
+          refresh.textContent = "刷新";
+          Proto.toast("已同步最新账户数据", "ok");
+        }, 1200);
+      });
+
+      const launch = document.getElementById("launch");
+      launch.addEventListener("click", () => {
+        launch.disabled = true;
+        launch.innerHTML = '<span class="lx-spin"></span>正在启动…';
+        setTimeout(() => {
+          launch.disabled = false;
+          launch.textContent = "🚀 启动 Codex";
+          Proto.toast("官方 Codex 已启动", "ok");
+        }, 1400);
+      });
+
+      // 充值：创建交接 → 打开等待卡 → 演示 6 秒后成功
+      const pay = document.getElementById("pay");
+      let payTimer = null;
+      pay.addEventListener("click", () => {
+        pay.disabled = true;
+        pay.innerHTML = '<span class="lx-spin"></span>正在创建…';
+        setTimeout(() => {
+          pay.disabled = false;
+          pay.textContent = "💳 充值";
+          document.getElementById("pay-waiting").hidden = false;
+          document.getElementById("pay-success").hidden = true;
+          Proto.openModal("pay-wait");
+          Proto.toast("演示：系统浏览器已打开支付页", "ok");
+          clearTimeout(payTimer);
+          payTimer = setTimeout(() => {
+            document.getElementById("pay-waiting").hidden = true;
+            document.getElementById("pay-success").hidden = false;
+            document.getElementById("balance").textContent = "228.50";
+            setTimeout(() => Proto.closeModal("pay-wait"), 2000);
+          }, 6000);
+        }, 800);
+      });
+
+      document.getElementById("pay-reopen").addEventListener("click", () => {
+        Proto.toast("链接已更新，请使用最新打开的页面", "ok");
+      });
+
+      // 变体：未检测到官方应用
+      const applyVariant = () => {
+        const noCodex = location.hash === "#no-codex";
+        document.getElementById("codex-title").textContent = noCodex ? "尚未检测到官方应用" : "已检测到官方应用";
+        document.getElementById("codex-sub").textContent = noCodex ? "可在设置中重新检测或手动选择" : "版本 2.4.1 · /Applications/Codex.app";
+        document.getElementById("launch").disabled = noCodex;
+        document.getElementById("no-codex-note").hidden = !noCodex;
+      };
+      window.addEventListener("hashchange", applyVariant);
+      applyVariant();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>App 原型 · 设置</title>
+  <link rel="stylesheet" href="../assets/prototype.css" />
+</head>
+<body class="lx-desk" data-root="../" data-page="app/settings.html">
+  <div class="lx-window">
+    <div class="lx-aurora one" aria-hidden="true"></div>
+    <div class="lx-aurora two" aria-hidden="true"></div>
+
+    <header class="lx-topbar">
+      <span class="lx-brand">
+        <span class="lx-logo"></span>
+        <span class="lx-brand-name"><strong>Lumio Codex</strong><small>DESKTOP</small></span>
+      </span>
+      <nav class="lx-nav" aria-label="主导航">
+        <a href="home-online.html">首页</a>
+        <a href="settings.html" class="is-active">设置</a>
+      </nav>
+      <span class="lx-phase is-online"><i></i>服务连接正常</span>
+    </header>
+
+    <main class="lx-main">
+      <div class="lx-settings">
+        <p class="lx-eyebrow">桌面偏好</p>
+        <h1>设置</h1>
+        <p class="desc">这里只保留 Lumio Codex 运行所需的本机选项。</p>
+
+        <div class="lx-setting-list">
+          <article class="lx-setting-row">
+            <span class="sicon">🚀</span>
+            <div>
+              <strong>开机启动</strong>
+              <p>登录电脑后自动准备 Lumio Codex</p>
+            </div>
+            <button class="lx-toggle" type="button" id="tg-autostart" role="switch" aria-checked="false" aria-label="开机启动"><span></span></button>
+          </article>
+
+          <article class="lx-setting-row">
+            <span class="sicon">⬇</span>
+            <div>
+              <strong>自动更新</strong>
+              <p>仅安装经过校验且适用于当前平台的版本</p>
+              <p id="update-note" hidden style="color: var(--warn-soft);">你仍会收到重要安全更新提示</p>
+            </div>
+            <button class="lx-toggle is-on" type="button" id="tg-update" role="switch" aria-checked="true" aria-label="自动更新"><span></span></button>
+          </article>
+
+          <article class="lx-setting-row">
+            <span class="sicon">💻</span>
+            <div>
+              <strong>官方应用路径</strong>
+              <p class="path" id="codex-path">/Applications/Codex.app</p>
+              <p class="lx-error" id="detect-error" style="display: none;">未检测到，可手动选择</p>
+            </div>
+            <span style="display: flex; gap: 8px;">
+              <button class="lx-small-button" type="button" id="redetect">↻ 重新检测</button>
+              <button class="lx-small-button" type="button" id="manual-pick" hidden>手动选择…</button>
+            </span>
+          </article>
+
+          <article class="lx-setting-row">
+            <span class="sicon">📊</span>
+            <div>
+              <strong>遥测</strong>
+              <p>默认关闭；开启后也只发送版本、平台、阶段和脱敏错误码</p>
+            </div>
+            <button class="lx-toggle" type="button" id="tg-telemetry" role="switch" aria-checked="false" aria-label="遥测"><span></span></button>
+          </article>
+
+          <article class="lx-setting-row">
+            <span class="sicon">🗂</span>
+            <div>
+              <strong>日志导出</strong>
+              <p>导出前会再次扫描并移除敏感内容</p>
+            </div>
+            <button class="lx-small-button" type="button" id="export-logs">导出</button>
+          </article>
+
+          <article class="lx-setting-row">
+            <span class="sicon is-warn">↩</span>
+            <div>
+              <strong>配置恢复</strong>
+              <p>撤销 Lumio 管理的字段并保留其他本机设置</p>
+            </div>
+            <button class="lx-small-button is-warning" type="button" data-open-modal="restore-confirm">恢复</button>
+          </article>
+        </div>
+
+        <p class="lx-settings-note">🛡 不可用的选项会保持禁用，不会修改本机配置。</p>
+      </div>
+    </main>
+
+    <footer class="lx-window-footer">
+      <span>内部测试渠道</span><span class="sep"></span><span>官方应用需单独安装</span>
+      <span class="ver">v0.9.0</span>
+    </footer>
+  </div>
+
+  <!-- 遥测开启确认层 -->
+  <div class="lx-modal-backdrop" id="telemetry-confirm" role="dialog" aria-modal="true" aria-labelledby="telemetry-title">
+    <div class="lx-modal">
+      <h3 id="telemetry-title">开启遥测？</h3>
+      <p>开启后只发送以下四类信息，用于改进产品稳定性：</p>
+      <ul>
+        <li>客户端版本</li>
+        <li>操作系统与架构</li>
+        <li>启动阶段（枚举值）</li>
+        <li>脱敏后的错误码</li>
+      </ul>
+      <p>永远不会发送：邮箱、任何凭据、提示词、代码、文件路径或请求内容。</p>
+      <div class="lx-modal-actions">
+        <button class="lx-button is-secondary" type="button" data-close-modal="telemetry-confirm" id="telemetry-cancel">取消</button>
+        <button class="lx-button is-primary" type="button" id="telemetry-go">确认开启</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 配置恢复二次确认（与修复页一致） -->
+  <div class="lx-modal-backdrop" id="restore-confirm" role="dialog" aria-modal="true" aria-labelledby="restore-title">
+    <div class="lx-modal">
+      <h3 id="restore-title">恢复本机配置？</h3>
+      <p>将撤销由 Lumio 管理的配置字段并恢复接管前内容，你的其他本机设置不受影响。</p>
+      <p>恢复后需要重新登录才能再次使用 Lumio 连接。</p>
+      <div class="lx-modal-actions">
+        <button class="lx-button is-secondary" type="button" data-close-modal="restore-confirm">取消</button>
+        <button class="lx-button is-warning" type="button" id="restore-go">确认恢复</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.protoVariants = [
+      { hash: "#detect-fail", label: "重新检测失败" },
+    ];
+  </script>
+  <script src="../assets/prototype.js" defer></script>
+  <script defer>
+    window.addEventListener("DOMContentLoaded", () => {
+      const flipToggle = (btn) => {
+        const on = btn.classList.toggle("is-on");
+        btn.setAttribute("aria-checked", String(on));
+        return on;
+      };
+
+      // 开机启动：即点即生效
+      document.getElementById("tg-autostart").addEventListener("click", (e) => {
+        const on = flipToggle(e.currentTarget);
+        Proto.toast(on ? "已开启开机启动" : "已关闭开机启动", "ok");
+      });
+
+      // 自动更新：关闭时出现安全提示灰字
+      document.getElementById("tg-update").addEventListener("click", (e) => {
+        const on = flipToggle(e.currentTarget);
+        document.getElementById("update-note").hidden = on;
+      });
+
+      // 遥测：开启前必须过确认层
+      const tgTelemetry = document.getElementById("tg-telemetry");
+      tgTelemetry.addEventListener("click", () => {
+        if (tgTelemetry.classList.contains("is-on")) {
+          flipToggle(tgTelemetry);
+          Proto.toast("已关闭遥测", "ok");
+        } else {
+          Proto.openModal("telemetry-confirm");
+        }
+      });
+      document.getElementById("telemetry-go").addEventListener("click", () => {
+        Proto.closeModal("telemetry-confirm");
+        flipToggle(tgTelemetry);
+        Proto.toast("已开启遥测", "ok");
+      });
+
+      // 重新检测：成功路径行绿闪；失败保留原值 + 手动选择入口
+      const redetect = document.getElementById("redetect");
+      const pathEl = document.getElementById("codex-path");
+      redetect.addEventListener("click", () => {
+        redetect.disabled = true;
+        redetect.innerHTML = '<span class="lx-spin" style="width:10px;height:10px;"></span> 检测中…';
+        setTimeout(() => {
+          redetect.disabled = false;
+          redetect.textContent = "↻ 重新检测";
+          if (location.hash === "#detect-fail") {
+            document.getElementById("detect-error").style.display = "block";
+            document.getElementById("manual-pick").hidden = false;
+            Proto.toast("未检测到官方应用", "error", "CODEX_APP_NOT_FOUND");
+          } else {
+            document.getElementById("detect-error").style.display = "none";
+            document.getElementById("manual-pick").hidden = true;
+            pathEl.style.transition = "color 300ms ease";
+            pathEl.style.color = "var(--ok)";
+            setTimeout(() => (pathEl.style.color = ""), 900);
+            Proto.toast("检测成功：/Applications/Codex.app", "ok");
+          }
+        }, 1400);
+      });
+
+      document.getElementById("manual-pick").addEventListener("click", () => {
+        // 演示：手动选择了无效应用
+        Proto.toast("所选应用无法识别为官方 Codex", "error", "CODEX_APP_INVALID");
+      });
+
+      // 日志导出
+      const exportBtn = document.getElementById("export-logs");
+      exportBtn.addEventListener("click", () => {
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = '<span class="lx-spin" style="width:10px;height:10px;"></span> 导出中…';
+        setTimeout(() => {
+          exportBtn.disabled = false;
+          exportBtn.textContent = "导出";
+          Proto.toast("已导出到 ~/Downloads/lumio-diagnostics.zip", "ok");
+        }, 1500);
+      });
+
+      // 配置恢复
+      document.getElementById("restore-go").addEventListener("click", () => {
+        Proto.closeModal("restore-confirm");
+        Proto.toast("已恢复接管前配置", "ok");
+        setTimeout(() => (location.href = "signed-out.html"), 1200);
+      });
+    });
+  </script>
+</body>
+</html>
