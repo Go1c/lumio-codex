@@ -10,6 +10,23 @@ https://api.lumio.games/
 
 后台实现应是你们部署的 **Sub2API**（上游文档见 Sub2API 仓库 README / `deploy/`）。本仓只约定**桌面依赖的契约与验收**。
 
+> **Sub2API 是全 Lumio 唯一的账号数据源。** 邮箱 / 口令 / 2FA / 余额只有这一套：
+> Lumio Codex 桌面端、统一门户 `lumiogame.com`、CC避风港的控制面都认它签发的令牌。
+> CCHaven 控制面已下线自有终端用户认证（对应端点返回 410），不存在第二套注册登录。
+> 跨产品视角见根 [`docs/ops/03-service-prerequisites.md`](../../../docs/ops/03-service-prerequisites.md)。
+
+## 0. 域名现状（哪些变了、哪些没变）
+
+| 常量 / 域名 | 取值 | 本次迁移 |
+|-------------|------|----------|
+| `API_BASE_URL` | `https://api.lumio.games/` | **未变**，且不允许变——存量客户端硬编码 |
+| `PAYMENT_PATH` | `/purchase`（拼出 `https://api.lumio.games/purchase`） | 未变 |
+| `SITE_BASE_URL` | `https://codex.lumiogame.com` | **已改**：官网从 `lumio.games` 迁到统一门户的子域 |
+| `RELEASES_PAGE_URL` | `https://github.com/Go1c/lumio-codex/releases` | 未变 |
+
+`SITE_BASE_URL` 只是营销 / 下载引导站点，改它不影响任何接口地址；充值、支持、
+重置密码一律走 `API_BASE_URL`。
+
 ## 1. 桌面端实际调用的能力
 
 | 能力 | 典型路径 / 行为 | 客户端位置 |
@@ -32,6 +49,10 @@ https://api.lumio.games/
 3. DNS：`api.lumio.games` → 该入口  
 4. 配置：注册开关、邮箱验证、邀请码、支付渠道、默认模型等  
 5. 确认 CORS / Cookie 策略与支付前端一致（若支付在 API 同源前端）
+6. **为统一官网三站放行 CORS**：`https://lumiogame.com`、`https://cc.lumiogame.com`、
+   `https://codex.lumiogame.com`，允许 `Authorization` 请求头——三站是纯静态站点，
+   直连本 API，没有同源反代（清单见根
+   [`docs/ops/03-service-prerequisites.md`](../../../docs/ops/03-service-prerequisites.md)）
 
 安装类命令以 Sub2API 文档为准，例如其 README 中的 `deploy/install.sh` / `docker-deploy.sh`（版本与镜像名以你们锁定的 fork 为准）。
 
@@ -39,9 +60,14 @@ https://api.lumio.games/
 
 ```text
 api.lumio.games           ← App 的 JSON API、账户网页 /support /reset-password
-api.lumio.games/purchase  ← App「充值」按钮目标（禁止配成 lumio.games）
-lumio.games               ← 营销 / 下载站 only
+api.lumio.games/purchase  ← App「充值」按钮目标（禁止配成官网域名）
+codex.lumiogame.com       ← 营销 / 下载站 only（web/apps/codex）
+lumiogame.com             ← 总门户：浏览器端的注册 / 登录 / 2FA / 账户中心
+lumio.games               ← 旧官网，301 到 codex.lumiogame.com 后下线
 ```
+
+浏览器侧的账号页面在门户，桌面端的账号流程仍在 App 内直连 Sub2API——两条路径连的是
+同一个后台、同一份用户数据，不是两套账号。
 
 登录页「联系支持 / 重置密码」使用 **`apiBaseUrl`**（即 API 源），不是官网源。请保证：
 

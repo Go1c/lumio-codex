@@ -13,6 +13,18 @@ Lumio 产品族的统一仓库：一个总门户（`lumiogame.com`）分发两�
 
 `codex/` 与 `cchaven/` 各自是独立的 Rust workspace / npm 工程，互不引用；构建与测试在各自目录内执行。
 
+## 构建统一官网三站
+
+```bash
+cd web
+npm ci
+npm run build                              # 三站一起构建
+npm run build --workspace @lumio/portal    # 或只构建一站（@lumio/cc / @lumio/codex 同理）
+```
+
+产物分别在 `web/apps/portal/dist/`、`web/apps/cc/dist/`、`web/apps/codex/dist/`，
+都是静态 SPA。部署与域名切换见 [`docs/ops/`](docs/ops/README.md)。
+
 ## 域名与架构
 
 | 域名 | 用途 |
@@ -21,7 +33,10 @@ Lumio 产品族的统一仓库：一个总门户（`lumiogame.com`）分发两�
 | `cc.lumiogame.com` | CCHaven 产品站（介绍 / 定价 / 下载） |
 | `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载） |
 | `api.lumio.games` | Sub2API：统一账号 / Key / 充值（存量桌面客户端硬编码，不可变更） |
+| `api.cc.lumiogame.com` | CCHaven 控制面 API（域名待最终确认，已写进代码默认值） |
 | `lumio.games`、`cchaven.cn` | 旧域名，301 跳转到新站 |
+
+三站部署、DNS 切换与上线验收见跨产品运维手册 [`docs/ops/`](docs/ops/README.md)。
 
 ## 许可
 
@@ -30,7 +45,8 @@ Lumio 产品族的统一仓库：一个总门户（`lumiogame.com`）分发两�
 
 ## 开发入口
 
+- 跨产品运维（三站部署 / 域名切换 / 上线验收）：[`docs/ops/`](docs/ops/README.md)
 - Lumio Codex：[`codex/README.md`](codex/README.md)、运维手册 [`codex/docs/ops/`](codex/docs/ops/README.md)
 - CCHaven：[`cchaven/README.md`](cchaven/README.md)、运维手册 [`cchaven/docs/ops/`](cchaven/docs/ops/README.md)
-- 统一官网：`web/README.md`
+- 统一官网开发：[`web/README.md`](web/README.md)
 - Agent 协作规范：[`AGENTS.md`](AGENTS.md) → [`.spec/AGENTS.md`](.spec/AGENTS.md)

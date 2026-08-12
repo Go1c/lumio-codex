@@ -1,6 +1,16 @@
-# 02 · 官网部署（lumio.games）
+# 02 · 旧官网（lumio.games）下线与过渡
 
-## 1. 内容来源
+> **官网已经搬家。** Lumio Codex 的产品站现在是 `web/apps/codex`，域名
+> `codex.lumiogame.com`，构建与分发写在根 [`docs/ops/`](../../../docs/ops/README.md)：
+>
+> - 构建与静态托管 → [`docs/ops/01-web-sites-deploy.md`](../../../docs/ops/01-web-sites-deploy.md)
+> - 域名、证书、301 → [`docs/ops/02-domains-and-dns.md`](../../../docs/ops/02-domains-and-dns.md)
+> - 上线验收 → [`docs/ops/04-golive-checklist.md`](../../../docs/ops/04-golive-checklist.md)
+>
+> **本文只剩两件事**：旧 GitHub Pages 站怎么下线，以及过渡期怎么安排。
+> 新站的步骤不要复制到这里，避免两份互相打架的说法。
+
+## 1. 旧站是什么
 
 | 项 | 路径 |
 |----|------|
@@ -8,65 +18,36 @@
 | 入口 | `site/index.html` |
 | 样式 / 脚本 | `site/styles.css`、`site/site.js` |
 | 域名提示 | `site/CNAME` → `lumio.games` |
-| 交互规格 | [`docs/specs/2026-08-12-lumio-ux-interaction-design.md`](../specs/2026-08-12-lumio-ux-interaction-design.md) §3 |
+| 发布指针 | `site/latest-internal.json`（新站同名文件的格式参考） |
 
-官网**不承载**登录 / 注册 / 账户入口。下载确认后跳转 GitHub Releases。
+部署方式是 GitHub Pages（仓库设置 → Pages，源为发版分支的 `/site` 目录，自定义域名
+`lumio.games`）。旧站不承载登录 / 注册 / 账户入口，下载确认后跳 GitHub Releases 或 CDN。
 
-## 2. 本地预览
+## 2. 过渡期（新站已上线、旧站还没停）
 
-```bash
-# 任意静态服务器均可，例如：
-cd site
-python3 -m http.server 8080
-# 浏览器打开 http://127.0.0.1:8080/
-```
+两套站可以并存一段时间，期间：
 
-或直接用浏览器打开 `site/index.html`（部分字体 CDN 需联网）。
+- **内容以新站为准**。旧站只做兜底，不要再往 `site/` 加新功能或新文案。
+- 发内测包后，发布指针要同时更新新站的 `/latest-internal.json`
+  （见 [`docs/ops/01-web-sites-deploy.md`](../../../docs/ops/01-web-sites-deploy.md) §4）；
+  旧站读的是 CDN 上的同一份，不需要单独发布。
+- 桌面端里的官网链接已经指向新站（`crates/codex-plus-core/src/lumio/product.rs`
+  的 `SITE_BASE_URL` = `https://codex.lumiogame.com`），所以新装的客户端不会再把用户带回旧站。
 
-## 3. 推荐部署：GitHub Pages
+## 3. 下线步骤
 
-仓库设置 → Pages：
+前提：`codex.lumiogame.com` 已可用并通过验收（[`docs/ops/04-golive-checklist.md`](../../../docs/ops/04-golive-checklist.md) A / F 两节）。
 
-1. Source：Deploy from a branch  
-2. Branch：`publish`（或你们锁定的发版分支）  
-3. Folder：`/site`  
-4. 自定义域名：`lumio.games`  
-5. 启用 HTTPS（DNS 生效后勾选）
+1. 在 DNS 侧把 `lumio.games` 改成 301 到 `https://codex.lumiogame.com/`
+   （先跑一轮 302 验证，见 [`docs/ops/02-domains-and-dns.md`](../../../docs/ops/02-domains-and-dns.md) §3）。
+2. 仓库设置 → Pages：移除自定义域名 `lumio.games`，或直接把 Pages 关掉。
+3. 确认 `https://lumio.games/` 跳到新站，且新站的下载区正常。
+4. `site/` 目录暂时保留（历史与文案参考，`latest-internal.json` 还是格式基准），
+   不再作为部署来源；真要删除需单独决策。
 
-DNS（域名提供商）：
+## 4. 不变的事
 
-| 类型 | 主机 | 值 |
-|------|------|-----|
-| `A` / `AAAA` 或 `CNAME` | `@` / `www` | 按 [GitHub Pages 自定义域名文档](https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site) 填写 |
-
-仓库内已有 `site/CNAME`，推送后 Pages 会识别。
-
-> 若使用 Cloudflare / 自建 Nginx / S3+CloudFront，把 `site/` 整目录当作文档根即可；确保 `index.html` 为默认页。
-
-## 4. 支付路径（API 站，不是官网）
-
-桌面端在线充值打开：
-
-```text
-https://api.lumio.games/purchase
-```
-
-常量见 `crates/codex-plus-core/src/lumio/product.rs`（`API_BASE_URL` + `PAYMENT_PATH`）。**不要**配成 `https://lumio.games/...`。
-
-支付页由 Sub2API / `api.lumio.games` 提供。官网 `site/` 只做营销与下载，不承载充值。  
-（规格里的一次性 payment-handoff API 尚未作为强制依赖；当前是「打开网站」。）
-
-## 5. 部署后验收
-
-- [ ] `https://lumio.games/` 打开为 Lumio 官网（非旧 Codex++ 页）  
-- [ ] 顶栏「下载」滚到下载区；确认层后能进 Releases  
-- [ ] FAQ 三条可用；无「登录 / 注册」导航  
-- [ ] `https://api.lumio.games/purchase` 可达  
-- [ ] HTTPS 有效；`www` 与裸域策略自洽  
-
-## 6. 改官网内容时
-
-1. 改 `site/`（保持 §3 五块结构，勿加账户入口）  
-2. 本地预览  
-3. 提交并推送触发 Pages 更新  
-4. 在 [05-maintenance.md](./05-maintenance.md) 的文档义务中同步规格若文案基线变了  
+- 充值仍然是 `https://api.lumio.games/purchase`，常量在
+  `crates/codex-plus-core/src/lumio/product.rs`（`API_BASE_URL` + `PAYMENT_PATH`）。
+  **不要**配成任何官网域名。
+- `api.lumio.games` 本身不迁移、不改动——存量桌面客户端硬编码了它（见 [04](./04-backend.md)）。

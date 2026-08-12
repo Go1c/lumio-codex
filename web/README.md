@@ -82,22 +82,28 @@ npm run lint    # eslint（可选，不在收口门槛内）
 
 未配置 CC 下载地址时，下载页显示空态而不是坏链接。
 
-## 部署产物
+## 部署
 
-| 站点 | 产物目录 | 静态托管要点 |
-|------|----------|--------------|
-| 门户 | `web/apps/portal/dist/` | SPA：未命中的路径回退 `index.html` |
-| CC | `web/apps/cc/dist/` | 同上 |
-| Codex | `web/apps/codex/dist/` | 同上；另需把发布指针放到 `/latest-internal.json` |
+**部署步骤的权威文档是根 [`docs/ops/`](../docs/ops/README.md)**，本文件不重复：
+
+- 构建、静态托管方案（nginx / Cloudflare Pages）、SPA 回退、Codex 站的 `/latest-internal.json`
+  指针 → [`docs/ops/01-web-sites-deploy.md`](../docs/ops/01-web-sites-deploy.md)
+- DNS 记录、证书、旧域名 301、切换顺序与回滚 → [`docs/ops/02-domains-and-dns.md`](../docs/ops/02-domains-and-dns.md)
+- Sub2API 侧的 CORS 与接口契约要求 → [`docs/ops/03-service-prerequisites.md`](../docs/ops/03-service-prerequisites.md)
+- 上线验收清单 → [`docs/ops/04-golive-checklist.md`](../docs/ops/04-golive-checklist.md)
+
+产物目录：`apps/portal/dist/`、`apps/cc/dist/`、`apps/codex/dist/`，都是静态 SPA
+（未命中的路径必须回退 `index.html`）。
 
 Codex 下载区先读**同源** `/latest-internal.json`（避开 S3 的 CORS），失败再读
 `https://s3.lumio.games/lumio-codex/releases/latest-internal.json`，两者都不可用时退回
-GitHub Releases 页。同源指针由发布流水线随站点一起发布（源在 `codex/site/latest-internal.json`，
-本目录不复制该生成物）。
+GitHub Releases 页。同源指针在部署时由发布流水线的产物复制到站点根目录，
+本目录不生成也不复制该文件。
 
 ## 对服务端 / 运维的依赖
 
-以下三项**必须由服务端与运维配合**，前端无法单方面解决：
+以下三项**必须由服务端与运维配合**，前端无法单方面解决（操作细节见
+[`docs/ops/03-service-prerequisites.md`](../docs/ops/03-service-prerequisites.md)）：
 
 1. **Sub2API CORS**：`https://api.lumio.games` 需允许来源 `https://lumiogame.com`、
    `https://cc.lumiogame.com`、`https://codex.lumiogame.com`（本地联调还需 `http://localhost:528x`），
