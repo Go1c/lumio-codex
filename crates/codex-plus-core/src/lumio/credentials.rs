@@ -88,9 +88,9 @@ impl CredentialStore {
         };
         // 失败原因一律折叠成稳定码：io::Error 的 Display 会带上完整路径。
         let bytes = serde_json::to_vec(&record).map_err(|_| STORAGE_ERROR.to_string())?;
-        let path = self.path();
-        crate::settings::atomic_write(&path, &bytes).map_err(|_| STORAGE_ERROR.to_string())?;
-        restrict_permissions(&path)
+        // 临时文件创建时就是 0600，不能走 settings::atomic_write 那个「先 umask 再 chmod」的窗口。
+        super::secret_file::write_secret(&self.path(), &bytes)
+            .map_err(|_| STORAGE_ERROR.to_string())
     }
 
     pub fn clear(&self) -> Result<(), String> {
@@ -110,20 +110,6 @@ fn read_record(path: &Path) -> Option<StoredRecord> {
         return None;
     }
     Some(record)
-}
-
-/// `atomic_write` 是 rename 语义，临时文件上的权限不会跟到最终路径，只能事后收紧。
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|_| STORAGE_ERROR.to_string())
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(test)]

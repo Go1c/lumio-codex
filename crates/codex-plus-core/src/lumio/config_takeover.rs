@@ -111,11 +111,22 @@ impl SnapshotSlot {
 
     /// 首次接管时把原始状态记下来；已经记过就原样保留——快照一旦建立便不可再被覆盖。
     fn record_once(&self, current: Option<&[u8]>) -> Result<(), String> {
+        self.record_once_with(current, false)
+    }
+
+    /// 与 [`Self::record_once`] 相同，但内容按敏感文件写入（临时文件创建时即 0600）。
+    fn record_once_secret(&self, current: Option<&[u8]>) -> Result<(), String> {
+        self.record_once_with(current, true)
+    }
+
+    fn record_once_with(&self, current: Option<&[u8]>, secret: bool) -> Result<(), String> {
         if self.recorded().is_some() {
             return Ok(());
         }
         match current {
+            Some(bytes) if secret => write_secret_bytes(&self.content, bytes, WRITE_FAILED),
             Some(bytes) => write_bytes(&self.content, bytes, WRITE_FAILED),
+            // 缺席标记不含秘密，常规写入即可。
             None => write_bytes(&self.absent, b"", WRITE_FAILED),
         }
     }
@@ -146,11 +157,11 @@ pub fn apply_takeover(
     let manifest_path = takeover_dir.join(MANIFEST_FILE);
     // 用户的文件在这两行之前一个字节都没被碰过：原始状态先不可逆地记下来，再动手改写。
     SnapshotSlot::config(&takeover_dir).record_once(config_bytes.as_deref())?;
-    SnapshotSlot::auth(&takeover_dir).record_once(auth_bytes.as_deref())?;
+    SnapshotSlot::auth(&takeover_dir).record_once_secret(auth_bytes.as_deref())?;
 
     write_bytes(&config_path, config_output.as_bytes(), WRITE_FAILED)?;
-    write_bytes(&auth_path, auth_output.as_bytes(), WRITE_FAILED)?;
-    restrict_permissions(&auth_path)?;
+    // auth.json 含 API Key 明文：临时文件创建时就必须是 0600。
+    write_secret_bytes(&auth_path, auth_output.as_bytes(), WRITE_FAILED)?;
 
     let manifest = Manifest {
         config_sha256: sha256(config_output.as_bytes()),
@@ -222,10 +233,10 @@ pub fn restore(codex_home: &Path, state_dir: &Path) -> Result<(), String> {
 
     // 只恢复记录过的槽位。没记录 = 接管还没轮到这个文件，它现在就是原始内容。
     if let Some(state) = config_state {
-        restore_one(&codex_home.join(CONFIG_FILE), &config_slot, state)?;
+        restore_one(&codex_home.join(CONFIG_FILE), &config_slot, state, false)?;
     }
     if let Some(state) = auth_state {
-        restore_one(&codex_home.join(AUTH_FILE), &auth_slot, state)?;
+        restore_one(&codex_home.join(AUTH_FILE), &auth_slot, state, true)?;
     }
 
     // 快照在成功写回之后才丢弃，中途失败仍留有原始字节可再试一次。
@@ -236,11 +247,20 @@ pub fn restore(codex_home: &Path, state_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn restore_one(target: &Path, slot: &SnapshotSlot, state: OriginalState) -> Result<(), String> {
+fn restore_one(
+    target: &Path,
+    slot: &SnapshotSlot,
+    state: OriginalState,
+    secret: bool,
+) -> Result<(), String> {
     match state {
         OriginalState::Present => {
             let bytes = std::fs::read(&slot.content).map_err(|_| RESTORE_FAILED.to_string())?;
-            write_bytes(target, &bytes, RESTORE_FAILED)
+            if secret {
+                write_secret_bytes(target, &bytes, RESTORE_FAILED)
+            } else {
+                write_bytes(target, &bytes, RESTORE_FAILED)
+            }
         }
         OriginalState::Absent => remove_if_present(target),
     }
@@ -308,6 +328,10 @@ fn write_bytes(path: &Path, bytes: &[u8], error_code: &str) -> Result<(), String
     atomic_write(path, bytes).map_err(|_| error_code.to_string())
 }
 
+fn write_secret_bytes(path: &Path, bytes: &[u8], error_code: &str) -> Result<(), String> {
+    super::secret_file::write_secret(path, bytes).map_err(|_| error_code.to_string())
+}
+
 fn remove_if_present(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -325,21 +349,6 @@ fn now_unix_seconds() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string())
-}
-
-/// `auth.json` 里是 API Key 明文，写完必须收紧到 owner-only；
-/// `atomic_write` 是 rename 语义，权限只能落在最终路径上。
-#[cfg(unix)]
-fn restrict_permissions(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|_| WRITE_FAILED.to_string())
-}
-
-#[cfg(not(unix))]
-fn restrict_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -651,6 +660,49 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// 快照里是用户自己的 `auth.json`（含他的 ChatGPT 登录令牌），和我们写下去的那份
+    /// 一样敏感，同样不能有一个 0644 的窗口。
+    #[cfg(unix)]
+    #[test]
+    fn the_auth_snapshot_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fx = fixture();
+        std::fs::write(
+            fx.codex_home.join("auth.json"),
+            r#"{"tokens":{"id_token":"user-chatgpt-token"}}"#,
+        )
+        .unwrap();
+
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+
+        let snapshot = fx.state_dir.join(TAKEOVER_DIR).join(AUTH_SNAPSHOT);
+        let mode = std::fs::metadata(&snapshot).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "unexpected mode {:o}", mode & 0o777);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_auth_file_restored_from_the_snapshot_stays_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let fx = fixture();
+        std::fs::write(
+            fx.codex_home.join("auth.json"),
+            r#"{"tokens":{"id_token":"user-chatgpt-token"}}"#,
+        )
+        .unwrap();
+
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        restore(&fx.codex_home, &fx.state_dir).unwrap();
+
+        let mode = std::fs::metadata(fx.codex_home.join("auth.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "unexpected mode {:o}", mode & 0o777);
     }
 
     #[test]
