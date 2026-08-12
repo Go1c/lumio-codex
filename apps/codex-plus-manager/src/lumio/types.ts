@@ -19,6 +19,8 @@ export interface LumioCodexApp {
   source: "automatic" | "manual";
 }
 
+export type LumioCredentialStatus = "present" | "missing" | "invalid";
+
 export interface LumioBootstrap {
   version: string;
   platform: string;
@@ -27,6 +29,9 @@ export interface LumioBootstrap {
   account: LumioAccountSummary | null;
   telemetryEnabled: boolean;
   autoUpdateEnabled: boolean;
+  // Optional while the command layer lands: the shell must stay usable against a
+  // bootstrap payload that predates the credential probe.
+  credentialStatus?: LumioCredentialStatus;
 }
 
 export interface LumioAgreementDocument {
@@ -47,4 +52,29 @@ export interface LumioServiceSettings {
   siteBaseUrl: string;
 }
 
-export type LumioCredentialStatus = "present" | "missing" | "invalid";
+export interface LumioAuthResult {
+  requiresTwoFactor: boolean;
+  maskedEmail: string | null;
+  account: LumioAccountSummary | null;
+}
+
+export interface LumioVerifyCodeResult {
+  countdown: number;
+}
+
+export interface LumioProvisionStepResult {
+  step: string;
+}
+
+export interface LumioTakeoverHealth {
+  health: string;
+  errorCode: string | null;
+}
+
+export interface LumioTelemetryResult {
+  enabled: boolean;
+}
+
+export interface LumioExportLogsResult {
+  path: string;
+}
