@@ -31,6 +31,6 @@ Lumio 产品族的统一仓库：一个总门户（`lumiogame.com`）分发两�
 ## 开发入口
 
 - Lumio Codex：[`codex/README.md`](codex/README.md)、运维手册 [`codex/docs/ops/`](codex/docs/ops/README.md)
-- CCHaven：`cchaven/README.md`、运维手册 `cchaven/docs/ops/`
+- CCHaven：[`cchaven/README.md`](cchaven/README.md)、运维手册 [`cchaven/docs/ops/`](cchaven/docs/ops/README.md)
 - 统一官网：`web/README.md`
 - Agent 协作规范：[`AGENTS.md`](AGENTS.md) → [`.spec/AGENTS.md`](.spec/AGENTS.md)

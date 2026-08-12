@@ -12,7 +12,7 @@ metadata:
 
 ## 何时查 docs/ops
 
-- 部署官网 `site/` → `lumio.games`
+- 部署官网 `codex/site/` → `lumio.games`
 - 本机或 CI 编译、打 `internal-unsigned` 包
 - 打 Git tag / GitHub Release、验证更新提醒
 - 对接或验收 `api.lumio.games`（Sub2API）
