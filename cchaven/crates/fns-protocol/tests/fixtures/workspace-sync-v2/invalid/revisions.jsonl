@@ -1,0 +1,5 @@
+{"case":"number","value":1,"field":"revision","reason":"must_be_string"}
+{"case":"negative","value":"-1","field":"revision","reason":"non_canonical_decimal"}
+{"case":"leading-zero","value":"01","field":"revision","reason":"non_canonical_decimal"}
+{"case":"overflow","value":"18446744073709551616","field":"revision","reason":"non_canonical_decimal"}
+{"case":"empty","value":"","field":"revision","reason":"empty"}

@@ -1,0 +1,7 @@
+{
+  "name": "ci-isolation",
+  "testOnly": true,
+  "serverEndpoint": "ws://127.0.0.1:9000/api/user/workspace-sync/v2",
+  "sshHostAlias": "selftest-ssh",
+  "scenarios": ["bidirectional-soak-10m"]
+}

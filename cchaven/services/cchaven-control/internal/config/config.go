@@ -1,0 +1,222 @@
+// Package config 从环境变量装载服务配置（12-factor）。
+package config
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// devAdminURL 是管理后台的本地开发地址，取自 apps/admin/vite.config.ts 的 server.port。
+const devAdminURL = "http://localhost:5183"
+
+// Config 是服务的完整运行配置。
+type Config struct {
+	Env        string // dev | prod
+	HTTPAddr   string
+	PublicURL  string // 官网地址，用于拼接邀请链接与邮件里的重设链接
+	AdminURL   string // 管理后台地址；后台独立部署，不是官网的子路径
+	CookieName CookieNames
+
+	DatabaseURL string
+
+	// Secrets 全部来自环境变量，绝不落配置文件。
+	JWTSecret     []byte
+	CodePepper    []byte // 验证码摘要的 pepper
+	TOTPSecretKey []byte // 加密管理员 TOTP 种子的 AES-256 密钥
+
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	WebSessionTTL   time.Duration
+	AdminSessionTTL time.Duration
+
+	SecureCookies  bool
+	CookieSameSite http.SameSite
+
+	SMTP SMTPConfig
+}
+
+// TrustedOrigins 返回允许携带 cookie 访问控制面的前端来源。
+//
+// 恰好两个，因为本系统有两套独立部署、互不相干的前端：
+//   - PublicURL —— 官网 apps/web（cchaven.cn）
+//   - AdminURL  —— 管理后台 apps/admin（admin.cchaven.cn）。交互设计第 7 章要求后台
+//     与官网、APP 完全隔离，它不是官网的子路径，因此必须单独列为可信来源，
+//     否则后台在生产环境会被 CORS 与写操作的同源校验一起挡死。
+//
+// CORS 响应头与 cookie 写操作的 CSRF 校验都读这一处，两者永远一致。
+// 将来再加前端（比如独立的状态页），在 Config 里加字段并追加到这里即可，
+// 不要在 api 层另开一个 if 分支。
+func (c Config) TrustedOrigins() []string {
+	origins := make([]string, 0, 2)
+	for _, origin := range []string{c.PublicURL, c.AdminURL} {
+		if origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	return origins
+}
+
+// Warnings 返回启动时应当提醒运维、但还不足以阻止服务启动的配置问题。
+// 由 main 在日志初始化之后逐条打出，避免这些坑要等到线上报障才被发现。
+func (c Config) Warnings() []string {
+	var out []string
+
+	if c.Env == "prod" && c.AdminURL == "" {
+		out = append(out, "未配置 CCHAVEN_ADMIN_URL：管理后台的来源不在可信集合里，"+
+			"浏览器会拦下它的跨源请求，后台的所有写操作都会返回 403")
+	}
+	// Secure cookie 在明文 HTTP 上会被浏览器丢弃（http://localhost 是各浏览器的特例，
+	// 生产域名没有这个豁免）。SameSite=None 强制开了 Secure，非 prod 环境下要提醒一句。
+	if c.CookieSameSite == http.SameSiteNoneMode && c.Env != "prod" {
+		out = append(out, "CCHAVEN_COOKIE_SAMESITE=none 已强制 Secure=true："+
+			"当前环境不是 prod，若控制面没走 HTTPS，浏览器会直接丢弃会话 cookie，登录将无法保持")
+	}
+
+	return out
+}
+
+// CookieNames 集中管理 cookie 名称，避免各处硬编码。
+type CookieNames struct {
+	Session  string
+	Refresh  string
+	Referral string
+	Admin    string
+}
+
+// SMTPConfig 为空时邮件只入 email_outbox 不实际投递（开发与测试默认行为）。
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+}
+
+// Enabled 报告是否配置了可用的 SMTP 服务器。
+func (s SMTPConfig) Enabled() bool { return s.Host != "" }
+
+// Load 读取环境变量并校验必填项。
+func Load() (Config, error) {
+	environment := env("CCHAVEN_ENV", "dev")
+
+	sameSite, err := parseSameSite(env("CCHAVEN_COOKIE_SAMESITE", "lax"))
+	if err != nil {
+		return Config{}, err
+	}
+
+	// 后台地址只在 dev 有默认值：本地开发一定跑在 vite 端口上，猜得准；
+	// 生产的后台域名无从推断，宁可留空并在启动时告警，也不要猜一个错的放进可信来源。
+	adminURL := strings.TrimRight(env("CCHAVEN_ADMIN_URL", ""), "/")
+	if adminURL == "" && environment == "dev" {
+		adminURL = devAdminURL
+	}
+
+	cfg := Config{
+		Env:       environment,
+		HTTPAddr:  env("CCHAVEN_HTTP_ADDR", ":8080"),
+		PublicURL: strings.TrimRight(env("CCHAVEN_PUBLIC_URL", "http://localhost:5173"), "/"),
+		AdminURL:  adminURL,
+		CookieName: CookieNames{
+			Session:  "cch_sess",
+			Refresh:  "cch_refresh",
+			Referral: "cch_ref",
+			Admin:    "cch_admin",
+		},
+		DatabaseURL:     env("CCHAVEN_DATABASE_URL", ""),
+		AccessTokenTTL:  duration("CCHAVEN_ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL: duration("CCHAVEN_REFRESH_TOKEN_TTL", 60*24*time.Hour),
+		WebSessionTTL:   duration("CCHAVEN_WEB_SESSION_TTL", 30*24*time.Hour),
+		AdminSessionTTL: duration("CCHAVEN_ADMIN_SESSION_TTL", 12*time.Hour),
+		SMTP: SMTPConfig{
+			Host:     env("CCHAVEN_SMTP_HOST", ""),
+			Port:     integer("CCHAVEN_SMTP_PORT", 587),
+			Username: env("CCHAVEN_SMTP_USERNAME", ""),
+			Password: env("CCHAVEN_SMTP_PASSWORD", ""),
+			From:     env("CCHAVEN_SMTP_FROM", "CC避风港 <no-reply@cchaven.cn>"),
+		},
+	}
+	cfg.CookieSameSite = sameSite
+	// SameSite=None 的 cookie 浏览器一律要求同时带 Secure，否则整条 Set-Cookie 被忽略。
+	// 与其让运维在「登录莫名其妙不生效」上排查半天，不如在这里直接兜住。
+	cfg.SecureCookies = cfg.Env == "prod" || sameSite == http.SameSiteNoneMode
+
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("config: 缺少 CCHAVEN_DATABASE_URL")
+	}
+
+	if cfg.JWTSecret, err = secret("CCHAVEN_JWT_SECRET", 32, cfg.Env); err != nil {
+		return Config{}, err
+	}
+	if cfg.CodePepper, err = secret("CCHAVEN_CODE_PEPPER", 32, cfg.Env); err != nil {
+		return Config{}, err
+	}
+	if cfg.TOTPSecretKey, err = secret("CCHAVEN_TOTP_KEY", 32, cfg.Env); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// parseSameSite 解析会话 cookie 的 SameSite 策略。
+//
+// 只提供 lax 与 none 两种：
+//   - lax（默认）适用于控制面与前端同站的部署（cchaven.cn 与 api.cchaven.cn 的 eTLD+1 相同），
+//     顶层导航仍会带上 cookie，同时天然挡掉跨站表单提交，最安全；
+//   - none 适用于控制面被放到另一个站点（不同 eTLD+1）的部署，此时 lax 会让浏览器
+//     根本不发送 cookie，登录直接失效。
+//
+// 不提供 strict：它连从邮件里点重设密码链接跳回来都不带 cookie，会破坏现有链路。
+func parseSameSite(value string) (http.SameSite, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "lax":
+		return http.SameSiteLaxMode, nil
+	case "none":
+		return http.SameSiteNoneMode, nil
+	default:
+		// 拼错就启动失败：静默回落到 lax 会让「跨站部署下登录不了」变成线上谜题。
+		return 0, fmt.Errorf("config: CCHAVEN_COOKIE_SAMESITE 只接受 lax 或 none，收到 %q", value)
+	}
+}
+
+// secret 读取密钥；生产环境强制配置且不得短于 minLen，开发环境允许回落到固定值以便本地启动。
+func secret(key string, minLen int, environment string) ([]byte, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		if environment == "prod" {
+			return nil, fmt.Errorf("config: 生产环境必须配置 %s", key)
+		}
+		return []byte(strings.Repeat("dev-insecure-", 4)[:minLen]), nil
+	}
+	if len(v) < minLen {
+		return nil, fmt.Errorf("config: %s 至少需要 %d 字节", key, minLen)
+	}
+	return []byte(v), nil
+}
+
+func env(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func integer(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func duration(key string, fallback time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
+}

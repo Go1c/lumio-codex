@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cchaven-postgres
+    environment:
+      POSTGRES_USER: cchaven
+      POSTGRES_PASSWORD: cchaven
+      POSTGRES_DB: cchaven
+    ports:
+      - "5432:5432"
+    volumes:
+      - cchaven-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cchaven"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 测试库与开发库分开，跑测试时不会清掉本地调好的数据。
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: cchaven-postgres-test
+    environment:
+      POSTGRES_USER: cchaven
+      POSTGRES_PASSWORD: cchaven
+      POSTGRES_DB: cchaven_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cchaven"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cchaven-pgdata:

@@ -1,0 +1,12 @@
+{
+  "name": "vps-108-80-81-15",
+  "testOnly": true,
+  "serverEndpoint": "ws://127.0.0.1:9000/api/user/workspace-sync/v2",
+  "sshHostAlias": "vps-108-80-81-15",
+  "scenarios": ["bidirectional-soak-10m"],
+  "notes": {
+    "workspaceId": "80000000-0000-4000-8000-202608100001",
+    "remoteRoot": "/root/fns-selftest-clean",
+    "listen": "127.0.0.1:9000 via SSH LocalForward"
+  }
+}
