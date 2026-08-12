@@ -821,7 +821,8 @@ pub fn mutation_kinds(commands: &[SyncCommand]) -> Vec<WorkspaceMutationKind> {
             SyncCommand::Mutation(mutation) => mutation.kind,
             SyncCommand::UploadBlob { .. }
             | SyncCommand::DownloadBlob { .. }
-            | SyncCommand::SendAck(_) => panic!("expected mutation command"),
+            | SyncCommand::SendAck(_)
+            | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
         })
         .collect()
 }
@@ -831,7 +832,8 @@ pub fn base_revision(command: &SyncCommand) -> u64 {
         SyncCommand::Mutation(mutation) => mutation.base_path_revision.get(),
         SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
-        | SyncCommand::SendAck(_) => panic!("expected mutation command"),
+        | SyncCommand::SendAck(_)
+        | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
     }
 }
 
@@ -847,7 +849,8 @@ pub fn rename_revisions(command: &SyncCommand) -> (u64, u64) {
         SyncCommand::Mutation(_) => panic!("expected rename command"),
         SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
-        | SyncCommand::SendAck(_) => panic!("expected mutation command"),
+        | SyncCommand::SendAck(_)
+        | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
     }
 }
 

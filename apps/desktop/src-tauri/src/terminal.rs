@@ -1,8 +1,9 @@
-//! Embedded terminal: PTY-based SSH connection to remote tmux sessions.
+//! Embedded terminal: a PTY running the system `ssh` client against the
+//! project's tmux session.
 //!
-//! Uses portable-pty to spawn a system SSH process (no shell string concatenation),
-//! connecting to the project's tmux session. xterm.js renders the terminal in the
-//! frontend; Tauri events bridge PTY output to the frontend.
+//! The command is built as argv (never a shell string) and the password, when
+//! one is needed, is delivered through the askpass socket rather than the
+//! command line or the environment.
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
@@ -11,15 +12,32 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
+use crate::askpass::AskpassServer;
+use crate::project::{AuthMethod, ServerConfig};
+use crate::ssh;
+
 /// Terminal session state.
 pub struct TerminalSession {
     pub writer: Box<dyn Write + Send>,
     pub master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    /// Kept alive for the session: OpenSSH may re-prompt after a reconnect.
+    askpass: Option<AskpassServer>,
 }
 
 /// Manage active terminal sessions by project ID.
 pub struct TerminalManager {
     sessions: Mutex<HashMap<String, TerminalSession>>,
+}
+
+/// Everything needed to attach one project's terminal.
+pub struct StartParams<'a> {
+    pub project_id: &'a str,
+    pub server: &'a ServerConfig,
+    pub password: Option<&'a str>,
+    pub remote_root: &'a str,
+    pub tmux_session: &'a str,
+    pub cols: u16,
+    pub rows: u16,
 }
 
 impl TerminalManager {
@@ -32,7 +50,8 @@ impl TerminalManager {
     /// Sanitize a tmux session name to prevent shell injection.
     /// Only alphanumeric, dash, and underscore are allowed.
     pub fn sanitize_session_name(name: &str) -> String {
-        name.chars()
+        let sanitized: String = name
+            .chars()
             .map(|c| {
                 if c.is_alphanumeric() || c == '-' || c == '_' {
                     c
@@ -40,25 +59,55 @@ impl TerminalManager {
                     '-'
                 }
             })
-            .collect()
+            .collect();
+        if sanitized.is_empty() {
+            "cchaven".into()
+        } else {
+            sanitized
+        }
+    }
+
+    /// The remote command that attaches to (or creates) the persistent session.
+    pub fn remote_command(tmux_session: &str, remote_root: &str) -> String {
+        format!(
+            "tmux new-session -A -s {session} -c {root}",
+            session = crate::deploy::shell_quote(&Self::sanitize_session_name(tmux_session)),
+            root = crate::deploy::shell_quote(remote_root)
+        )
     }
 
     /// Start a new terminal session for a project.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start(
-        &self,
-        project_id: &str,
-        ssh_alias: &str,
-        remote_root: &str,
-        tmux_session: &str,
-        cols: u16,
-        rows: u16,
-        app: &AppHandle,
-    ) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.contains_key(project_id) {
-            return Err("Terminal session already exists".into());
+    pub async fn start(&self, params: StartParams<'_>, app: &AppHandle) -> Result<(), String> {
+        let StartParams {
+            project_id,
+            server,
+            password,
+            remote_root,
+            tmux_session,
+            cols,
+            rows,
+        } = params;
+
+        if self
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .contains_key(project_id)
+        {
+            return Err("终端已在运行。".into());
         }
+
+        let askpass = match (server.auth, password) {
+            (AuthMethod::Password, Some(password)) => Some(
+                AskpassServer::start(password)
+                    .await
+                    .map_err(|e| format!("无法准备安全凭据通道：{e}"))?,
+            ),
+            (AuthMethod::Password, None) => {
+                return Err("缺少服务器密码，请在项目设置中重新填写。".into());
+            }
+            _ => None,
+        };
 
         let pty_system = native_pty_system();
         let pty_pair = pty_system
@@ -68,46 +117,43 @@ impl TerminalManager {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| format!("Failed to open PTY: {e}"))?;
-
-        let safe_session = Self::sanitize_session_name(tmux_session);
-
-        // Build SSH command with argv-only (no shell string concatenation).
-        let remote_cmd = format!(
-            "tmux new-session -A -s {session} -c {root}",
-            session = safe_session,
-            root = remote_root
-        );
+            .map_err(|e| format!("无法创建终端：{e}"))?;
 
         let mut cmd = CommandBuilder::new("ssh");
         cmd.arg("-tt");
         cmd.arg("-o");
-        cmd.arg("BatchMode=yes");
-        cmd.arg("-o");
         cmd.arg("ServerAliveInterval=30");
         cmd.arg("-o");
         cmd.arg("ServerAliveCountMax=3");
-        cmd.arg(ssh_alias);
-        cmd.arg(remote_cmd);
+        for arg in ssh::ssh_args(
+            server,
+            Some(&Self::remote_command(tmux_session, remote_root)),
+        ) {
+            cmd.arg(arg);
+        }
         cmd.env("TERM", "xterm-256color");
+        if let Some(askpass) = &askpass {
+            let exe = std::env::current_exe().map_err(|e| format!("无法定位程序路径：{e}"))?;
+            cmd.env("SSH_ASKPASS", exe);
+            cmd.env("SSH_ASKPASS_REQUIRE", "force");
+            cmd.env("DISPLAY", ":0");
+            cmd.env(crate::askpass::SOCKET_ENV, askpass.socket_path());
+        }
 
         let _child = pty_pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| format!("Failed to spawn SSH: {e}"))?;
+            .map_err(|e| format!("无法启动 SSH：{e}"))?;
 
-        // Get writer and reader.
         let writer = pty_pair
             .master
             .take_writer()
-            .map_err(|e| format!("Failed to get PTY writer: {e}"))?;
-
+            .map_err(|e| format!("无法写入终端：{e}"))?;
         let mut reader = pty_pair
             .master
             .try_clone_reader()
-            .map_err(|e| format!("Failed to clone PTY reader: {e}"))?;
+            .map_err(|e| format!("无法读取终端输出：{e}"))?;
 
-        // Spawn a thread to read PTY output and emit Tauri events.
         let event_name = format!("terminal-output-{project_id}");
         let closed_event = format!("terminal-closed-{project_id}");
         let app_clone = app.clone();
@@ -117,8 +163,7 @@ impl TerminalManager {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        let _ = app_clone.emit(&event_name, data);
+                        let _ = app_clone.emit(&event_name, buf[..n].to_vec());
                     }
                     Err(_) => break,
                 }
@@ -129,8 +174,12 @@ impl TerminalManager {
         let session = TerminalSession {
             writer,
             master: Arc::new(Mutex::new(pty_pair.master)),
+            askpass,
         };
-        sessions.insert(project_id.to_string(), session);
+        self.sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(project_id.to_string(), session);
 
         Ok(())
     }
@@ -138,26 +187,22 @@ impl TerminalManager {
     /// Write input to a terminal session.
     pub fn write(&self, project_id: &str, data: &[u8]) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let session = sessions
-            .get_mut(project_id)
-            .ok_or("Terminal session not found")?;
+        let session = sessions.get_mut(project_id).ok_or("终端未运行。")?;
         session
             .writer
             .write_all(data)
-            .map_err(|e| format!("Failed to write to PTY: {e}"))?;
+            .map_err(|e| format!("无法写入终端：{e}"))?;
         session
             .writer
             .flush()
-            .map_err(|e| format!("Failed to flush PTY: {e}"))?;
+            .map_err(|e| format!("无法写入终端：{e}"))?;
         Ok(())
     }
 
     /// Resize a terminal session.
     pub fn resize(&self, project_id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let session = sessions
-            .get(project_id)
-            .ok_or("Terminal session not found")?;
+        let session = sessions.get(project_id).ok_or("终端未运行。")?;
         let master = session.master.lock().map_err(|e| e.to_string())?;
         master
             .resize(PtySize {
@@ -166,15 +211,22 @@ impl TerminalManager {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| format!("Failed to resize PTY: {e}"))
+            .map_err(|e| format!("无法调整终端大小：{e}"))
     }
 
-    /// Close a terminal session.
-    pub fn close(&self, project_id: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        sessions
-            .remove(project_id)
-            .ok_or("Terminal session not found")?;
+    /// Close a terminal session. Missing sessions are not an error: the UI calls
+    /// this on unmount and on every reconnect.
+    pub async fn close(&self, project_id: &str) -> Result<(), String> {
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .remove(project_id);
+        if let Some(session) = session
+            && let Some(askpass) = session.askpass
+        {
+            askpass.shutdown().await;
+        }
         Ok(())
     }
 }
@@ -191,28 +243,39 @@ impl Default for TerminalManager {
 #[serde(rename_all = "camelCase")]
 pub struct StartTerminalRequest {
     pub project_id: String,
-    pub ssh_host_alias: String,
-    pub remote_root: String,
-    pub tmux_session: String,
     pub cols: u16,
     pub rows: u16,
 }
 
 #[tauri::command]
-pub fn start_terminal(
+pub async fn start_terminal(
     request: StartTerminalRequest,
-    state: tauri::State<'_, TerminalManager>,
     app: AppHandle,
+    state: tauri::State<'_, TerminalManager>,
+    auth: tauri::State<'_, crate::auth::AuthState>,
 ) -> Result<(), String> {
-    state.start(
-        &request.project_id,
-        &request.ssh_host_alias,
-        &request.remote_root,
-        &request.tmux_session,
-        request.cols,
-        request.rows,
-        &app,
-    )
+    let project = crate::project::ProjectConfig::get(&request.project_id)
+        .map_err(|e| format!("无法读取项目配置：{e}"))?
+        .ok_or("项目不存在。")?;
+    let password = auth
+        .secrets()
+        .ssh_password(&request.project_id)
+        .map_err(|e| e.to_string())?;
+
+    state
+        .start(
+            StartParams {
+                project_id: &request.project_id,
+                server: &project.server,
+                password: password.as_deref(),
+                remote_root: &project.remote_root,
+                tmux_session: &project.tmux_session,
+                cols: request.cols,
+                rows: request.rows,
+            },
+            &app,
+        )
+        .await
 }
 
 #[tauri::command]
@@ -235,11 +298,11 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn close_terminal(
+pub async fn close_terminal(
     project_id: String,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
-    state.close(&project_id)
+    state.close(&project_id).await
 }
 
 #[cfg(test)]
@@ -259,13 +322,26 @@ mod tests {
         assert_eq!(TerminalManager::sanitize_session_name("a;b&c"), "a-b-c");
         assert_eq!(
             TerminalManager::sanitize_session_name("$(rm -rf /)"),
-            "----rm--rf---"
+            "--rm--rf---"
         );
+        assert_eq!(TerminalManager::sanitize_session_name(""), "cchaven");
     }
 
     #[test]
     fn sanitize_preserves_alphanumeric() {
         let name = "ClaudeCode2026";
         assert_eq!(TerminalManager::sanitize_session_name(name), name);
+    }
+
+    #[test]
+    fn the_remote_command_quotes_both_interpolations() {
+        let command = TerminalManager::remote_command("cchaven-app", "/root/cchaven/app");
+        assert_eq!(
+            command,
+            "tmux new-session -A -s 'cchaven-app' -c '/root/cchaven/app'"
+        );
+
+        let hostile = TerminalManager::remote_command("s", "/root/'; id #");
+        assert!(hostile.ends_with(r"-c '/root/'\''; id #'"));
     }
 }

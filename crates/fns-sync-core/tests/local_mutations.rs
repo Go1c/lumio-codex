@@ -140,7 +140,8 @@ fn change_after_dispatch_becomes_deferred_intent() {
         SyncCommand::Mutation(mutation) => fixture.engine.canonical_body(mutation).unwrap(),
         SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
-        | SyncCommand::SendAck(_) => panic!("expected mutation"),
+        | SyncCommand::SendAck(_)
+        | SyncCommand::ResolveConflict(_) => panic!("expected mutation"),
     };
     assert_eq!(outbox[0].body(), dispatched_body.as_slice());
 }

@@ -213,6 +213,16 @@ impl Session {
                 .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
                 writer.send_text(frame).await?;
             }
+            SyncCommand::ResolveConflict(body) => {
+                let request_id = fresh_request_id();
+                let frame = encode_request(
+                    WorkspaceAction::WorkspaceConflictResolved,
+                    request_id,
+                    MessageBody::ConflictResolvedRequest(body),
+                )
+                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                writer.send_text(frame).await?;
+            }
             SyncCommand::DownloadBlob { .. } | SyncCommand::UploadBlob { .. } => {
                 // Blob transfers require transfer-table coordination (Task 5/6 deeper integration).
                 // For now these are skipped — they'll be handled when transfer wire is wired.

@@ -1,5 +1,6 @@
 use fns_protocol::{
-    OperationId, WorkspaceAckRequest, WorkspaceContentHash, WorkspaceId, WorkspaceMutation,
+    OperationId, WorkspaceAckRequest, WorkspaceConflictResolvedRequest, WorkspaceContentHash,
+    WorkspaceId, WorkspaceMutation,
 };
 
 use crate::{SyncError, canonical_json};
@@ -25,6 +26,9 @@ pub enum SyncCommand {
         size: u64,
     },
     SendAck(WorkspaceAckRequest),
+    /// A user-chosen conflict resolution, replayed from the durable conflict
+    /// row until the server answers with `WorkspaceConflictResolved`.
+    ResolveConflict(WorkspaceConflictResolvedRequest),
 }
 
 impl SyncCommand {
@@ -33,6 +37,7 @@ impl SyncCommand {
             Self::Mutation(mutation) => Some(mutation.operation_id),
             Self::UploadBlob { operation_id, .. } => Some(*operation_id),
             Self::DownloadBlob { operation_id, .. } => *operation_id,
+            Self::ResolveConflict(request) => Some(request.operation_id),
             Self::SendAck(_) => None,
         }
     }
@@ -40,11 +45,12 @@ impl SyncCommand {
     pub fn mutation(&self) -> Result<WorkspaceMutation, SyncError> {
         match self {
             Self::Mutation(mutation) => Ok(mutation.clone()),
-            Self::UploadBlob { .. } | Self::DownloadBlob { .. } | Self::SendAck(_) => {
-                Err(SyncError::ProtocolInvariant {
-                    reason: "command_not_mutation",
-                })
-            }
+            Self::UploadBlob { .. }
+            | Self::DownloadBlob { .. }
+            | Self::SendAck(_)
+            | Self::ResolveConflict(_) => Err(SyncError::ProtocolInvariant {
+                reason: "command_not_mutation",
+            }),
         }
     }
 
@@ -52,6 +58,7 @@ impl SyncCommand {
         match self {
             Self::Mutation(mutation) => canonical_json(mutation),
             Self::SendAck(message) => canonical_json(message),
+            Self::ResolveConflict(request) => canonical_json(request),
             Self::UploadBlob { .. } | Self::DownloadBlob { .. } => {
                 Err(SyncError::ProtocolInvariant {
                     reason: "command_not_mutation",

@@ -27,6 +27,9 @@ enum ExpectedResponse {
     BlobNeedDownload {
         command: SyncCommand,
     },
+    ConflictResolution {
+        body: fns_protocol::WorkspaceConflictResolvedRequest,
+    },
 }
 
 /// A tracked in-flight request.
@@ -148,6 +151,16 @@ impl DispatchTable {
                     },
                 )
             }
+            SyncCommand::ResolveConflict(body) => {
+                let id = fresh_request_id();
+                let frame = encode_request(
+                    WorkspaceAction::WorkspaceConflictResolved,
+                    id,
+                    MessageBody::ConflictResolvedRequest(body.clone()),
+                )
+                .map_err(|_| TransportError::new(TransportErrorCode::Protocol, false))?;
+                (id, frame, ExpectedResponse::ConflictResolution { body })
+            }
             SyncCommand::UploadBlob { .. } => {
                 // UploadBlob sends nothing by itself — it's paired with server BlobNeed.
                 // Transfer module (Task 5) handles this.
@@ -180,6 +193,7 @@ impl DispatchTable {
                 ExpectedResponse::Mutation { command } => command,
                 ExpectedResponse::Ack { body } => SyncCommand::SendAck(body),
                 ExpectedResponse::BlobNeedDownload { command } => command,
+                ExpectedResponse::ConflictResolution { body } => SyncCommand::ResolveConflict(body),
             })
             .collect()
     }

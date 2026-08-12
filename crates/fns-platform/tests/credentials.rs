@@ -85,3 +85,36 @@ fn non_linux_returns_unsupported_platform() {
         fns_platform::PlatformErrorCode::UnsupportedPlatform
     );
 }
+
+#[test]
+fn a_keychain_token_is_content_checked_but_needs_no_file_permissions() {
+    // The macOS desktop holds its agent token in the system keychain, where
+    // there is no file mode to inspect — only the token's own shape.
+    let token = fns_platform::SecretToken::from_protected_store(b"sentinel.jwt.value")
+        .expect("well formed token");
+    assert_eq!(
+        token.with_exposed(|bytes| bytes.to_vec()),
+        b"sentinel.jwt.value"
+    );
+    assert_eq!(format!("{token:?}"), "SecretToken([REDACTED])");
+
+    for rejected in [
+        b"".as_slice(),
+        b"has space".as_slice(),
+        b"has\ttab".as_slice(),
+        b"trailing\n".as_slice(),
+    ] {
+        assert!(
+            matches!(
+                fns_platform::SecretToken::from_protected_store(rejected)
+                    .unwrap_err()
+                    .code(),
+                fns_platform::PlatformErrorCode::InvalidSecret
+            ),
+            "{rejected:?} should not be accepted as a token"
+        );
+    }
+
+    let oversize = vec![b'a'; fns_platform::MAX_TOKEN_BYTES as usize + 1];
+    assert!(fns_platform::SecretToken::from_protected_store(&oversize).is_err());
+}

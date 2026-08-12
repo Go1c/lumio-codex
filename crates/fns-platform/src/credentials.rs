@@ -3,7 +3,6 @@
 //! On non-Linux targets all functions return `UnsupportedPlatform` at runtime;
 //! the symbols are still available for cross-platform compilation.
 
-#[cfg(target_os = "linux")]
 use crate::MAX_TOKEN_BYTES;
 use crate::error::{PlatformError, PlatformErrorCode};
 
@@ -102,6 +101,28 @@ impl SecretToken {
     #[cfg(not(target_os = "linux"))]
     pub fn read_linux_file(_path: &Path) -> Result<Self, PlatformError> {
         Err(PlatformError::new(PlatformErrorCode::UnsupportedPlatform))
+    }
+
+    /// Wrap a token that arrived from a store the OS already protects, such as
+    /// the macOS keychain.
+    ///
+    /// [`Self::read_linux_file`] exists because a token on disk has to prove it
+    /// is private; a keychain item has no file to inspect, so only the content
+    /// rules are applied here. Callers on Linux that read from a file must keep
+    /// using `read_linux_file`.
+    pub fn from_protected_store(bytes: &[u8]) -> Result<Self, PlatformError> {
+        if bytes.is_empty() || bytes.len() as u64 > MAX_TOKEN_BYTES {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidSecret));
+        }
+        if bytes
+            .iter()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+        {
+            return Err(PlatformError::new(PlatformErrorCode::InvalidSecret));
+        }
+        Ok(Self {
+            bytes: Zeroizing::new(bytes.to_vec()),
+        })
     }
 
     /// Expose the raw token bytes to a closure. The closure must not retain

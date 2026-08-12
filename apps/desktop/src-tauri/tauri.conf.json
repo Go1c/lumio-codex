@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/dev/crates/tauri-config-schema/schema.json",
-  "productName": "FNS Workspace",
+  "productName": "CC避风港",
   "version": "0.1.0",
-  "identifier": "com.go1c.fns-workspace",
+  "identifier": "cn.cchaven.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "FNS Workspace",
-        "width": 1024,
-        "height": 768,
+        "title": "CC避风港",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 960,
+        "minHeight": 640,
         "resizable": true,
         "fullscreen": false
       }

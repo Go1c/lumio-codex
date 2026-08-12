@@ -1,4 +1,29 @@
+# Build / deps
 /target/
+**/node_modules/
+**/dist/
+**/.vite/
+**/*.tsbuildinfo
+
+# Secrets & local env
 .env
+.env.*
+!.env.example
+
+# Control-plane local test DB cache
+services/cchaven-control/.embedded-postgres/
+
+# Desktop
 /apps/desktop/node_modules/
 /apps/desktop/dist/
+/apps/desktop/src-tauri/target/
+
+# Acceptance / local runtime artifacts (not source)
+/acceptance-evidence/
+/acceptance-runtime/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -8,20 +8,21 @@ use fns_fs::{
     ObservedEntry, RootedWorkspace, SyncRuleConfig, SyncRules,
 };
 use fns_protocol::{
-    RequiredNullable, WorkspaceAckRequest, WorkspaceConflictCreatedMessage,
-    WorkspaceConflictResolvedMessage, WorkspaceEntryKind, WorkspaceEventMessage, WorkspaceMutation,
-    WorkspaceMutationAcceptedMessage, WorkspaceMutationRejectReason,
-    WorkspaceMutationRejectedMessage, WorkspacePath, WorkspacePathState,
-    WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage, WorkspaceSnapshotEntryMessage,
-    WorkspaceSnapshotMode,
+    ConflictId, RequiredNullable, WorkspaceAckRequest, WorkspaceConflictChoice,
+    WorkspaceConflictCreatedMessage, WorkspaceConflictResolvedMessage,
+    WorkspaceConflictResolvedRequest, WorkspaceConflictSide, WorkspaceEntryKind,
+    WorkspaceEventMessage, WorkspaceMutation, WorkspaceMutationAcceptedMessage,
+    WorkspaceMutationRejectReason, WorkspaceMutationRejectedMessage, WorkspacePath,
+    WorkspacePathState, WorkspaceSnapshotBeginMessage, WorkspaceSnapshotEndMessage,
+    WorkspaceSnapshotEntryMessage, WorkspaceSnapshotMode,
 };
 
 use crate::effect::SyncCommand;
 use crate::error::SyncError;
 use crate::model::{
-    ApplyItemKind, ApplyJournalRecord, ApplyStage, LocalDesiredEntry, OutboxBody, OutboxStage,
-    RemoteApplyOperation, StreamConflictStatus, StreamItemStatus, StreamRevisionItemKind,
-    WorkspaceCursor,
+    ApplyItemKind, ApplyJournalRecord, ApplyStage, ConflictRecord, ConflictStatus,
+    LocalDesiredEntry, OutboxBody, OutboxStage, RemoteApplyOperation, StreamConflictStatus,
+    StreamItemStatus, StreamRevisionItemKind, WorkspaceCursor,
 };
 use crate::reconcile::{
     DesiredOperation, decode_intent, desired_from_intent, desired_from_mutation, encode_intent,
@@ -35,6 +36,8 @@ pub struct SyncEngineConfig {
     pub client_id: fns_protocol::ClientId,
     pub workspace_root: PathBuf,
     pub state_root: PathBuf,
+    includes: Vec<String>,
+    excludes: Vec<String>,
     operation_ids: Vec<fns_protocol::OperationId>,
     timestamps: Vec<i64>,
 }
@@ -51,9 +54,27 @@ impl SyncEngineConfig {
             client_id,
             workspace_root: workspace_root.as_ref().to_path_buf(),
             state_root: state_root.as_ref().to_path_buf(),
+            includes: Vec::new(),
+            excludes: Vec::new(),
             operation_ids: Vec::new(),
             timestamps: Vec::new(),
         }
+    }
+
+    /// Set the user-configurable include/exclude globs for this workspace.
+    ///
+    /// Secret protection is deliberately not a parameter: the engine always
+    /// compiles its rules with `protect_secrets: true`, so no caller — inside
+    /// or outside this crate — can opt a workspace out of
+    /// [`fns_fs::HARD_SECRET_EXCLUDES`].
+    pub fn with_sync_rules<I, E>(mut self, includes: I, excludes: E) -> Self
+    where
+        I: IntoIterator<Item = String>,
+        E: IntoIterator<Item = String>,
+    {
+        self.includes = includes.into_iter().collect();
+        self.excludes = excludes.into_iter().collect();
+        self
     }
 
     pub fn with_operation_ids<I>(mut self, operation_ids: I) -> Self
@@ -166,7 +187,14 @@ impl SyncEngine {
             config.workspace_id,
             config.client_id,
         )?;
-        let rules = SyncRules::compile(SyncRuleConfig::default()).map_err(SyncError::Filesystem)?;
+        let rules = SyncRules::compile(SyncRuleConfig {
+            includes: config.includes,
+            excludes: config.excludes,
+            // Never configurable: 「机密文件默认永不同步」 is enforced here, at the
+            // only place the engine learns its rules from.
+            protect_secrets: true,
+        })
+        .map_err(SyncError::Filesystem)?;
         let mut engine = Self {
             runtime: EngineRuntime {
                 system: SystemRuntime {
@@ -420,10 +448,64 @@ impl SyncEngine {
                 pending.extend(self.scan_changes()?);
                 continue;
             }
+            let Some(change) = self.admit_local_change(change)? else {
+                continue;
+            };
             let desired = self.desired_from_change(&change)?;
             self.record_desired(desired)?;
         }
         Ok(())
+    }
+
+    /// Whether the workspace's synchronization rules admit `path`.
+    ///
+    /// Hosts may call this to explain to a user why a file is not syncing, but
+    /// they do not have to: enforcement happens inside
+    /// [`Self::record_local_changes`], not at the call site.
+    pub fn path_is_synced(&self, path: &WorkspacePath) -> Result<bool, SyncError> {
+        let is_directory = self
+            .runtime
+            .system
+            .workspace
+            .inspect(path)?
+            .is_some_and(|observed| observed.kind == WorkspaceEntryKind::Directory);
+        Ok(self
+            .runtime
+            .system
+            .rules
+            .decide(path, is_directory)
+            .included)
+    }
+
+    /// Apply the synchronization rules to one inbound local change.
+    ///
+    /// Every local change enters the engine through `record_local_changes`, so
+    /// filtering here — rather than in each host — is what makes secret
+    /// protection impossible to bypass from outside the crate. A rename that
+    /// crosses the rule boundary degrades to the half that is still in scope.
+    fn admit_local_change(&self, change: FsChange) -> Result<Option<FsChange>, SyncError> {
+        Ok(match change {
+            FsChange::Create(path) => self
+                .path_is_synced(&path)?
+                .then_some(FsChange::Create(path)),
+            FsChange::Update(path) => self
+                .path_is_synced(&path)?
+                .then_some(FsChange::Update(path)),
+            FsChange::Delete(path) => self
+                .path_is_synced(&path)?
+                .then_some(FsChange::Delete(path)),
+            FsChange::Rename { from, to } => {
+                match (self.path_is_synced(&from)?, self.path_is_synced(&to)?) {
+                    (true, true) => Some(FsChange::Rename { from, to }),
+                    // Renamed out of scope: the server copy has to disappear.
+                    (true, false) => Some(FsChange::Delete(from)),
+                    // Renamed into scope: the target is new as far as the server knows.
+                    (false, true) => Some(FsChange::Create(to)),
+                    (false, false) => None,
+                }
+            }
+            FsChange::RescanRequired => Some(FsChange::RescanRequired),
+        })
     }
 
     pub fn pending_commands(&mut self, limit: usize) -> Result<Vec<SyncCommand>, SyncError> {
@@ -434,6 +516,23 @@ impl SyncEngine {
         let mut commands = self.resume_stream_commands(limit, true)?;
         if commands.len() == limit {
             return Ok(commands);
+        }
+        for record in self.runtime.state.conflicts()? {
+            if record.status != ConflictStatus::Resolving {
+                continue;
+            }
+            let Some(body) = &record.resolution_json else {
+                continue;
+            };
+            let request: WorkspaceConflictResolvedRequest =
+                serde_json::from_slice(body).map_err(|_| SyncError::CorruptState {
+                    table: "conflicts",
+                    field: "resolution_json",
+                })?;
+            commands.push(SyncCommand::ResolveConflict(request));
+            if commands.len() == limit {
+                return Ok(commands);
+            }
         }
         let remaining = limit - commands.len();
         let records = self.runtime.state.pending_outbox_replay(remaining)?;
@@ -887,6 +986,95 @@ impl SyncEngine {
             stream_id,
         )?;
         self.resume_stream_commands(usize::MAX, false)
+    }
+
+    /// Record the user's choice for an open conflict and emit the request that
+    /// carries it to the server.
+    ///
+    /// `Current` and `Incoming` replay the corresponding side of the conflict
+    /// verbatim; if that side is a tombstone (a delete/modify conflict resolved
+    /// towards the delete) the request degrades to `Delete`, which is the only
+    /// shape the protocol accepts for it. The choice is persisted on the
+    /// conflict row before the command is returned, so a disconnect replays it
+    /// from [`Self::pending_commands`] instead of losing it.
+    pub fn resolve_conflict(
+        &mut self,
+        conflict_id: ConflictId,
+        choice: WorkspaceConflictChoice,
+    ) -> Result<Vec<SyncCommand>, SyncError> {
+        self.ensure_open()?;
+        let record = self
+            .runtime
+            .state
+            .conflict(conflict_id)?
+            .ok_or(SyncError::ConflictUnavailable)?;
+        if record.status == ConflictStatus::RefreshRequired {
+            return Err(SyncError::ConflictRevisionStale);
+        }
+        let created: WorkspaceConflictCreatedMessage = serde_json::from_slice(&record.created_json)
+            .map_err(|_| SyncError::CorruptState {
+                table: "conflicts",
+                field: "created_json",
+            })?;
+        let request = self.resolution_request(&created, choice)?;
+        request
+            .validate_against(&created)
+            .map_err(|_| SyncError::MergeRejected {
+                reason: "resolution_rejected_by_contract",
+            })?;
+        let resolution_json = canonical_json(&request)?;
+        let resolution_digest = crate::body_digest(&resolution_json);
+        self.runtime.state.put_conflict(&ConflictRecord {
+            status: ConflictStatus::Resolving,
+            resolution_json: Some(resolution_json),
+            resolution_digest: Some(resolution_digest),
+            ..record
+        })?;
+        Ok(vec![SyncCommand::ResolveConflict(request)])
+    }
+
+    fn resolution_request(
+        &mut self,
+        created: &WorkspaceConflictCreatedMessage,
+        choice: WorkspaceConflictChoice,
+    ) -> Result<WorkspaceConflictResolvedRequest, SyncError> {
+        let side = match choice {
+            WorkspaceConflictChoice::Current => Some(&created.current),
+            WorkspaceConflictChoice::Incoming => Some(&created.incoming),
+            WorkspaceConflictChoice::Delete => None,
+            WorkspaceConflictChoice::Merged => {
+                // A merged body needs content staged in the cache first; the
+                // desktop's three resolutions never produce one.
+                return Err(SyncError::MergeRejected {
+                    reason: "merged_resolution_unsupported",
+                });
+            }
+        };
+        let operation_id = self.next_operation_id()?;
+        let workspace_id = self.runtime.state.workspace_id();
+        let client_id = self.runtime.state.client_id();
+        let base = WorkspaceConflictResolvedRequest {
+            workspace_id,
+            client_id,
+            operation_id,
+            conflict_id: created.conflict_id,
+            conflict_revision: created.conflict_revision,
+            choice: WorkspaceConflictChoice::Delete,
+            path: created.path.clone(),
+            content_hash: RequiredNullable::Null,
+            metadata: zero_metadata(),
+        };
+        let Some(side) = side.filter(|side| !side.tombstone) else {
+            return Ok(base);
+        };
+        let path = live_side_path(side)?;
+        Ok(WorkspaceConflictResolvedRequest {
+            choice,
+            path,
+            content_hash: side.content_hash.clone(),
+            metadata: side.metadata.clone(),
+            ..base
+        })
     }
 
     pub fn conflict_resolved(
@@ -2382,6 +2570,15 @@ impl RemoteApplyOperation {
         } else {
             Self::from_state(&event.path_state)
         }
+    }
+}
+
+fn live_side_path(side: &WorkspaceConflictSide) -> Result<WorkspacePath, SyncError> {
+    match &side.path {
+        RequiredNullable::Value(path) => Ok(path.clone()),
+        RequiredNullable::Null => Err(SyncError::ProtocolInvariant {
+            reason: "conflict_side_path_missing",
+        }),
     }
 }
 
