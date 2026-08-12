@@ -146,6 +146,32 @@ test("neither auth view hardcodes business rules the server owns", async () => {
   assert.doesNotMatch(register, /@gmail\.com|@qq\.com/);
 });
 
+test("the provisioning view carries the spec copy for slow and failed steps", async () => {
+  const view = await readFile(new URL("./views/ProvisioningView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /不需要手动操作，完成后自动进入首页/);
+  assert.match(view, /比平时慢一些，仍在继续…/);
+  assert.match(view, /重试/);
+  assert.match(view, /稍后处理/);
+  assert.match(view, /PROVISIONING_STEP_TITLES/);
+  assert.doesNotMatch(view, /返回/, "the provisioning page must not offer a back exit");
+});
+
+test("the home view explains every disabled action instead of hiding it", async () => {
+  const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /actionNotes\.launch/);
+  assert.match(view, /actionNotes\.pay/);
+  assert.match(view, /actionNotes\.refresh/);
+  assert.match(view, /官方 Codex 已启动/);
+  assert.match(view, /刷新失败，仍显示上次数据/);
+  assert.match(view, /无法连接服务，正在使用/);
+  assert.match(view, /你仍可以启动官方 Codex。/);
+  assert.match(view, /已重新连接/);
+  assert.match(view, /缓存值/);
+  assert.match(view, /已配置/);
+});
+
 test("React entry renders only LumioApp", async () => {
   const main = await readFile(new URL("../main.tsx", import.meta.url), "utf8");
 

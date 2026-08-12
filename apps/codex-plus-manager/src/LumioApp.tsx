@@ -9,17 +9,23 @@ import {
   RotateCcw,
   Settings,
   ShieldCheck,
-  Sparkles,
-  WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import { lumioErrorLabel } from "./lumio/errors.ts";
-import { LumioCommandError, loadLumioBootstrap, loadPublicSettings, shellLabels } from "./lumio/invoke.ts";
+import {
+  LumioCommandError,
+  loadLumioBootstrap,
+  loadPublicSettings,
+  shellLabels,
+  signOut,
+} from "./lumio/invoke.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
-import type { LumioState } from "./lumio/state.ts";
+import type { ProvisioningStepId } from "./lumio/state.ts";
 import type { LumioAccountSummary, LumioCodexApp, LumioPhase } from "./lumio/types.ts";
+import { HomeView } from "./lumio/views/HomeView.tsx";
 import { LoginView } from "./lumio/views/LoginView.tsx";
+import { ProvisioningView } from "./lumio/views/ProvisioningView.tsx";
 import { RegisterView } from "./lumio/views/RegisterView.tsx";
 import { SignedOutView } from "./lumio/views/SignedOutView.tsx";
 import { ToastHost, useToasts } from "./lumio/views/Toast.tsx";
@@ -42,13 +48,6 @@ function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
 }
 
-function formatBalance(balance: number): string {
-  return new Intl.NumberFormat("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(balance);
-}
-
 function Toggle({ checked, label }: { checked: boolean; label: string }) {
   return (
     <button
@@ -68,6 +67,9 @@ export function LumioApp() {
   const [state, dispatch] = useReducer(reduceLumioState, undefined, initialLumioState);
   const [view, setView] = useState<View>("home");
   const { toasts, pushToast, dismiss } = useToasts();
+  // Read by callbacks that must keep a stable identity across renders.
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     let active = true;
@@ -108,6 +110,52 @@ export function LumioApp() {
   }, [state.serviceAvailable]);
 
   const openSettings = useCallback(() => setView("settings"), []);
+
+  // Stable identities: ProvisioningView keys its run loop on these callbacks.
+  const onStepStarted = useCallback(
+    (step: ProvisioningStepId) => dispatch({ type: "provisioning-step-started", step }),
+    [],
+  );
+  const onStepCompleted = useCallback(
+    (step: ProvisioningStepId) => dispatch({ type: "provisioning-step-completed", step }),
+    [],
+  );
+  const onStepFailed = useCallback(
+    (step: ProvisioningStepId, errorCode: string) =>
+      dispatch({ type: "provisioning-step-failed", step, errorCode }),
+    [],
+  );
+  const onProvisioned = useCallback(() => {
+    const current = stateRef.current;
+    if (current.account === null) return;
+    dispatch({
+      type: "online-ready",
+      account: current.account,
+      cachedAt: new Date().toISOString(),
+      codexApp: current.codexApp,
+      defaultModel: current.defaultModel,
+    });
+  }, []);
+  const onDeferred = useCallback(() => {
+    void signOut()
+      .catch(() => undefined)
+      .finally(() => dispatch({ type: "signed-out" }));
+  }, []);
+  const onRefreshed = useCallback(
+    (account: LumioAccountSummary, cachedAt: string) =>
+      dispatch({ type: "account-refreshed", account, cachedAt }),
+    [],
+  );
+  const onReconnected = useCallback((account: LumioAccountSummary, cachedAt: string) => {
+    dispatch({
+      type: "online-ready",
+      account,
+      cachedAt,
+      codexApp: stateRef.current.codexApp,
+      defaultModel: stateRef.current.defaultModel,
+    });
+  }, []);
+
   const online = state.phase === "ready-online";
   const offline = state.phase === "ready-offline";
   const ready = online || offline;
@@ -204,7 +252,17 @@ export function LumioApp() {
               step={state.authStep === "two-factor" ? "two-factor" : "login"}
             />
           )
-        ) : state.phase === "authenticating" || state.phase === "provisioning" ? (
+        ) : state.phase === "provisioning" ? (
+          <ProvisioningView
+            email={state.account?.email ?? null}
+            onCompleted={onProvisioned}
+            onDeferred={onDeferred}
+            onStepCompleted={onStepCompleted}
+            onStepFailed={onStepFailed}
+            onStepStarted={onStepStarted}
+            provisioning={state.provisioning}
+          />
+        ) : state.phase === "authenticating" ? (
           <section aria-live="polite" className="lumio-loading">
             <span className="lumio-loading-mark">
               <RefreshCw size={24} />
@@ -212,7 +270,13 @@ export function LumioApp() {
             <p>{phaseCopy[state.phase]}…</p>
           </section>
         ) : (
-          <HomeView account={state.account} codexApp={state.codexApp} phase={state.phase} state={state} />
+          <HomeView
+            onOpenSettings={openSettings}
+            onReconnected={onReconnected}
+            onRefreshed={onRefreshed}
+            pushToast={pushToast}
+            state={state}
+          />
         )}
       </main>
 
@@ -241,84 +305,6 @@ function BootstrapFailurePanel({ errorCode }: { errorCode: string | null }) {
         <code>{lumioErrorLabel(errorCode)}</code>
       </div>
     </section>
-  );
-}
-
-interface HomeViewProps {
-  account: LumioAccountSummary | null;
-  codexApp: LumioCodexApp | null;
-  phase: LumioPhase;
-  state: LumioState;
-}
-
-function HomeView({ account, codexApp, phase, state }: HomeViewProps) {
-  if (account === null) {
-    return (
-      <section aria-live="polite" className="lumio-loading">
-        <p>正在读取账户信息…</p>
-      </section>
-    );
-  }
-
-  return (
-    <div className="lumio-dashboard">
-      <section className="lumio-welcome-row">
-        <div>
-          <p className="lumio-eyebrow">{shellLabels.accountStatus} · 欢迎回来</p>
-          <h1>你的 Lumio 连接中心</h1>
-          <p>{account.email}</p>
-        </div>
-        <span className="lumio-secure-chip">
-          <ShieldCheck size={16} />
-          凭据由系统保护
-        </span>
-      </section>
-
-      <div className="lumio-metric-grid">
-        <article className="lumio-card lumio-balance-card">
-          <span className="lumio-card-icon">
-            <WalletCards size={20} />
-          </span>
-          <p>{shellLabels.balanceAndPlan}</p>
-          <strong>{formatBalance(account.balance)}</strong>
-          <small>{account.planLabel ?? "当前没有生效套餐"}</small>
-        </article>
-        <article className="lumio-card">
-          <span className="lumio-card-icon">
-            <Activity size={20} />
-          </span>
-          <p>{shellLabels.connectionStatus}</p>
-          <strong>{phase === "ready-online" ? "在线" : "本机就绪"}</strong>
-          <small>{phaseCopy[phase]}</small>
-        </article>
-        <article className="lumio-card">
-          <span className="lumio-card-icon">
-            <Sparkles size={20} />
-          </span>
-          <p>{shellLabels.defaultModel}</p>
-          <strong>{state.defaultModel ?? "等待服务端同步"}</strong>
-          <small>模型由服务端管理</small>
-        </article>
-      </div>
-
-      <section className="lumio-action-panel">
-        <div>
-          <p className="lumio-eyebrow">官方 Codex</p>
-          <h2>{codexApp ? "已检测到官方应用" : "尚未检测到官方应用"}</h2>
-          <p>{codexApp?.version ? `版本 ${codexApp.version}` : "可在设置中查看检测状态"}</p>
-        </div>
-        <div className="lumio-actions">
-          <button className="lumio-button is-secondary" disabled={!state.actions.canPay} type="button">
-            <WalletCards size={17} />
-            {shellLabels.payment}
-          </button>
-          <button className="lumio-button is-primary" disabled={!state.actions.canLaunch} type="button">
-            <Rocket size={17} />
-            {shellLabels.launch}
-          </button>
-        </div>
-      </section>
-    </div>
   );
 }
 

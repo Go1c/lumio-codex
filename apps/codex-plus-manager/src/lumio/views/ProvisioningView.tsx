@@ -1,0 +1,148 @@
+import { Check, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { lumioErrorLabel } from "../errors.ts";
+import { LumioCommandError, runProvisioningStep } from "../invoke.ts";
+import { PROVISIONING_STEP_IDS, PROVISIONING_STEP_TITLES } from "../state.ts";
+import type { LumioProvisioning, ProvisioningStepId } from "../state.ts";
+
+const SLOW_STEP_MS = 10_000;
+const SETTLE_MS = 600;
+
+const STEP_DETAILS: Record<ProvisioningStepId, string> = {
+  "verify-account": "确认登录状态与账户资格",
+  "prepare-connection": "初始化本机的服务连接",
+  "sync-models": "获取服务端提供的模型列表",
+  "write-config": "先备份原始配置，再原子写入",
+};
+
+function errorCodeOf(error: unknown): string {
+  return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
+}
+
+interface ProvisioningViewProps {
+  email: string | null;
+  provisioning: LumioProvisioning;
+  onStepStarted: (step: ProvisioningStepId) => void;
+  onStepCompleted: (step: ProvisioningStepId) => void;
+  onStepFailed: (step: ProvisioningStepId, errorCode: string) => void;
+  onCompleted: () => void;
+  onDeferred: () => void;
+}
+
+export function ProvisioningView({
+  email,
+  provisioning,
+  onStepStarted,
+  onStepCompleted,
+  onStepFailed,
+  onCompleted,
+  onDeferred,
+}: ProvisioningViewProps) {
+  const [slowStep, setSlowStep] = useState<ProvisioningStepId | null>(null);
+  const running = useRef(false);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const runFrom = useCallback(
+    async (startIndex: number) => {
+      if (running.current) return;
+      running.current = true;
+      try {
+        for (const step of PROVISIONING_STEP_IDS.slice(startIndex)) {
+          onStepStarted(step);
+          const slowTimer = setTimeout(() => setSlowStep(step), SLOW_STEP_MS);
+          timers.current.push(slowTimer);
+          try {
+            await runProvisioningStep(step);
+          } catch (error: unknown) {
+            onStepFailed(step, errorCodeOf(error));
+            return;
+          } finally {
+            clearTimeout(slowTimer);
+            setSlowStep(null);
+          }
+          onStepCompleted(step);
+        }
+        // Hold the finished checkmarks briefly so the last step is perceivable.
+        timers.current.push(setTimeout(onCompleted, SETTLE_MS));
+      } finally {
+        running.current = false;
+      }
+    },
+    [onCompleted, onStepCompleted, onStepFailed, onStepStarted],
+  );
+
+  useEffect(() => {
+    void runFrom(0);
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) clearTimeout(timer);
+    };
+  }, [runFrom]);
+
+  const failedStep = provisioning.failedStep;
+  const failedIndex = failedStep === null ? -1 : PROVISIONING_STEP_IDS.indexOf(failedStep);
+
+  return (
+    <section aria-live="polite" className="lumio-provision">
+      <h1>正在准备官方 Codex</h1>
+      {email === null ? null : <p className="lumio-provision-lead">{email}</p>}
+
+      <ol className="lumio-steps">
+        {PROVISIONING_STEP_IDS.map((step, index) => {
+          const status = provisioning.steps[step];
+          return (
+            <li className={`lumio-step is-${status}`} key={step}>
+              <span className="lumio-step-dot">
+                {status === "done" ? (
+                  <Check size={15} />
+                ) : status === "failed" ? (
+                  <X size={15} />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <span className="lumio-step-body">
+                <strong>{PROVISIONING_STEP_TITLES[step]}</strong>
+                <small>
+                  {status === "failed" && provisioning.errorCode !== null
+                    ? lumioErrorLabel(provisioning.errorCode)
+                    : slowStep === step
+                      ? "比平时慢一些，仍在继续…"
+                      : STEP_DETAILS[step]}
+                </small>
+              </span>
+              <span className="lumio-step-state">
+                {status === "running" ? "进行中…" : status === "done" ? "完成" : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {failedStep === null ? (
+        <p className="lumio-provision-foot">不需要手动操作，完成后自动进入首页</p>
+      ) : (
+        <>
+          <div className="lumio-provision-actions">
+            <button
+              className="lumio-button is-primary"
+              onClick={() => void runFrom(failedIndex)}
+              type="button"
+            >
+              重试
+            </button>
+            <button className="lumio-button is-secondary" onClick={onDeferred} type="button">
+              稍后处理
+            </button>
+          </div>
+          <p className="lumio-provision-foot">
+            {provisioning.suggestRepair
+              ? "多次尝试仍未成功，可以到修复页检查本机配置。"
+              : "遇到问题时你的本机配置不会被修改。"}
+          </p>
+        </>
+      )}
+    </section>
+  );
+}
