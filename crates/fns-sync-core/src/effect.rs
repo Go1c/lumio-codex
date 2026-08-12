@@ -13,6 +13,7 @@ use crate::{SyncError, canonical_json};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SyncCommand {
     Mutation(WorkspaceMutation),
+    ResolveConflict(WorkspaceConflictResolvedRequest),
     UploadBlob {
         workspace_id: WorkspaceId,
         operation_id: OperationId,
@@ -35,6 +36,7 @@ impl SyncCommand {
     pub fn operation_id(&self) -> Option<OperationId> {
         match self {
             Self::Mutation(mutation) => Some(mutation.operation_id),
+            Self::ResolveConflict(resolution) => Some(resolution.operation_id),
             Self::UploadBlob { operation_id, .. } => Some(*operation_id),
             Self::DownloadBlob { operation_id, .. } => *operation_id,
             Self::ResolveConflict(request) => Some(request.operation_id),
@@ -57,6 +59,7 @@ impl SyncCommand {
     pub fn body_bytes(&self) -> Result<Vec<u8>, SyncError> {
         match self {
             Self::Mutation(mutation) => canonical_json(mutation),
+            Self::ResolveConflict(resolution) => canonical_json(resolution),
             Self::SendAck(message) => canonical_json(message),
             Self::ResolveConflict(request) => canonical_json(request),
             Self::UploadBlob { .. } | Self::DownloadBlob { .. } => {

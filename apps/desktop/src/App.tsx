@@ -31,6 +31,15 @@ const FALLBACK_LINKS: ExternalLinks = {
 
 type Phase = "restoring" | "signedOut" | "signedIn";
 
+function errorSummary(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "primary" in error) {
+    return String(error.primary);
+  }
+  return "Unknown error";
+}
+
 export default function App() {
   const api = useApi();
   const { toast } = useToast();

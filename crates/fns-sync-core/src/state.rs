@@ -15,13 +15,19 @@ use rusqlite::{
 use crate::error::{SyncError, corrupt, storage_error};
 use crate::ids::now_ms;
 use crate::model::{
-    ApplyJournalRecord, ApplyStage, ConflictRecord, ConflictStatus, OutboxRecord, OutboxStage,
-    StreamConflictRecord, StreamConflictStatus, StreamEntryRecord, StreamItemStatus,
-    StreamRevisionItemRecord, StreamStateRecord, WorkspaceCursor,
+    AppliedOperationReceiptKind, ApplyCommitPlan, ApplyItemKind, ApplyJournalRecord,
+    ApplyNamespace, ApplyStage, ConflictRecord, ConflictStatus, OutboxRecord, OutboxStage,
+    RemoteApplyOperation, StreamConflictRecord, StreamConflictStatus, StreamEntryRecord,
+    StreamItemStatus, StreamRevisionItemRecord, StreamStateRecord, WorkspaceCursor,
 };
 
 const MIGRATION_0001: &str = include_str!("../migrations/0001_client_state.sql");
-const TABLES: [&str; 12] = [
+const MIGRATION_0002: &str = include_str!("../migrations/0002_applied_operation_receipts.sql");
+const MIGRATION_0003: &str =
+    include_str!("../migrations/0003_provisional_mutation_acceptances.sql");
+const MIGRATION_0004: &str = include_str!("../migrations/0004_apply_journal_v2.sql");
+const MIGRATION_0005: &str = include_str!("../migrations/0005_segment_ack.sql");
+const TABLES: [&str; 13] = [
     "workspace_cursor",
     "path_states",
     "outbox",
@@ -32,6 +38,7 @@ const TABLES: [&str; 12] = [
     "stream_conflicts",
     "apply_journal",
     "applied_operations",
+    "provisional_mutation_acceptances",
     "conflicts",
     "hash_cache",
 ];
@@ -40,6 +47,92 @@ pub struct SqliteState {
     pub(crate) conn: Connection,
     pub(crate) workspace_id: WorkspaceId,
     pub(crate) client_id: ClientId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PersistedIdentity {
+    pub workspace_id: WorkspaceId,
+    pub client_id: ClientId,
+}
+
+/// Read an existing state's durable identity without creating or migrating it.
+///
+/// `Ok(None)` is reserved for a database path that does not exist. An existing
+/// but incomplete, unsupported, or malformed database fails closed so callers
+/// cannot accidentally replace durable cursor or outbox state with a new
+/// client identity.
+pub fn read_persisted_identity<P: AsRef<Path>>(
+    path: P,
+) -> Result<Option<PersistedIdentity>, SyncError> {
+    let path = path.as_ref();
+    match path.try_exists() {
+        Ok(false) => return Ok(None),
+        Ok(true) => {}
+        Err(_) => return Err(SyncError::StorageUnavailable),
+    }
+
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+    let connection = Connection::open_with_flags(path, flags).map_err(storage_error)?;
+    connection
+        .busy_timeout(Duration::from_millis(5_000))
+        .map_err(storage_error)?;
+
+    let version = connection
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+        .map_err(persisted_database_error)?;
+    match version {
+        1 => validate_v1_schema(&connection)?,
+        2 => validate_v2_schema(&connection)?,
+        3 => validate_v3_schema(&connection)?,
+        4 => validate_v4_schema(&connection)?,
+        5 => validate_v5_schema(&connection)?,
+        _ => return Err(corrupt("schema", "user_version")),
+    }
+
+    let mut statement = connection
+        .prepare(
+            "SELECT workspace_id, client_id FROM workspace_cursor ORDER BY workspace_id LIMIT 2",
+        )
+        .map_err(persisted_database_error)?;
+    let mut rows = statement.query([]).map_err(persisted_database_error)?;
+    let Some(row) = rows.next().map_err(persisted_database_error)? else {
+        return Err(corrupt("workspace_cursor", "workspace_id"));
+    };
+    let workspace = match row.get_ref(0).map_err(persisted_database_error)? {
+        ValueRef::Text(value) => std::str::from_utf8(value)
+            .map_err(|_| corrupt("workspace_cursor", "workspace_id"))?
+            .to_owned(),
+        _ => return Err(corrupt("workspace_cursor", "workspace_id")),
+    };
+    let client = match row.get_ref(1).map_err(persisted_database_error)? {
+        ValueRef::Text(value) => std::str::from_utf8(value)
+            .map_err(|_| corrupt("workspace_cursor", "client_id"))?
+            .to_owned(),
+        _ => return Err(corrupt("workspace_cursor", "client_id")),
+    };
+    if rows.next().map_err(persisted_database_error)?.is_some() {
+        return Err(corrupt("workspace_cursor", "workspace_id"));
+    }
+
+    let workspace_id =
+        WorkspaceId::parse(&workspace).map_err(|_| corrupt("workspace_cursor", "workspace_id"))?;
+    let client_id =
+        ClientId::parse(&client).map_err(|_| corrupt("workspace_cursor", "client_id"))?;
+    Ok(Some(PersistedIdentity {
+        workspace_id,
+        client_id,
+    }))
+}
+
+fn persisted_database_error(error: rusqlite::Error) -> SyncError {
+    if matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    ) {
+        corrupt("schema", "integrity")
+    } else {
+        storage_error(error)
+    }
 }
 
 impl std::fmt::Debug for SqliteState {
@@ -64,6 +157,96 @@ impl SqliteState {
         let mut conn = Connection::open_with_flags(path.as_ref(), flags).map_err(storage_error)?;
         conn.busy_timeout(Duration::from_millis(5_000))
             .map_err(storage_error)?;
+
+        match user_version_of(&conn)? {
+            0 => {
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0001)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0002)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0003)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0004)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            1 => {
+                validate_v1_schema(&conn)?;
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0002)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0003)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0004)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            2 => {
+                validate_v2_schema(&conn)?;
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0003)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0004)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            3 => {
+                validate_v3_schema(&conn)?;
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0004)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            4 => {
+                validate_v4_schema(&conn)?;
+                let transaction = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(storage_error)?;
+                transaction
+                    .execute_batch(MIGRATION_0005)
+                    .map_err(storage_error)?;
+                validate_v5_schema(&transaction)?;
+                transaction.commit().map_err(storage_error)?;
+            }
+            5 => validate_v5_schema(&conn)?,
+            _ => return Err(corrupt("schema", "user_version")),
+        }
+
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(storage_error)?;
         conn.pragma_update(None, "journal_mode", "WAL")
@@ -72,22 +255,6 @@ impl SqliteState {
             .map_err(storage_error)?;
         conn.pragma_update(None, "wal_autocheckpoint", 1_000_i64)
             .map_err(storage_error)?;
-
-        let version = user_version_of(&conn)?;
-        match version {
-            0 => {
-                let transaction = conn
-                    .transaction_with_behavior(TransactionBehavior::Immediate)
-                    .map_err(storage_error)?;
-                transaction
-                    .execute_batch(MIGRATION_0001)
-                    .map_err(storage_error)?;
-                transaction.commit().map_err(storage_error)?;
-            }
-            1 => {}
-            _ => return Err(corrupt("schema", "user_version")),
-        }
-
         ensure_identity(&conn, workspace_id, client_id)?;
         Ok(Self {
             conn,
@@ -156,7 +323,7 @@ impl SqliteState {
         let raw = self
             .conn
             .query_row(
-                "SELECT workspace_id, client_id, last_ack_revision, last_applied_revision, pending_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
+                "SELECT workspace_id, client_id, last_ack_revision, last_applied_revision, pending_ack_revision, pending_segment_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
                 params![self.workspace_id.to_string()],
                 |row| {
                     Ok((
@@ -165,6 +332,7 @@ impl SqliteState {
                         row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
                     ))
                 },
             )
@@ -186,12 +354,19 @@ impl SqliteState {
             .map(fns_protocol::WorkspaceRevision::parse)
             .transpose()
             .map_err(|_| corrupt("workspace_cursor", "pending_ack_revision"))?;
+        let pending_segment_ack_revision = raw
+            .5
+            .as_deref()
+            .map(fns_protocol::WorkspaceRevision::parse)
+            .transpose()
+            .map_err(|_| corrupt("workspace_cursor", "pending_segment_ack_revision"))?;
         Ok(WorkspaceCursor {
             workspace_id,
             client_id,
             last_ack_revision,
             last_applied_revision,
             pending_ack_revision,
+            pending_segment_ack_revision,
         })
     }
 
@@ -221,6 +396,29 @@ impl SqliteState {
         self.conn
             .execute(
                 "UPDATE workspace_cursor SET pending_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
+                params![now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn set_pending_segment_ack(
+        &mut self,
+        revision: fns_protocol::WorkspaceRevision,
+    ) -> Result<(), SyncError> {
+        self.conn
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = ?1, updated_at_ms = ?2 WHERE workspace_id = ?3",
+                params![revision.to_string(), now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn clear_pending_segment_ack(&mut self) -> Result<(), SyncError> {
+        self.conn
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
                 params![now_ms(), self.workspace_id.to_string()],
             )
             .map_err(storage_error)?;
@@ -293,6 +491,48 @@ impl SqliteState {
         self.transaction(operation)
     }
 
+    /// Commit the one legacy live-event gap produced by clients that allowed
+    /// later exact receipts to advance the cursor past a blob-backed event.
+    ///
+    /// This is intentionally separate from `set_last_applied_revision`: the
+    /// normal cursor API never permits a regression. Every durable predicate
+    /// identifying the legacy state is rechecked under one immediate
+    /// transaction before the narrowly scoped repair is committed.
+    #[doc(hidden)]
+    pub fn commit_legacy_live_event_gap(
+        &mut self,
+        record: &ApplyJournalRecord,
+    ) -> Result<(), SyncError> {
+        let transaction = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
+        commit_legacy_live_event_gap_tx(&transaction, self.workspace_id, self.client_id, record)?;
+        transaction.commit().map_err(storage_error)
+    }
+
+    pub(crate) fn preflight_legacy_live_event_gap(
+        &self,
+        record: &ApplyJournalRecord,
+    ) -> Result<(), SyncError> {
+        let persisted =
+            self.apply_journal(record.apply_id)?
+                .ok_or(SyncError::ProtocolInvariant {
+                    reason: "apply_journal_not_found",
+                })?;
+        if persisted != *record {
+            return Err(SyncError::OperationChanged);
+        }
+        validate_legacy_live_event_gap(
+            &self.conn,
+            self.workspace_id,
+            self.client_id,
+            record,
+            LegacyGapValidationPhase::Preflight,
+        )?;
+        Ok(())
+    }
+
     pub fn row_counts(&self) -> Result<BTreeMap<String, usize>, SyncError> {
         let mut counts = BTreeMap::new();
         for table in TABLES {
@@ -305,6 +545,513 @@ impl SqliteState {
             counts.insert(table.to_owned(), count);
         }
         Ok(counts)
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoveryAppliedOperationResult<'a> {
+    mutation: &'a WorkspaceMutation,
+    path_state: &'a WorkspacePathState,
+    old_path_state: Option<&'a WorkspacePathState>,
+    new_path_state: Option<&'a WorkspacePathState>,
+}
+
+#[derive(Clone, Copy)]
+enum LegacyGapValidationPhase {
+    Preflight,
+    Commit,
+}
+
+struct ValidatedLegacyLiveEventGap {
+    event: WorkspaceEventMessage,
+    remove_outbox: bool,
+    post_states: Vec<WorkspacePathState>,
+    mutation_json: Vec<u8>,
+    mutation_digest: [u8; 32],
+    last_ack: WorkspaceRevision,
+    last_applied: WorkspaceRevision,
+}
+
+fn commit_legacy_live_event_gap_tx(
+    transaction: &Transaction<'_>,
+    workspace_id: WorkspaceId,
+    client_id: ClientId,
+    record: &ApplyJournalRecord,
+) -> Result<(), SyncError> {
+    // A same-stage write proves that the immutable row and filesystem receipt
+    // supplied by recovery still match the row locked by this transaction.
+    // It rolls back with every later validation or commit failure.
+    crate::store::put_apply_journal_tx(transaction, workspace_id, record)?;
+    let validated = validate_legacy_live_event_gap(
+        transaction,
+        workspace_id,
+        client_id,
+        record,
+        LegacyGapValidationPhase::Commit,
+    )?;
+
+    for state in &validated.post_states {
+        crate::store::put_path_state_tx(transaction, workspace_id, state)?;
+    }
+    let result = RecoveryAppliedOperationResult {
+        mutation: &validated.event.mutation,
+        path_state: &validated.event.path_state,
+        old_path_state: validated.event.old_path_state.as_ref(),
+        new_path_state: validated.event.new_path_state.as_ref(),
+    };
+    let result_digest = crate::store::digest(&result)?;
+    crate::store::record_applied_operation_tx(
+        transaction,
+        crate::store::AppliedOperationWrite {
+            origin_client_id: validated.event.origin_client_id,
+            operation_id: validated.event.operation_id,
+            revision: validated.event.revision,
+            body_digest: result_digest,
+            receipt_kind: AppliedOperationReceiptKind::MutationResult,
+            mutation_json: Some(&validated.mutation_json),
+            legacy_body_digest: None,
+        },
+    )?;
+    crate::store::remove_provisional_mutation_acceptance_tx(
+        transaction,
+        validated.event.origin_client_id,
+        validated.event.operation_id,
+    )?;
+
+    if validated.remove_outbox {
+        let changed = transaction
+            .execute(
+                "DELETE FROM outbox WHERE client_id = ?1 AND operation_id = ?2 AND workspace_id = ?3 AND body_json = ?4 AND body_digest = ?5",
+                params![
+                    client_id.to_string(),
+                    validated.event.operation_id.to_string(),
+                    workspace_id.to_string(),
+                    validated.mutation_json,
+                    validated.mutation_digest.as_slice(),
+                ],
+            )
+            .map_err(storage_error)?;
+        if changed != 1 {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "legacy_live_event_gap_outbox_changed",
+            });
+        }
+    }
+
+    let changed = transaction
+        .execute(
+            "UPDATE workspace_cursor SET last_applied_revision = ?1, pending_ack_revision = NULL, updated_at_ms = ?2 WHERE workspace_id = ?3 AND client_id = ?4 AND last_ack_revision = ?5 AND last_applied_revision = ?6 AND pending_ack_revision = ?6",
+            params![
+                validated.event.revision.to_string(),
+                now_ms(),
+                workspace_id.to_string(),
+                client_id.to_string(),
+                validated.last_ack.to_string(),
+                validated.last_applied.to_string(),
+            ],
+        )
+        .map_err(storage_error)?;
+    if changed != 1 {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_cursor_changed",
+        });
+    }
+    crate::store::set_apply_stage_tx(
+        transaction,
+        workspace_id,
+        record.apply_id,
+        ApplyStage::DatabaseCommitted,
+    )
+}
+
+fn validate_legacy_live_event_gap(
+    connection: &Connection,
+    workspace_id: WorkspaceId,
+    client_id: ClientId,
+    record: &ApplyJournalRecord,
+    phase: LegacyGapValidationPhase,
+) -> Result<ValidatedLegacyLiveEventGap, SyncError> {
+    if record.workspace_id != workspace_id
+        || record.item_kind != ApplyItemKind::Event
+        || record.apply_namespace != ApplyNamespace::LiveEvent
+    {
+        return Err(corrupt("apply_journal", "apply_namespace"));
+    }
+    let filesystem_receipt = match (
+        phase,
+        record.stage,
+        record.filesystem_receipt_json.as_deref(),
+    ) {
+        (
+            LegacyGapValidationPhase::Preflight,
+            ApplyStage::Prepared | ApplyStage::FilesystemStarted,
+            None,
+        ) => None,
+        (
+            LegacyGapValidationPhase::Preflight | LegacyGapValidationPhase::Commit,
+            ApplyStage::FilesystemApplied,
+            Some(filesystem_receipt_json),
+        ) => {
+            let filesystem_receipt: fns_fs::ApplyReceipt =
+                parse_canonical_recovery_json(filesystem_receipt_json, "filesystem_receipt_json")?;
+            if filesystem_receipt.apply_id != record.apply_id {
+                return Err(corrupt("apply_journal", "filesystem_receipt_json"));
+            }
+            Some(filesystem_receipt)
+        }
+        _ => {
+            return Err(SyncError::StreamInvariant {
+                reason: "legacy_live_event_gap_stage",
+            });
+        }
+    };
+    if crate::store::apply_journal_immutable_digest(record) != record.operation_body_digest {
+        return Err(corrupt("apply_journal", "operation_body_digest"));
+    }
+
+    let plan: ApplyCommitPlan = parse_canonical_recovery_json(&record.commit_json, "commit_json")?;
+    let (event, remove_outbox) = match plan {
+        ApplyCommitPlan::LiveEvent {
+            event,
+            remove_outbox,
+        } => (event, remove_outbox),
+        _ => return Err(corrupt("apply_journal", "commit_json")),
+    };
+    event
+        .validate()
+        .map_err(|_| corrupt("apply_journal", "commit_json"))?;
+    if event.workspace_id != workspace_id
+        || event.stream_id != record.stream_id
+        || event.revision.to_string() != record.item_key
+    {
+        return Err(corrupt("apply_journal", "commit_json"));
+    }
+
+    let operation: RemoteApplyOperation =
+        parse_canonical_recovery_json(&record.operation_json, "operation_json")?;
+    let expected_operation = recovery_operation_for_event(&event)?;
+    if operation != expected_operation {
+        return Err(corrupt("apply_journal", "operation_json"));
+    }
+    if record.preimage_json != record.filesystem_operation_json {
+        return Err(corrupt("apply_journal", "preimage_json"));
+    }
+    let filesystem_operation: fns_fs::FsOperation = parse_canonical_recovery_json(
+        &record.filesystem_operation_json,
+        "filesystem_operation_json",
+    )?;
+    let post_states: Vec<WorkspacePathState> =
+        parse_canonical_recovery_json(&record.postimage_json, "postimage_json")?;
+    let expected_post_states = recovery_post_states_for_event(&event)?;
+    if post_states != expected_post_states
+        || post_states.iter().any(|state| state.validate().is_err())
+    {
+        return Err(corrupt("apply_journal", "postimage_json"));
+    }
+    let operation_is_supported = matches!(
+        (
+            event.mutation.kind,
+            &operation,
+            &filesystem_operation,
+            post_states.as_slice(),
+        ),
+        (
+            fns_protocol::WorkspaceMutationKind::UpsertFile,
+            RemoteApplyOperation::Upsert { state: operation_state },
+            fns_fs::FsOperation::UpsertFile {
+                path,
+                content_hash,
+                metadata,
+                ..
+            },
+            [post_state],
+        ) if operation_state == post_state
+            && post_state.kind == fns_protocol::WorkspaceEntryKind::File
+            && path == &post_state.path
+            && post_state.content_hash.clone().into_option().as_ref() == Some(content_hash)
+            && metadata == &post_state.metadata
+    );
+    if !operation_is_supported {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_operation_kind",
+        });
+    }
+    if let Some(filesystem_receipt) = filesystem_receipt.as_ref() {
+        validate_legacy_gap_receipt_shape(filesystem_receipt, &filesystem_operation, &post_states)?;
+    }
+
+    let journal_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM apply_journal WHERE workspace_id = ?1",
+            params![workspace_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    if journal_count != 1 {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_journal_count",
+        });
+    }
+    let stream_row_count: i64 = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM stream_state WHERE workspace_id = ?1) + (SELECT COUNT(*) FROM stream_entries WHERE workspace_id = ?1) + (SELECT COUNT(*) FROM stream_revision_items WHERE workspace_id = ?1) + (SELECT COUNT(*) FROM stream_conflicts WHERE workspace_id = ?1)",
+            params![workspace_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    if stream_row_count != 0 {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_active_stream",
+        });
+    }
+
+    let raw_cursor: (String, String, String, String, Option<String>) = connection
+        .query_row(
+            "SELECT workspace_id, client_id, last_ack_revision, last_applied_revision, pending_ack_revision FROM workspace_cursor WHERE workspace_id = ?1",
+            params![workspace_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .map_err(storage_error)?;
+    if raw_cursor.0 != workspace_id.to_string() || raw_cursor.1 != client_id.to_string() {
+        return Err(corrupt("workspace_cursor", "client_id"));
+    }
+    let last_ack = WorkspaceRevision::parse(&raw_cursor.2)
+        .map_err(|_| corrupt("workspace_cursor", "last_ack_revision"))?;
+    let last_applied = WorkspaceRevision::parse(&raw_cursor.3)
+        .map_err(|_| corrupt("workspace_cursor", "last_applied_revision"))?;
+    let pending_ack = raw_cursor
+        .4
+        .as_deref()
+        .map(WorkspaceRevision::parse)
+        .transpose()
+        .map_err(|_| corrupt("workspace_cursor", "pending_ack_revision"))?;
+    let next_revision = last_ack
+        .get()
+        .checked_add(1)
+        .map(WorkspaceRevision::new)
+        .ok_or(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_not_contiguous",
+        })?;
+    if event.revision != next_revision {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_not_contiguous",
+        });
+    }
+    if event.revision >= last_applied {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_not_superseded",
+        });
+    }
+    if pending_ack != Some(last_applied) {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_pending_ack",
+        });
+    }
+
+    let receipts_at_revision: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM applied_operations WHERE revision = ?1",
+            params![event.revision.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    if receipts_at_revision != 0 {
+        return Err(SyncError::StreamInvariant {
+            reason: "legacy_live_event_gap_receipt_present",
+        });
+    }
+
+    for state in &post_states {
+        let existing = connection
+            .query_row(
+                "SELECT state_json, state_digest FROM path_states WHERE workspace_id = ?1 AND path = ?2",
+                params![workspace_id.to_string(), state.path.as_str()],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()
+            .map_err(storage_error)?;
+        if let Some((state_json, state_digest)) = existing {
+            let existing_state: WorkspacePathState = serde_json::from_slice(&state_json)
+                .map_err(|_| corrupt("path_states", "state_json"))?;
+            if existing_state.validate().is_err()
+                || existing_state.path != state.path
+                || crate::store::canonical_json(&existing_state)? != state_json
+                || state_digest.as_slice() != crate::store::body_digest(&state_json)
+            {
+                return Err(corrupt("path_states", "state_json"));
+            }
+            if existing_state.path_revision > state.path_revision {
+                return Err(SyncError::StreamInvariant {
+                    reason: "legacy_live_event_gap_newer_path_state",
+                });
+            }
+            if existing_state.path_revision == state.path_revision && existing_state != *state {
+                return Err(SyncError::StreamInvariant {
+                    reason: "legacy_live_event_gap_path_state_changed",
+                });
+            }
+        }
+    }
+
+    let mutation_json = crate::store::canonical_json(&event.mutation)?;
+    let mutation_digest = crate::store::body_digest(&mutation_json);
+    if remove_outbox {
+        if event.origin_client_id != client_id {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "legacy_live_event_gap_outbox_identity",
+            });
+        }
+        let outbox = connection
+            .query_row(
+                "SELECT workspace_id, body_json, body_digest FROM outbox WHERE client_id = ?1 AND operation_id = ?2",
+                params![client_id.to_string(), event.operation_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or(SyncError::ProtocolInvariant {
+                reason: "legacy_live_event_gap_outbox_missing",
+            })?;
+        if outbox.0 != workspace_id.to_string()
+            || outbox.1 != mutation_json
+            || outbox.2.as_slice() != mutation_digest
+        {
+            return Err(SyncError::ProtocolInvariant {
+                reason: "legacy_live_event_gap_outbox_mismatch",
+            });
+        }
+    }
+
+    Ok(ValidatedLegacyLiveEventGap {
+        event,
+        remove_outbox,
+        post_states,
+        mutation_json,
+        mutation_digest,
+        last_ack,
+        last_applied,
+    })
+}
+
+fn validate_legacy_gap_receipt_shape(
+    receipt: &fns_fs::ApplyReceipt,
+    filesystem_operation: &fns_fs::FsOperation,
+    post_states: &[WorkspacePathState],
+) -> Result<(), SyncError> {
+    let invalid = || corrupt("apply_journal", "filesystem_receipt_json");
+    if receipt.touched.is_empty()
+        && receipt.postimages.is_empty()
+        && receipt.postimage_hashes.is_empty()
+        && receipt.cleanup_name.is_none()
+    {
+        return Ok(());
+    }
+    let (
+        fns_fs::FsOperation::UpsertFile {
+            path,
+            content_hash,
+            metadata,
+            expected,
+            ..
+        },
+        [post_state],
+        [touched],
+        [Some(observed)],
+        [Some(observed_hash)],
+    ) = (
+        filesystem_operation,
+        post_states,
+        receipt.touched.as_slice(),
+        receipt.postimages.as_slice(),
+        receipt.postimage_hashes.as_slice(),
+    )
+    else {
+        return Err(invalid());
+    };
+    let cleanup_leaf = format!(".fns-delete-{}", receipt.apply_id.0);
+    let expected_cleanup = match expected {
+        fns_fs::ExpectedEntry::Missing => None,
+        fns_fs::ExpectedEntry::Present { .. } => Some(path.as_str().rsplit_once('/').map_or_else(
+            || cleanup_leaf.clone(),
+            |(parent, _)| format!("{parent}/{cleanup_leaf}"),
+        )),
+    };
+    if touched != path
+        || observed_hash != content_hash
+        || post_state.path != *path
+        || post_state.kind != fns_protocol::WorkspaceEntryKind::File
+        || post_state.content_hash.clone().into_option().as_ref() != Some(content_hash)
+        || post_state.metadata != *metadata
+        || observed.path != *path
+        || observed.kind != fns_protocol::WorkspaceEntryKind::File
+        || observed.metadata != *metadata
+        || receipt.cleanup_name != expected_cleanup
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn parse_canonical_recovery_json<T>(bytes: &[u8], field: &'static str) -> Result<T, SyncError>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let value = serde_json::from_slice(bytes).map_err(|_| corrupt("apply_journal", field))?;
+    if crate::store::canonical_json(&value)? != bytes {
+        return Err(corrupt("apply_journal", field));
+    }
+    Ok(value)
+}
+
+fn recovery_operation_for_event(
+    event: &WorkspaceEventMessage,
+) -> Result<RemoteApplyOperation, SyncError> {
+    if event.mutation.kind == fns_protocol::WorkspaceMutationKind::Rename {
+        return Ok(RemoteApplyOperation::Rename {
+            old_state: event
+                .old_path_state
+                .clone()
+                .ok_or(corrupt("apply_journal", "operation_json"))?,
+            new_state: event
+                .new_path_state
+                .clone()
+                .ok_or(corrupt("apply_journal", "operation_json"))?,
+        });
+    }
+    if event.path_state.kind == fns_protocol::WorkspaceEntryKind::Tombstone {
+        Ok(RemoteApplyOperation::Delete {
+            state: event.path_state.clone(),
+        })
+    } else {
+        Ok(RemoteApplyOperation::Upsert {
+            state: event.path_state.clone(),
+        })
+    }
+}
+
+fn recovery_post_states_for_event(
+    event: &WorkspaceEventMessage,
+) -> Result<Vec<WorkspacePathState>, SyncError> {
+    if event.mutation.kind == fns_protocol::WorkspaceMutationKind::Rename {
+        Ok(vec![
+            event
+                .old_path_state
+                .clone()
+                .ok_or(corrupt("apply_journal", "postimage_json"))?,
+            event
+                .new_path_state
+                .clone()
+                .ok_or(corrupt("apply_journal", "postimage_json"))?,
+        ])
+    } else {
+        Ok(vec![event.path_state.clone()])
     }
 }
 
@@ -365,6 +1112,29 @@ impl StateTransaction<'_> {
         self.transaction
             .execute(
                 "UPDATE workspace_cursor SET pending_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
+                params![now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn set_pending_segment_ack(
+        &mut self,
+        revision: WorkspaceRevision,
+    ) -> Result<(), SyncError> {
+        self.transaction
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = ?1, updated_at_ms = ?2 WHERE workspace_id = ?3",
+                params![revision.to_string(), now_ms(), self.workspace_id.to_string()],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn clear_pending_segment_ack(&mut self) -> Result<(), SyncError> {
+        self.transaction
+            .execute(
+                "UPDATE workspace_cursor SET pending_segment_ack_revision = NULL, updated_at_ms = ?1 WHERE workspace_id = ?2",
                 params![now_ms(), self.workspace_id.to_string()],
             )
             .map_err(storage_error)?;
@@ -579,23 +1349,78 @@ impl StateTransaction<'_> {
         crate::store::set_apply_stage_tx(&self.transaction, self.workspace_id(), apply_id, stage)
     }
 
+    pub fn set_apply_filesystem_applied(
+        &mut self,
+        apply_id: crate::ApplyId,
+        receipt_json: &[u8],
+    ) -> Result<(), SyncError> {
+        crate::store::set_apply_filesystem_applied_tx(
+            &self.transaction,
+            self.workspace_id(),
+            apply_id,
+            receipt_json,
+        )
+    }
+
     pub fn remove_apply_journal(&mut self, apply_id: crate::ApplyId) -> Result<(), SyncError> {
         crate::store::remove_apply_journal_tx(&self.transaction, self.workspace_id(), apply_id)
     }
 
-    pub fn record_applied_operation(
+    pub fn record_mutation_applied_operation(
         &mut self,
         origin_client_id: ClientId,
         operation_id: OperationId,
         revision: WorkspaceRevision,
         body_digest: [u8; 32],
+        mutation: &WorkspaceMutation,
+        legacy_body_digest: Option<[u8; 32]>,
     ) -> Result<(), SyncError> {
+        let mutation_json = crate::store::canonical_json(mutation)?;
         crate::store::record_applied_operation_tx(
+            &self.transaction,
+            crate::store::AppliedOperationWrite {
+                origin_client_id,
+                operation_id,
+                revision,
+                body_digest,
+                receipt_kind: AppliedOperationReceiptKind::MutationResult,
+                mutation_json: Some(&mutation_json),
+                legacy_body_digest,
+            },
+        )?;
+        crate::store::remove_provisional_mutation_acceptance_tx(
             &self.transaction,
             origin_client_id,
             operation_id,
-            revision,
-            body_digest,
+        )
+    }
+
+    pub fn record_provisional_mutation_acceptance(
+        &mut self,
+        accepted: &fns_protocol::WorkspaceMutationAcceptedMessage,
+    ) -> Result<(), SyncError> {
+        crate::store::record_provisional_mutation_acceptance_tx(&self.transaction, accepted)
+    }
+
+    pub fn record_conflict_applied_operation(
+        &mut self,
+        origin_client_id: ClientId,
+        operation_id: OperationId,
+        revision: WorkspaceRevision,
+        body_digest: [u8; 32],
+        legacy_body_digest: Option<[u8; 32]>,
+    ) -> Result<(), SyncError> {
+        crate::store::record_applied_operation_tx(
+            &self.transaction,
+            crate::store::AppliedOperationWrite {
+                origin_client_id,
+                operation_id,
+                revision,
+                body_digest,
+                receipt_kind: AppliedOperationReceiptKind::ConflictResolution,
+                mutation_json: None,
+                legacy_body_digest,
+            },
         )
     }
 
@@ -616,6 +1441,19 @@ impl StateTransaction<'_> {
                     conflict_id.to_string(),
                     self.workspace_id.to_string()
                 ],
+            )
+            .map_err(storage_error)?;
+        Ok(())
+    }
+
+    pub fn remove_conflict(
+        &mut self,
+        conflict_id: fns_protocol::ConflictId,
+    ) -> Result<(), SyncError> {
+        self.transaction
+            .execute(
+                "DELETE FROM conflicts WHERE conflict_id = ?1 AND workspace_id = ?2",
+                params![conflict_id.to_string(), self.workspace_id.to_string()],
             )
             .map_err(storage_error)?;
         Ok(())
@@ -718,6 +1556,96 @@ fn user_version_of(connection: &Connection) -> Result<i64, SyncError> {
     connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(storage_error)
+}
+
+type SchemaObject = (String, String, String, Option<String>);
+
+fn schema_objects(connection: &Connection) -> Result<Vec<SchemaObject>, SyncError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type, name, tbl_name",
+        )
+        .map_err(storage_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .map_err(storage_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
+}
+
+fn validate_v2_schema(connection: &Connection) -> Result<(), SyncError> {
+    if user_version_of(connection)? != 2 {
+        return Err(corrupt("schema", "user_version"));
+    }
+    let reference = Connection::open_in_memory().map_err(storage_error)?;
+    reference
+        .execute_batch(MIGRATION_0001)
+        .map_err(storage_error)?;
+    reference
+        .execute_batch(MIGRATION_0002)
+        .map_err(storage_error)?;
+    if schema_objects(connection)? != schema_objects(&reference)? {
+        return Err(corrupt("schema", "layout"));
+    }
+    Ok(())
+}
+
+fn validate_v1_schema(connection: &Connection) -> Result<(), SyncError> {
+    validate_schema(connection, 1, &[MIGRATION_0001])
+}
+
+fn validate_v3_schema(connection: &Connection) -> Result<(), SyncError> {
+    validate_schema(
+        connection,
+        3,
+        &[MIGRATION_0001, MIGRATION_0002, MIGRATION_0003],
+    )
+}
+
+fn validate_v4_schema(connection: &Connection) -> Result<(), SyncError> {
+    validate_schema(
+        connection,
+        4,
+        &[
+            MIGRATION_0001,
+            MIGRATION_0002,
+            MIGRATION_0003,
+            MIGRATION_0004,
+        ],
+    )
+}
+
+fn validate_v5_schema(connection: &Connection) -> Result<(), SyncError> {
+    validate_schema(
+        connection,
+        5,
+        &[
+            MIGRATION_0001,
+            MIGRATION_0002,
+            MIGRATION_0003,
+            MIGRATION_0004,
+            MIGRATION_0005,
+        ],
+    )
+}
+
+fn validate_schema(
+    connection: &Connection,
+    version: i64,
+    migrations: &[&str],
+) -> Result<(), SyncError> {
+    if user_version_of(connection)? != version {
+        return Err(corrupt("schema", "user_version"));
+    }
+    let reference = Connection::open_in_memory().map_err(storage_error)?;
+    for migration in migrations {
+        reference.execute_batch(migration).map_err(storage_error)?;
+    }
+    if schema_objects(connection)? != schema_objects(&reference)? {
+        return Err(corrupt("schema", "layout"));
+    }
+    Ok(())
 }
 
 fn ensure_identity(

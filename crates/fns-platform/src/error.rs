@@ -6,6 +6,10 @@ use std::fmt;
 #[serde(rename_all = "snake_case")]
 pub enum PlatformErrorCode {
     UnsupportedPlatform,
+    InvalidProjectId,
+    InvalidCredentialPath,
+    CredentialAccess,
+    CredentialInteractionNotAllowed,
     InvalidFileType,
     InsecurePermissions,
     WrongOwner,

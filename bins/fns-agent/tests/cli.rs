@@ -18,9 +18,9 @@ fn write_test_config(dir: &std::path::Path) -> std::path::PathBuf {
         "endpoint": "ws://127.0.0.1:8080/api/user/workspace-sync/v2",
         "workspaceId": "10000000-0000-4000-8000-000000000002",
         "clientId": "10000000-0000-4000-8000-000000000001",
-        "workspaceRoot": workspace_root,
-        "stateDir": state_dir,
-        "tokenFile": token_file,
+        "workspaceRoot": workspace_root.to_str().unwrap(),
+        "stateDir": state_dir.to_str().unwrap(),
+        "tokenFile": token_file.to_str().unwrap(),
         "sync": {
             "includes": ["**"],
             "excludes": [],
@@ -31,6 +31,15 @@ fn write_test_config(dir: &std::path::Path) -> std::path::PathBuf {
         }
     });
     std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+
+    // On Linux, config and token files must be 0600 for security validation.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
     config_path
 }
 

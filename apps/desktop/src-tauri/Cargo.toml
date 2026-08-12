@@ -17,6 +17,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+blake3.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+base64 = "0.22.1"
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-shell = "2"
@@ -50,3 +53,7 @@ tempfile.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+futures-util.workspace = true
+tokio-tungstenite.workspace = true

@@ -6,7 +6,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicU8, Ordering},
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError};
 use notify::{RecursiveMode, Watcher};
@@ -164,17 +164,74 @@ impl WatchReceiver {
     }
 
     pub fn try_recv(&self) -> Result<WatchMessage, FsError> {
+        self.try_recv_detailed()
+            .map_err(|_| FsError::QueueDisconnected)
+    }
+
+    pub fn try_recv_detailed(&self) -> Result<WatchMessage, std::sync::mpsc::TryRecvError> {
         if let Some(gap) = self.take_gap() {
             return Ok(WatchMessage::Gap(gap));
         }
         let message = self.receiver.try_recv().map_err(|error| match error {
-            TryRecvError::Empty => FsError::QueueDisconnected,
-            TryRecvError::Disconnected => FsError::QueueDisconnected,
+            TryRecvError::Empty => std::sync::mpsc::TryRecvError::Empty,
+            TryRecvError::Disconnected => std::sync::mpsc::TryRecvError::Disconnected,
         })?;
         if let Some(gap) = self.take_gap() {
             return Ok(WatchMessage::Gap(gap));
         }
         Ok(message)
+    }
+
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<WatchMessage, std::sync::mpsc::RecvTimeoutError> {
+        self.recv_timeout_with_hook(timeout, || {})
+    }
+
+    #[cfg(test)]
+    fn recv_timeout_with_before_wait(
+        &self,
+        timeout: Duration,
+        before_wait: impl FnOnce(),
+    ) -> Result<WatchMessage, std::sync::mpsc::RecvTimeoutError> {
+        self.recv_timeout_with_hook(timeout, before_wait)
+    }
+
+    fn recv_timeout_with_hook(
+        &self,
+        timeout: Duration,
+        before_wait: impl FnOnce(),
+    ) -> Result<WatchMessage, std::sync::mpsc::RecvTimeoutError> {
+        let timeout = crossbeam_channel::after(timeout);
+        let mut before_wait = Some(before_wait);
+        loop {
+            if let Some(gap) = self.take_gap() {
+                return Ok(WatchMessage::Gap(gap));
+            }
+            if let Some(before_wait) = before_wait.take() {
+                before_wait();
+            }
+            crossbeam_channel::select! {
+                recv(self.receiver) -> message => {
+                    let message = match message {
+                        Ok(message) => message,
+                        Err(_) => {
+                            if let Some(gap) = self.take_gap() {
+                                return Ok(WatchMessage::Gap(gap));
+                            }
+                            return Err(std::sync::mpsc::RecvTimeoutError::Disconnected);
+                        }
+                    };
+                    if let Some(gap) = self.take_gap() {
+                        return Ok(WatchMessage::Gap(gap));
+                    }
+                    return Ok(message);
+                }
+                recv(self.gap_wake) -> _ => {}
+                recv(timeout) -> _ => return Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+            }
+        }
     }
 
     fn take_gap(&self) -> Option<WatchGap> {
@@ -231,11 +288,12 @@ pub fn start_platform_watcher(
             callback_ingress.mark_gap(WatchGap::OutsideRoot);
         }
         Ok(event) => match notify_adapter::normalize_notify_event(&root_path, event) {
-            Ok(event) => {
+            Ok(Some(event)) => {
                 if callback_ingress.try_send(event).is_err() {
                     callback_ingress.mark_gap(WatchGap::Overflow);
                 }
             }
+            Ok(None) => {}
             Err(gap) => callback_ingress.mark_gap(gap),
         },
         Err(_) => callback_ingress.mark_gap(WatchGap::Backend),
@@ -251,4 +309,33 @@ pub fn start_platform_watcher(
             operation: "start filesystem watcher",
         })?;
     Ok((watcher, receiver))
+}
+
+#[cfg(test)]
+mod wake_tests {
+    use super::*;
+
+    #[test]
+    fn gap_marked_after_initial_check_wakes_blocked_receiver() {
+        for _ in 0..100 {
+            let (ingress, receiver) = WatchIngress::bounded(1);
+            let (checked_sender, checked_receiver) = std::sync::mpsc::sync_channel(0);
+            let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+            let reader = std::thread::spawn(move || {
+                receiver.recv_timeout_with_before_wait(Duration::from_millis(100), || {
+                    checked_sender.send(()).unwrap();
+                    release_receiver.recv().unwrap();
+                })
+            });
+
+            checked_receiver.recv().unwrap();
+            ingress.mark_gap(WatchGap::Backend);
+            release_sender.send(()).unwrap();
+
+            assert!(matches!(
+                reader.join().unwrap(),
+                Ok(WatchMessage::Gap(WatchGap::Backend))
+            ));
+        }
+    }
 }

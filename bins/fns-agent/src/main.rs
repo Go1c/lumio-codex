@@ -1,12 +1,13 @@
 use clap::Parser;
 use fns_agent::{
-    AgentConfig,
+    AgentCommand, AgentConfig, AgentProcess, AgentProcessOptions,
     cli::{Cli, Command},
-    daemon, run_diagnose, run_status,
+    run_diagnose, run_status,
 };
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    init_logging();
     let cli = Cli::parse();
 
     match cli.command {
@@ -33,7 +34,30 @@ fn main() -> ExitCode {
                     }
                 };
 
-                match runtime.block_on(daemon::run(cfg, token)) {
+                let executable = match std::env::current_exe() {
+                    Ok(executable) => executable,
+                    Err(_) => return ExitCode::from(6),
+                };
+                let supervised = async move {
+                    let mut child = AgentProcess::spawn(
+                        AgentCommand::new(executable).arg("__worker"),
+                        cfg,
+                        token,
+                        AgentProcessOptions::default(),
+                    )
+                    .await?;
+                    tokio::select! {
+                        result = child.wait() => result.map(|_| ()),
+                        signal = wait_for_parent_signal() => {
+                            let shutdown = child.shutdown().await;
+                            match signal {
+                                Ok(()) => shutdown,
+                                Err(error) => Err(error),
+                            }
+                        }
+                    }
+                };
+                match runtime.block_on(supervised) {
                     Ok(()) => ExitCode::SUCCESS,
                     Err(e) => {
                         eprintln!("fns-agent: {e}");
@@ -75,5 +99,49 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         }
+        Command::Worker => {
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(_) => return ExitCode::from(6),
+            };
+            match runtime.block_on(fns_agent::worker::run()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => ExitCode::from(error.exit_code() as u8),
+            }
+        }
+    }
+}
+
+fn init_logging() {
+    let _ = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::INFO)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
+async fn wait_for_parent_signal() -> Result<(), fns_agent::AgentError> {
+    #[cfg(unix)]
+    {
+        let mut terminate =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                .map_err(|_| fns_agent::AgentError::new(fns_agent::AgentErrorCode::Core))?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => {
+                result.map_err(|_| fns_agent::AgentError::new(fns_agent::AgentErrorCode::Core))
+            }
+            signal = terminate.recv() => {
+                signal.ok_or_else(|| fns_agent::AgentError::new(fns_agent::AgentErrorCode::Core))
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|_| fns_agent::AgentError::new(fns_agent::AgentErrorCode::Core))
     }
 }

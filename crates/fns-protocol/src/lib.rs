@@ -14,6 +14,7 @@ pub use action::{
 };
 pub use binary::{
     WorkspaceBlobHeader, compute_blob_digest, decode_binary_frame, encode_binary_frame,
+    encode_binary_frame_owned,
 };
 pub use envelope::{
     DecodedEnvelope, DecodedFrame, decode_server_text_frame, decode_text_frame, encode_failure,

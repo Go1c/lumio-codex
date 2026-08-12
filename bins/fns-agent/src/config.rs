@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 /// Agent configuration loaded from a strict JSON file.
 /// Token is never in this struct — it lives in a separate token file.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentConfig {
     pub schema_version: String,
@@ -20,7 +20,7 @@ pub struct AgentConfig {
     pub transport: AgentTransportConfig,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentSyncConfig {
     pub includes: Vec<String>,
@@ -28,7 +28,7 @@ pub struct AgentSyncConfig {
     pub protect_secrets: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentTransportConfig {
     pub max_active_transfers: usize,

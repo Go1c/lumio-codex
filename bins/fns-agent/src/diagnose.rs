@@ -142,36 +142,23 @@ pub fn run_diagnostics(config_path: &Path) -> DiagnosticReport {
         },
     });
 
-    // Check 7: singleton lock (probe only — don't signal or kill).
-    let lock_path = config.state_dir.join("agent.lock");
-    #[cfg(target_os = "linux")]
-    {
-        match fns_platform::ProcessLock::probe_linux(&lock_path) {
-            Ok(None) => checks.push(DiagnosticCheck {
-                name: "singleton_lock",
-                status: DiagnosticStatus::Pass,
-                code: "not_running",
-            }),
-            Ok(Some(_)) => checks.push(DiagnosticCheck {
-                name: "singleton_lock",
-                status: DiagnosticStatus::Warning,
-                code: "already_running",
-            }),
-            Err(_) => checks.push(DiagnosticCheck {
-                name: "singleton_lock",
-                status: DiagnosticStatus::Fail,
-                code: "corrupt",
-            }),
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = lock_path;
-        checks.push(DiagnosticCheck {
+    // Check 7: singleton lease (probe only — don't signal or kill).
+    match fns_platform::StateDirLease::probe(&config.state_dir) {
+        Ok(false) => checks.push(DiagnosticCheck {
+            name: "singleton_lock",
+            status: DiagnosticStatus::Pass,
+            code: "not_running",
+        }),
+        Ok(true) => checks.push(DiagnosticCheck {
             name: "singleton_lock",
             status: DiagnosticStatus::Warning,
-            code: "not_linux",
-        });
+            code: "already_running",
+        }),
+        Err(_) => checks.push(DiagnosticCheck {
+            name: "singleton_lock",
+            status: DiagnosticStatus::Fail,
+            code: "corrupt",
+        }),
     }
 
     // Check 8: runtime status file.

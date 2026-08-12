@@ -16,6 +16,7 @@ use fns_protocol::{
 };
 use tempfile::TempDir;
 
+use fns_sync_core::engine::InboundWorkLimits;
 use fns_sync_core::{SqliteState, SyncCommand, SyncEngine, SyncEngineConfig};
 
 pub struct StateFixture {
@@ -197,12 +198,17 @@ pub struct EngineFixture {
     workspace_id: WorkspaceId,
     client_id: fns_protocol::ClientId,
     stream_id: fns_protocol::StreamId,
+    inbound_work_limits: InboundWorkLimits,
     blobs: RefCell<BTreeMap<WorkspaceContentHash, Vec<u8>>>,
     retained_commands: Vec<SyncCommand>,
 }
 
 impl EngineFixture {
     pub fn new() -> Self {
+        Self::new_with_inbound_work_limits(InboundWorkLimits::default())
+    }
+
+    pub fn new_with_inbound_work_limits(inbound_work_limits: InboundWorkLimits) -> Self {
         let workspace = tempfile::tempdir().expect("workspace directory");
         let state = tempfile::tempdir().expect("state directory");
         let workspace_id =
@@ -222,7 +228,8 @@ impl EngineFixture {
             .collect::<Vec<_>>();
         let config = SyncEngineConfig::new(workspace_id, client_id, workspace.path(), state.path())
             .with_operation_ids(operation_ids)
-            .with_timestamps(timestamps);
+            .with_timestamps(timestamps)
+            .with_inbound_work_limits(inbound_work_limits);
         let engine = SyncEngine::open(config).expect("engine");
         Self {
             engine,
@@ -231,6 +238,7 @@ impl EngineFixture {
             workspace_id,
             client_id,
             stream_id,
+            inbound_work_limits,
             blobs: RefCell::new(BTreeMap::new()),
             retained_commands: Vec::new(),
         }
@@ -783,6 +791,7 @@ impl EngineFixture {
             workspace_id,
             client_id,
             stream_id,
+            inbound_work_limits,
             blobs,
             retained_commands,
         } = self;
@@ -799,7 +808,8 @@ impl EngineFixture {
         let config = SyncEngineConfig::new(workspace_id, client_id, workspace.path(), state.path());
         let config = config
             .with_operation_ids(operation_ids)
-            .with_timestamps(timestamps);
+            .with_timestamps(timestamps)
+            .with_inbound_work_limits(inbound_work_limits);
         let engine = SyncEngine::open(config).expect("reopen engine");
         Self {
             engine,
@@ -808,6 +818,7 @@ impl EngineFixture {
             workspace_id,
             client_id,
             stream_id,
+            inbound_work_limits,
             blobs,
             retained_commands,
         }
@@ -819,7 +830,8 @@ pub fn mutation_kinds(commands: &[SyncCommand]) -> Vec<WorkspaceMutationKind> {
         .iter()
         .map(|command| match command {
             SyncCommand::Mutation(mutation) => mutation.kind,
-            SyncCommand::UploadBlob { .. }
+            SyncCommand::ResolveConflict(_)
+            | SyncCommand::UploadBlob { .. }
             | SyncCommand::DownloadBlob { .. }
             | SyncCommand::SendAck(_)
             | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
@@ -830,7 +842,8 @@ pub fn mutation_kinds(commands: &[SyncCommand]) -> Vec<WorkspaceMutationKind> {
 pub fn base_revision(command: &SyncCommand) -> u64 {
     match command {
         SyncCommand::Mutation(mutation) => mutation.base_path_revision.get(),
-        SyncCommand::UploadBlob { .. }
+        SyncCommand::ResolveConflict(_)
+        | SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
         | SyncCommand::SendAck(_)
         | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
@@ -847,7 +860,8 @@ pub fn rename_revisions(command: &SyncCommand) -> (u64, u64) {
                 .get(),
         ),
         SyncCommand::Mutation(_) => panic!("expected rename command"),
-        SyncCommand::UploadBlob { .. }
+        SyncCommand::ResolveConflict(_)
+        | SyncCommand::UploadBlob { .. }
         | SyncCommand::DownloadBlob { .. }
         | SyncCommand::SendAck(_)
         | SyncCommand::ResolveConflict(_) => panic!("expected mutation command"),
@@ -996,7 +1010,32 @@ pub fn self_event_from_mutation(
             None,
             None,
         ),
-        WorkspaceMutationKind::Rename => panic!("self rename event is not used by this task"),
+        WorkspaceMutationKind::Rename => {
+            let new_path = mutation
+                .new_path
+                .clone()
+                .expect("validated rename destination");
+            let new_kind = if mutation.content_hash.is_null() {
+                WorkspaceEntryKind::Directory
+            } else {
+                WorkspaceEntryKind::File
+            };
+            let old_state = path_state(
+                mutation.path.as_str(),
+                revision,
+                RequiredNullable::Null,
+                zero_metadata(),
+                WorkspaceEntryKind::Tombstone,
+            );
+            let new_state = path_state(
+                new_path.as_str(),
+                revision,
+                mutation.content_hash.clone(),
+                mutation.metadata.clone(),
+                new_kind,
+            );
+            (new_state.clone(), Some(old_state), Some(new_state))
+        }
     };
     let event = WorkspaceEventMessage {
         workspace_id: fixture.workspace_id,

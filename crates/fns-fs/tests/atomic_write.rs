@@ -69,6 +69,26 @@ struct CreateDeleteTombAfterCheck {
     apply_id: ApplyId,
 }
 
+struct CrashAfterDestinationBackedUp;
+
+impl ApplyObserver for CrashAfterDestinationBackedUp {
+    fn checkpoint(&self, checkpoint: ApplyCheckpoint) {
+        if checkpoint == ApplyCheckpoint::DestinationBackedUp {
+            panic!("deterministic apply crash");
+        }
+    }
+}
+
+struct AbortAfterDestinationBackedUp;
+
+impl ApplyObserver for AbortAfterDestinationBackedUp {
+    fn checkpoint(&self, checkpoint: ApplyCheckpoint) {
+        if checkpoint == ApplyCheckpoint::DestinationBackedUp {
+            std::process::abort();
+        }
+    }
+}
+
 impl ApplyObserver for CreateDeleteTombAfterCheck {
     fn checkpoint(&self, checkpoint: ApplyCheckpoint) {
         if checkpoint == ApplyCheckpoint::DestinationBackedUp {
@@ -150,8 +170,177 @@ fn present(
     ExpectedEntry::Present {
         kind: observed.kind,
         content_hash,
+        directory_snapshot: (observed.kind == WorkspaceEntryKind::Directory)
+            .then(|| root.directory_snapshot(workspace_path).unwrap()),
         fingerprint: observed.fingerprint,
     }
+}
+
+#[test]
+fn file_update_resumes_same_apply_id_after_destination_backup_crash() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::write(root_dir.path().join("resume.txt"), b"old").unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let expected = present(&root, &path("resume.txt"), Some(hash(b"old")));
+    let content_hash = import(&content, b"new");
+    let operation = FsOperation::UpsertFile {
+        path: path("resume.txt"),
+        content_hash,
+        metadata: metadata(3),
+        expected,
+    };
+    let apply_id = ApplyId(uuid::Uuid::parse_str("10000000-0000-4000-8000-000000000099").unwrap());
+    let crashing = AtomicWorkspaceWriter::with_observer(
+        root,
+        content.clone(),
+        Box::new(CrashAfterDestinationBackedUp),
+    );
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = crashing.apply(apply_id, &operation);
+    }));
+    assert!(crashed.is_err());
+    assert!(!root_dir.path().join("resume.txt").exists());
+    assert!(
+        root_dir
+            .path()
+            .join(format!(".fns-tmp-{}", apply_id.0))
+            .exists()
+    );
+    assert!(
+        root_dir
+            .path()
+            .join(format!(".fns-delete-{}", apply_id.0))
+            .exists()
+    );
+
+    let resumed =
+        AtomicWorkspaceWriter::new(RootedWorkspace::open(root_dir.path()).unwrap(), content);
+    let receipt = resumed.apply(apply_id, &operation).unwrap();
+    assert_eq!(
+        fs::read(root_dir.path().join("resume.txt")).unwrap(),
+        b"new"
+    );
+    assert!(receipt.cleanup_name.is_some());
+    resumed.finalize(&receipt).unwrap();
+    assert!(
+        !root_dir
+            .path()
+            .join(format!(".fns-delete-{}", apply_id.0))
+            .exists()
+    );
+}
+
+#[test]
+fn abandoning_partial_update_preserves_newer_live_bytes_and_removes_artifacts() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::write(root_dir.path().join("diverged.txt"), b"old").unwrap();
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let operation = FsOperation::UpsertFile {
+        path: path("diverged.txt"),
+        content_hash: import(&content, b"remote"),
+        metadata: metadata(6),
+        expected: present(&root, &path("diverged.txt"), Some(hash(b"old"))),
+    };
+    let apply_id = ApplyId(uuid::Uuid::parse_str("10000000-0000-4000-8000-000000000097").unwrap());
+    let crashing = AtomicWorkspaceWriter::with_observer(
+        root,
+        content.clone(),
+        Box::new(CrashAfterDestinationBackedUp),
+    );
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = crashing.apply(apply_id, &operation);
+        }))
+        .is_err()
+    );
+    fs::write(root_dir.path().join("diverged.txt"), b"local-newer").unwrap();
+
+    let writer =
+        AtomicWorkspaceWriter::new(RootedWorkspace::open(root_dir.path()).unwrap(), content);
+    writer.abandon(apply_id, &operation).unwrap();
+    assert_eq!(
+        fs::read(root_dir.path().join("diverged.txt")).unwrap(),
+        b"local-newer"
+    );
+    assert!(
+        !root_dir
+            .path()
+            .join(format!(".fns-tmp-{}", apply_id.0))
+            .exists()
+    );
+    assert!(
+        !root_dir
+            .path()
+            .join(format!(".fns-delete-{}", apply_id.0))
+            .exists()
+    );
+}
+
+#[test]
+fn file_update_partial_apply_child() {
+    let Some(paths) = std::env::var_os("FNS_FS_PARTIAL_APPLY_CHILD") else {
+        return;
+    };
+    let mut paths = std::env::split_paths(&paths);
+    let root_path = paths.next().unwrap();
+    let state_path = paths.next().unwrap();
+    fs::write(root_path.join("process.txt"), b"old").unwrap();
+    let content = ContentCache::open(&state_path).unwrap();
+    let content_hash = import(&content, b"new");
+    let root = RootedWorkspace::open(&root_path).unwrap();
+    let operation = FsOperation::UpsertFile {
+        path: path("process.txt"),
+        content_hash,
+        metadata: metadata(3),
+        expected: present(&root, &path("process.txt"), Some(hash(b"old"))),
+    };
+    let writer = AtomicWorkspaceWriter::with_observer(
+        root,
+        content,
+        Box::new(AbortAfterDestinationBackedUp),
+    );
+    let _ = writer.apply(
+        ApplyId(uuid::Uuid::parse_str("10000000-0000-4000-8000-000000000098").unwrap()),
+        &operation,
+    );
+    panic!("partial apply child did not abort");
+}
+
+#[test]
+fn file_update_recovers_partial_rename_after_process_crash() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let child_paths = std::env::join_paths([root_dir.path(), state_dir.path()]).unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "file_update_partial_apply_child", "--nocapture"])
+        .env("FNS_FS_PARTIAL_APPLY_CHILD", child_paths)
+        .status()
+        .unwrap();
+    assert!(!status.success());
+
+    let apply_id = ApplyId(uuid::Uuid::parse_str("10000000-0000-4000-8000-000000000098").unwrap());
+    let tomb_path = path(&format!(".fns-delete-{}", apply_id.0));
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let expected = present(&root, &tomb_path, Some(hash(b"old")));
+    let content = ContentCache::open(state_dir.path()).unwrap();
+    let operation = FsOperation::UpsertFile {
+        path: path("process.txt"),
+        content_hash: hash(b"new"),
+        metadata: metadata(3),
+        expected,
+    };
+    let writer = AtomicWorkspaceWriter::new(root, content);
+    let receipt = writer.apply(apply_id, &operation).unwrap();
+    assert_eq!(
+        fs::read(root_dir.path().join("process.txt")).unwrap(),
+        b"new"
+    );
+    writer.finalize(&receipt).unwrap();
+    assert!(!root_dir.path().join(tomb_path.as_str()).exists());
 }
 
 #[test]
@@ -855,6 +1044,115 @@ fn directory_rename_moves_whole_tree() {
     assert_eq!(
         fs::read(root_dir.path().join("new").join("child")).unwrap(),
         b"child"
+    );
+}
+
+#[test]
+fn directory_delete_rejects_a_changed_descendant() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root_dir.path().join("tree/nested")).unwrap();
+    fs::write(root_dir.path().join("tree/nested/file.bin"), b"old").unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let expected = present(&root, &path("tree"), None);
+    fs::write(root_dir.path().join("tree/nested/file.bin"), b"new").unwrap();
+    let writer = AtomicWorkspaceWriter::new(
+        RootedWorkspace::open(root_dir.path()).unwrap(),
+        ContentCache::open(state_dir.path()).unwrap(),
+    );
+
+    let error = writer
+        .apply(
+            ApplyId(uuid::Uuid::new_v4()),
+            &FsOperation::Delete {
+                path: path("tree"),
+                expected,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, fns_fs::FsError::ContentMismatch));
+    assert_eq!(
+        fs::read(root_dir.path().join("tree/nested/file.bin")).unwrap(),
+        b"new"
+    );
+}
+
+#[test]
+fn directory_rename_rejects_a_changed_source_descendant() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root_dir.path().join("source/nested")).unwrap();
+    fs::write(root_dir.path().join("source/nested/file.bin"), b"old").unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let source_expected = present(&root, &path("source"), None);
+    fs::write(root_dir.path().join("source/nested/file.bin"), b"new").unwrap();
+    let writer = AtomicWorkspaceWriter::new(
+        RootedWorkspace::open(root_dir.path()).unwrap(),
+        ContentCache::open(state_dir.path()).unwrap(),
+    );
+
+    let error = writer
+        .apply(
+            ApplyId(uuid::Uuid::new_v4()),
+            &FsOperation::Rename {
+                path: path("source"),
+                new_path: path("target"),
+                content_hash: None,
+                metadata: metadata(0),
+                source_expected,
+                target_expected: ExpectedEntry::Missing,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, fns_fs::FsError::ContentMismatch));
+    assert_eq!(
+        fs::read(root_dir.path().join("source/nested/file.bin")).unwrap(),
+        b"new"
+    );
+    assert!(!root_dir.path().join("target").exists());
+}
+
+#[test]
+fn directory_rename_rejects_a_changed_target_descendant() {
+    let root_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root_dir.path().join("source/nested")).unwrap();
+    fs::create_dir_all(root_dir.path().join("target/nested")).unwrap();
+    fs::write(root_dir.path().join("source/nested/file.bin"), b"src").unwrap();
+    fs::write(root_dir.path().join("target/nested/file.bin"), b"old").unwrap();
+    let root = RootedWorkspace::open(root_dir.path()).unwrap();
+    let source_expected = present(&root, &path("source"), None);
+    let target_expected = present(&root, &path("target"), None);
+    fs::write(root_dir.path().join("target/nested/file.bin"), b"new").unwrap();
+    let writer = AtomicWorkspaceWriter::new(
+        RootedWorkspace::open(root_dir.path()).unwrap(),
+        ContentCache::open(state_dir.path()).unwrap(),
+    );
+
+    let error = writer
+        .apply(
+            ApplyId(uuid::Uuid::new_v4()),
+            &FsOperation::Rename {
+                path: path("source"),
+                new_path: path("target"),
+                content_hash: None,
+                metadata: metadata(0),
+                source_expected,
+                target_expected,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, fns_fs::FsError::ContentMismatch));
+    assert_eq!(
+        fs::read(root_dir.path().join("source/nested/file.bin")).unwrap(),
+        b"src"
+    );
+    assert_eq!(
+        fs::read(root_dir.path().join("target/nested/file.bin")).unwrap(),
+        b"new"
     );
 }
 

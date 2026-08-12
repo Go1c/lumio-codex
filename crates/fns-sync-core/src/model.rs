@@ -1,8 +1,8 @@
 use fns_protocol::revision::WorkspaceConflictRevision;
 use fns_protocol::{
-    ClientId, ConflictId, OperationId, RequiredNullable, StreamId, WorkspaceContentHash,
-    WorkspaceEntryKind, WorkspaceFileMetadata, WorkspaceId, WorkspacePath, WorkspaceRevision,
-    WorkspaceSnapshotMode,
+    ClientId, ConflictId, OperationId, RequiredNullable, StreamId, WorkspaceConflictChoice,
+    WorkspaceConflictKind, WorkspaceContentHash, WorkspaceEntryKind, WorkspaceFileMetadata,
+    WorkspaceId, WorkspacePath, WorkspaceRevision, WorkspaceSnapshotMode,
 };
 
 macro_rules! stage_enum {
@@ -88,10 +88,24 @@ stage_enum! {
 }
 
 stage_enum! {
+    /// Namespace of the authoritative item coordinated by an apply journal.
+    ApplyNamespace {
+        SnapshotEntry => "snapshot_entry",
+        StreamEvent => "stream_event",
+        LiveEvent => "live_event",
+        StreamConflictResolved => "stream_conflict_resolved",
+        LiveConflictResolved => "live_conflict_resolved"
+    }
+}
+
+stage_enum! {
     /// Filesystem/apply journal checkpoint.
     ApplyStage {
         Prepared => "prepared",
-        FilesystemStarted => "filesystem_started"
+        FilesystemStarted => "filesystem_started",
+        FilesystemApplied => "filesystem_applied",
+        DatabaseCommitted => "database_committed",
+        Finalized => "finalized"
     }
 }
 
@@ -125,6 +139,7 @@ pub struct WorkspaceCursor {
     pub last_ack_revision: WorkspaceRevision,
     pub last_applied_revision: WorkspaceRevision,
     pub pending_ack_revision: Option<WorkspaceRevision>,
+    pub pending_segment_ack_revision: Option<WorkspaceRevision>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -296,10 +311,50 @@ pub struct ApplyJournalRecord {
     pub stream_id: StreamId,
     pub item_kind: ApplyItemKind,
     pub item_key: String,
+    pub apply_namespace: ApplyNamespace,
+    pub operation_body_digest: [u8; 32],
     pub operation_json: Vec<u8>,
+    pub filesystem_operation_json: Vec<u8>,
+    pub commit_json: Vec<u8>,
     pub preimage_json: Vec<u8>,
     pub postimage_json: Vec<u8>,
+    pub filesystem_receipt_json: Option<Vec<u8>>,
     pub stage: ApplyStage,
+}
+
+/// Exact database-side action paired with a journaled filesystem apply.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "namespace", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplyCommitPlan {
+    SnapshotEntry {
+        entry: fns_protocol::WorkspaceSnapshotEntryMessage,
+    },
+    StreamEvent {
+        event: fns_protocol::WorkspaceEventMessage,
+        remove_outbox: bool,
+    },
+    LiveEvent {
+        event: fns_protocol::WorkspaceEventMessage,
+        remove_outbox: bool,
+    },
+    StreamConflictResolved {
+        message: fns_protocol::WorkspaceConflictResolvedMessage,
+    },
+    LiveConflictResolved {
+        message: fns_protocol::WorkspaceConflictResolvedMessage,
+    },
+}
+
+impl ApplyCommitPlan {
+    pub const fn namespace(&self) -> ApplyNamespace {
+        match self {
+            Self::SnapshotEntry { .. } => ApplyNamespace::SnapshotEntry,
+            Self::StreamEvent { .. } => ApplyNamespace::StreamEvent,
+            Self::LiveEvent { .. } => ApplyNamespace::LiveEvent,
+            Self::StreamConflictResolved { .. } => ApplyNamespace::StreamConflictResolved,
+            Self::LiveConflictResolved { .. } => ApplyNamespace::LiveConflictResolved,
+        }
+    }
 }
 
 /// Canonical remote postimage persisted in an apply-journal row before any
@@ -327,6 +382,34 @@ pub struct AppliedOperationRecord {
     pub operation_id: OperationId,
     pub revision: WorkspaceRevision,
     pub body_digest: [u8; 32],
+    pub receipt_kind: AppliedOperationReceiptKind,
+    pub mutation_json: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppliedOperationReceiptKind {
+    Legacy,
+    MutationResult,
+    ConflictResolution,
+}
+
+impl AppliedOperationReceiptKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::MutationResult => "mutation_result",
+            Self::ConflictResolution => "conflict_resolution",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "legacy" => Some(Self::Legacy),
+            "mutation_result" => Some(Self::MutationResult),
+            "conflict_resolution" => Some(Self::ConflictResolution),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -339,6 +422,107 @@ pub struct ConflictRecord {
     pub candidate_hash: Option<String>,
     pub resolution_json: Option<Vec<u8>>,
     pub resolution_digest: Option<[u8; 32]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictBlockedReason {
+    WaitingBlobs,
+    AutomaticResolutionPending,
+    ResolutionPending,
+    RefreshRequired,
+    SelectedSideDeleted,
+}
+
+impl ConflictBlockedReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WaitingBlobs => "waiting_blobs",
+            Self::AutomaticResolutionPending => "automatic_resolution_pending",
+            Self::ResolutionPending => "resolution_pending",
+            Self::RefreshRequired => "refresh_required",
+            Self::SelectedSideDeleted => "selected_side_deleted",
+        }
+    }
+}
+
+impl std::fmt::Display for ConflictBlockedReason {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConflictSideView {
+    pub path: Option<WorkspacePath>,
+    pub path_revision: WorkspaceRevision,
+    pub content_hash: Option<WorkspaceContentHash>,
+    pub size: u64,
+    pub modified_at_ms: i64,
+    pub executable: bool,
+    pub tombstone: bool,
+}
+
+impl From<&fns_protocol::WorkspaceConflictSide> for ConflictSideView {
+    fn from(side: &fns_protocol::WorkspaceConflictSide) -> Self {
+        Self {
+            path: side.path.clone().into_option(),
+            path_revision: side.path_revision,
+            content_hash: side.content_hash.clone().into_option(),
+            size: side.metadata.size,
+            modified_at_ms: side.metadata.modified_at_ms,
+            executable: side.metadata.executable,
+            tombstone: side.tombstone,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PendingConflictResolutionView {
+    pub operation_id: OperationId,
+    pub choice: WorkspaceConflictChoice,
+    pub content_hash: Option<WorkspaceContentHash>,
+    pub size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConflictView {
+    pub conflict_id: ConflictId,
+    pub conflict_revision: WorkspaceConflictRevision,
+    pub path: WorkspacePath,
+    pub kind: WorkspaceConflictKind,
+    pub status: ConflictStatus,
+    pub ancestor: ConflictSideView,
+    pub current: ConflictSideView,
+    pub incoming: ConflictSideView,
+    pub created_by_operation_id: OperationId,
+    pub pending_resolution: Option<PendingConflictResolutionView>,
+    pub can_resolve: bool,
+    pub blocked_reason: Option<ConflictBlockedReason>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConflictResolutionInput {
+    pub conflict_id: ConflictId,
+    pub conflict_revision: WorkspaceConflictRevision,
+    pub choice: WorkspaceConflictChoice,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictResolutionReceiptStatus {
+    Queued,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConflictResolutionReceipt {
+    pub status: ConflictResolutionReceiptStatus,
+    pub operation_id: OperationId,
 }
 
 pub type PathState = PathStateRecord;

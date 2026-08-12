@@ -435,7 +435,9 @@ pub fn is_under_home(path: &Path) -> bool {
 #[cfg_attr(target_os = "ios", tauri::mobile_entry_point)]
 #[cfg_attr(target_os = "android", tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let credential_state = credentials::CredentialState::production();
+    let sync_state = sync::SyncState::with_credentials(Arc::new(credential_state.clone()));
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             app.manage(auth::AuthState::from_env());
@@ -490,6 +492,421 @@ pub fn run() {
             terminal::resize_terminal,
             terminal::close_terminal,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    let exit_lifecycle = Arc::new(ExitLifecycle::default());
+    app.run(move |handle, event| match event {
+        tauri::RunEvent::ExitRequested { code, api, .. } => match exit_lifecycle.request(code) {
+            ExitDecision::Allow => {}
+            ExitDecision::Prevent => api.prevent_exit(),
+            ExitDecision::StartCleanup(exit_code) => {
+                api.prevent_exit();
+                let handle = handle.clone();
+                let lifecycle = Arc::clone(&exit_lifecycle);
+                let task = tauri::async_runtime::spawn(async move {
+                    let cleanup_handle = handle.clone();
+                    match tauri::async_runtime::spawn(async move {
+                        let sync_state = cleanup_handle.state::<sync::SyncState>();
+                        let credential_state =
+                            cleanup_handle.state::<credentials::CredentialState>();
+                        let tunnel_state = cleanup_handle.state::<ssh_tunnel::TunnelState>();
+                        shutdown_for_exit(
+                            credential_state.inner(),
+                            sync_state.inner(),
+                            tunnel_state.inner(),
+                        )
+                        .await
+                    })
+                    .await
+                    {
+                        Ok(succeeded) => {
+                            if lifecycle.finish_cleanup(succeeded) == Some(exit_code) {
+                                eprintln!("fns_exit_requested_cleanup_complete");
+                                handle.exit(exit_code);
+                            } else if !succeeded {
+                                eprintln!("fns_exit_requested_cleanup_failed");
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("fns_sync_shutdown_failed:abnormal_exit");
+                            eprintln!("fns_exit_requested_cleanup_failed:abnormal_exit");
+                            let _ = lifecycle.finish_cleanup(false);
+                        }
+                    }
+                });
+                exit_lifecycle.own(task);
+            }
+        },
+        tauri::RunEvent::Exit => {
+            let sync_state = handle.state::<sync::SyncState>();
+            let credential_state = handle.state::<credentials::CredentialState>();
+            let tunnel_state = handle.state::<ssh_tunnel::TunnelState>();
+            let _ = cleanup_after_final_event(
+                exit_lifecycle.as_ref(),
+                credential_state.inner(),
+                sync_state.inner(),
+                tunnel_state.inner(),
+                FINAL_EXIT_GRACEFUL_TIMEOUT,
+            );
+        }
+        _ => {}
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    struct ExitCredentialBackend;
+
+    impl credentials::CredentialBackend for ExitCredentialBackend {
+        fn store(
+            &self,
+            _project_id: &str,
+            _token: &fns_platform::SecretToken,
+        ) -> Result<(), credentials::CredentialBackendFailure> {
+            Ok(())
+        }
+
+        fn load(
+            &self,
+            _project_id: &str,
+        ) -> Result<Option<fns_platform::SecretToken>, credentials::CredentialBackendFailure>
+        {
+            Ok(None)
+        }
+
+        fn delete(&self, _project_id: &str) -> Result<(), credentials::CredentialBackendFailure> {
+            Ok(())
+        }
+    }
+
+    struct ExitTunnelControl {
+        creates: AtomicUsize,
+        close_failures: AtomicUsize,
+        close_attempts: Mutex<Vec<u64>>,
+        successful_closes: AtomicUsize,
+        dropped_unclosed: AtomicUsize,
+    }
+
+    struct ExitTunnelFactory {
+        control: Arc<ExitTunnelControl>,
+    }
+
+    impl ssh_tunnel::TunnelFactory for ExitTunnelFactory {
+        fn create(
+            &self,
+            _tunnel_key: &str,
+            _ssh_host: &str,
+            _remote_port: u16,
+        ) -> Result<Box<dyn ssh_tunnel::TunnelResource>, ssh_tunnel::TunnelCreateFailure> {
+            self.control.creates.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(ExitTunnelResource {
+                identity: 73,
+                closed: false,
+                control: Arc::clone(&self.control),
+            }))
+        }
+    }
+
+    struct ExitTunnelResource {
+        identity: u64,
+        closed: bool,
+        control: Arc<ExitTunnelControl>,
+    }
+
+    impl ssh_tunnel::TunnelResource for ExitTunnelResource {
+        fn local_port(&self) -> u16 {
+            19050
+        }
+
+        fn is_alive(&mut self) -> Result<bool, ssh_tunnel::TunnelFailure> {
+            Ok(!self.closed)
+        }
+
+        fn close(&mut self) -> Result<(), ssh_tunnel::TunnelFailure> {
+            self.control
+                .close_attempts
+                .lock()
+                .unwrap()
+                .push(self.identity);
+            if self
+                .control
+                .close_failures
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(ssh_tunnel::TunnelErrorCode::WaitTimeout.into());
+            }
+            if !self.closed {
+                self.closed = true;
+                self.control
+                    .successful_closes
+                    .fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for ExitTunnelResource {
+        fn drop(&mut self) {
+            if !self.closed {
+                self.control.dropped_unclosed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    struct ExitProcessTunnelControl {
+        pid: AtomicU32,
+        closed: AtomicBool,
+    }
+
+    #[cfg(unix)]
+    struct ExitProcessTunnelFactory {
+        control: Arc<ExitProcessTunnelControl>,
+    }
+
+    #[cfg(unix)]
+    impl ssh_tunnel::TunnelFactory for ExitProcessTunnelFactory {
+        fn create(
+            &self,
+            _tunnel_key: &str,
+            _ssh_host: &str,
+            _remote_port: u16,
+        ) -> Result<Box<dyn ssh_tunnel::TunnelResource>, ssh_tunnel::TunnelCreateFailure> {
+            let child = Command::new("/bin/sleep")
+                .arg("300")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|_| ssh_tunnel::TunnelErrorCode::SpawnFailed)?;
+            self.control.pid.store(child.id(), Ordering::SeqCst);
+            Ok(Box::new(ExitProcessTunnelResource {
+                child: Some(child),
+                control: Arc::clone(&self.control),
+            }))
+        }
+    }
+
+    #[cfg(unix)]
+    struct ExitProcessTunnelResource {
+        child: Option<Child>,
+        control: Arc<ExitProcessTunnelControl>,
+    }
+
+    #[cfg(unix)]
+    impl ssh_tunnel::TunnelResource for ExitProcessTunnelResource {
+        fn local_port(&self) -> u16 {
+            19051
+        }
+
+        fn is_alive(&mut self) -> Result<bool, ssh_tunnel::TunnelFailure> {
+            self.child
+                .as_mut()
+                .expect("fixture child missing")
+                .try_wait()
+                .map(|status| status.is_none())
+                .map_err(|_| ssh_tunnel::TunnelErrorCode::WaitFailed.into())
+        }
+
+        fn close(&mut self) -> Result<(), ssh_tunnel::TunnelFailure> {
+            let Some(mut child) = self.child.take() else {
+                return Ok(());
+            };
+            if child
+                .try_wait()
+                .map_err(|_| ssh_tunnel::TunnelErrorCode::WaitFailed)?
+                .is_none()
+            {
+                child
+                    .kill()
+                    .map_err(|_| ssh_tunnel::TunnelErrorCode::KillFailed)?;
+                child
+                    .wait()
+                    .map_err(|_| ssh_tunnel::TunnelErrorCode::WaitFailed)?;
+            }
+            self.control.closed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for ExitProcessTunnelResource {
+        fn drop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn final_exit_cleanup_reaps_real_tunnel_child_after_direct_macos_exit() {
+        let control = Arc::new(ExitProcessTunnelControl {
+            pid: AtomicU32::new(0),
+            closed: AtomicBool::new(false),
+        });
+        let tunnels = ssh_tunnel::TunnelState::with_factory(Arc::new(ExitProcessTunnelFactory {
+            control: Arc::clone(&control),
+        }));
+        tunnels
+            .get_or_create("direct-exit", "fixture-host", 9000)
+            .unwrap();
+        let sync = sync::SyncState::new();
+        let credentials = credentials::CredentialState::with_backend_and_deadlines(
+            Arc::new(ExitCredentialBackend),
+            credentials::ProvisionDeadlines::default(),
+        );
+        let lifecycle = ExitLifecycle::default();
+        let pid = control.pid.load(Ordering::SeqCst);
+        assert!(
+            Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .unwrap()
+                .success(),
+            "fixture process was not alive before final exit cleanup"
+        );
+
+        let outcome = cleanup_after_final_event(
+            &lifecycle,
+            &credentials,
+            &sync,
+            &tunnels,
+            Duration::from_secs(5),
+        );
+
+        assert_eq!(outcome, ExitCleanupOutcome::Succeeded);
+        assert!(control.closed.load(Ordering::SeqCst));
+        assert!(
+            !Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .unwrap()
+                .success(),
+            "final exit cleanup left the real tunnel process alive or unreaped"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn final_exit_graceful_timeout_still_reaps_real_tunnel_child() {
+        let control = Arc::new(ExitProcessTunnelControl {
+            pid: AtomicU32::new(0),
+            closed: AtomicBool::new(false),
+        });
+        let tunnels = ssh_tunnel::TunnelState::with_factory(Arc::new(ExitProcessTunnelFactory {
+            control: Arc::clone(&control),
+        }));
+        tunnels
+            .get_or_create("timed-out-final-exit", "fixture-host", 9000)
+            .unwrap();
+        let pid = control.pid.load(Ordering::SeqCst);
+        assert!(
+            Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .unwrap()
+                .success(),
+            "fixture process was not alive before timed final cleanup"
+        );
+
+        let outcome = cleanup_final_resources(
+            &tunnels,
+            Duration::from_millis(10),
+            std::future::pending::<bool>(),
+        )
+        .await;
+
+        assert_eq!(outcome, ExitCleanupOutcome::TimedOut);
+        assert!(control.closed.load(Ordering::SeqCst));
+        assert!(
+            !Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .unwrap()
+                .success(),
+            "graceful timeout skipped the real tunnel process cleanup"
+        );
+    }
+
+    #[test]
+    fn exit_lifecycle_prevents_repeated_exit_and_reissues_once_after_retry() {
+        let lifecycle = ExitLifecycle::default();
+
+        assert_eq!(lifecycle.request(None), ExitDecision::StartCleanup(0));
+        assert_eq!(lifecycle.request(None), ExitDecision::Prevent);
+        assert_eq!(lifecycle.finish_cleanup(false), None);
+        assert_eq!(lifecycle.request(None), ExitDecision::StartCleanup(0));
+        assert_eq!(lifecycle.finish_cleanup(true), Some(0));
+        assert_eq!(
+            lifecycle.finish_cleanup(true),
+            None,
+            "cleanup completion reissued exit more than once"
+        );
+        assert_eq!(lifecycle.request(Some(0)), ExitDecision::Allow);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exit_cleanup_retains_failed_tunnel_and_reissues_only_after_retry_reaps_it() {
+        let control = Arc::new(ExitTunnelControl {
+            creates: AtomicUsize::new(0),
+            close_failures: AtomicUsize::new(1),
+            close_attempts: Mutex::new(Vec::new()),
+            successful_closes: AtomicUsize::new(0),
+            dropped_unclosed: AtomicUsize::new(0),
+        });
+        let tunnels = ssh_tunnel::TunnelState::with_factory(Arc::new(ExitTunnelFactory {
+            control: Arc::clone(&control),
+        }));
+        tunnels
+            .get_or_create("onboarding:fixture-host", "fixture-host", 9000)
+            .unwrap();
+        let sync = sync::SyncState::new();
+        let credentials = credentials::CredentialState::with_backend_and_deadlines(
+            Arc::new(ExitCredentialBackend),
+            credentials::ProvisionDeadlines::default(),
+        );
+        let lifecycle = ExitLifecycle::default();
+
+        assert_eq!(lifecycle.request(None), ExitDecision::StartCleanup(0));
+        assert!(!shutdown_for_exit(&credentials, &sync, &tunnels).await);
+        assert_eq!(lifecycle.finish_cleanup(false), None);
+        assert_eq!(control.creates.load(Ordering::SeqCst), 1);
+        assert_eq!(control.successful_closes.load(Ordering::SeqCst), 0);
+        assert_eq!(control.dropped_unclosed.load(Ordering::SeqCst), 0);
+        assert_eq!(*control.close_attempts.lock().unwrap(), vec![73]);
+
+        assert_eq!(lifecycle.request(None), ExitDecision::StartCleanup(0));
+        assert!(shutdown_for_exit(&credentials, &sync, &tunnels).await);
+        assert_eq!(lifecycle.finish_cleanup(true), Some(0));
+        assert_eq!(control.creates.load(Ordering::SeqCst), 1);
+        assert_eq!(control.successful_closes.load(Ordering::SeqCst), 1);
+        assert_eq!(control.dropped_unclosed.load(Ordering::SeqCst), 0);
+        assert_eq!(*control.close_attempts.lock().unwrap(), vec![73, 73]);
+        assert_eq!(lifecycle.request(Some(0)), ExitDecision::Allow);
+        assert_eq!(
+            cleanup_after_final_event(
+                &lifecycle,
+                &credentials,
+                &sync,
+                &tunnels,
+                Duration::from_millis(100),
+            ),
+            ExitCleanupOutcome::Skipped
+        );
+        assert_eq!(
+            *control.close_attempts.lock().unwrap(),
+            vec![73, 73],
+            "final event fallback repeated an already successful cleanup"
+        );
+    }
 }
