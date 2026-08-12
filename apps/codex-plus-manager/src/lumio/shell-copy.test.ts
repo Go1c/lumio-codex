@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 import { LUMIO_COMMANDS, LumioCommandError, visibleShellLabels } from "./invoke.ts";
@@ -81,6 +81,70 @@ test("shell copy excludes Codex++ enhancement surfaces", () => {
   ]) {
     assert.equal(copy.includes(forbidden), false);
   }
+});
+
+// `provider` 不进这条列表：React 的 `Context.Provider` 是框架 API 而非产品用语。
+// 面向用户的 `provider` 红线由上面的 shellLabels 与 errors.ts 两条测试守住。
+const FORBIDDEN_SURFACES = ["base url", "stepwise", "dream skin", "api key", "mcp", "plugin"];
+
+// import 语句里的包名与绑定标识符是依赖名而不是产品文案（如 `@tauri-apps/plugin-dialog`），
+// 屏幕上永远看不到，扫描前先摘掉，免得红线退化成给依赖改名。
+function userFacingSource(source: string): string {
+  return source.replace(/^import\s(?:[\s\S]*?from\s+)?"[^"]+";$/gm, "");
+}
+
+test("no user-facing source file mentions a forbidden product surface", async () => {
+  const viewsDir = new URL("./views/", import.meta.url);
+  const views = (await readdir(viewsDir)).filter((name) => name.endsWith(".tsx")).sort();
+
+  // 视图清单写死：改名或删文件都会在这里暴露，扫描覆盖面不会静默缩小。
+  assert.deepEqual(views, [
+    "HomeView.tsx",
+    "LoginView.tsx",
+    "ProvisioningView.tsx",
+    "RegisterView.tsx",
+    "RepairView.tsx",
+    "SettingsView.tsx",
+    "SignedOutView.tsx",
+    "Toast.tsx",
+  ]);
+
+  const sources: [string, string][] = [
+    ["LumioApp.tsx", await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8")],
+    ...(await Promise.all(
+      views.map(
+        async (name): Promise<[string, string]> => [
+          `views/${name}`,
+          await readFile(new URL(name, viewsDir), "utf8"),
+        ],
+      ),
+    )),
+  ];
+
+  for (const [name, source] of sources) {
+    const lowered = userFacingSource(source).toLowerCase();
+    for (const forbidden of FORBIDDEN_SURFACES) {
+      assert.equal(
+        lowered.includes(forbidden),
+        false,
+        `forbidden term "${forbidden}" in ${name}`,
+      );
+    }
+  }
+});
+
+test("the forbidden-surface scan still reads the copy around an import statement", () => {
+  const source = [
+    'import { open } from "@tauri-apps/plugin-dialog";',
+    'import {',
+    '  useState,',
+    '} from "react";',
+    'const label = "填写 API Key";',
+  ].join("\n");
+
+  assert.equal(userFacingSource(source).includes("plugin-dialog"), false);
+  assert.equal(userFacingSource(source).includes("useState"), false);
+  assert.ok(userFacingSource(source).includes("API Key"));
 });
 
 test("the shell no longer renders marketing-style brand decoration", async () => {
