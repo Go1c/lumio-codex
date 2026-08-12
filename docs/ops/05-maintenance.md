@@ -23,7 +23,7 @@
 
 - 小改文案可直接 PR；结构勿偏离 UX §3  
 - 部署见 [02](./02-website-deploy.md)  
-- `/payment` 故障当作 **P0**（充值入口）  
+- `https://api.lumio.games/purchase` 故障当作 **P0**（充值入口）  
 
 ### 2.3 后台（Sub2API）
 
@@ -54,14 +54,14 @@
 | `api.lumio.games` | 外部 HTTP 探测 + Sub2API 日志 |
 | `lumio.games` | Pages / CDN 可用性 |
 | GitHub Actions | `publish` 推送后内部构建失败邮件/通知 |
-| 支付 | 支付商后台成功率；`/payment` 拨测 |
+| 支付 | 支付商后台成功率；`https://api.lumio.games/purchase` 拨测 |
 | 客户端崩溃 | 待遥测正式接入前：内测群收集 + 诊断日志导出 |
 
 ## 5. 事故时优先顺序
 
 1. 用户是否还能 **离线启动官方 Codex**（本机配置健康时）  
 2. 认证 / 刷新令牌是否大面积失败 → 查 API  
-3. 充值是否 404 → 查官网 `/payment` 与后台支付  
+3. 充值是否 404 → 查 `https://api.lumio.games/purchase` 与后台支付  
 4. 错误发版 → 按 [03](./03-release.md) §6 回滚  
 5. 事后：在 `.spec/knowledge/lessons.md` 记复发项（同类第二次才收录）  
 

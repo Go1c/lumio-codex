@@ -33,7 +33,7 @@ The production flow is intentionally fixed:
 5. Configure LumioAPI, the Responses protocol, the model catalog, and the server default model.
 6. Show balance, trial credit, and plan status.
 7. Launch the official Codex app and keep its native model selector for later switches.
-8. Open `/payment` in the system browser through a one-time sign-in handoff, without another website login.
+8. Open `https://api.lumio.games/purchase` in the system browser (website handoff; a one-time secure sign-in handoff can follow later).
 
 Lumio Codex **does not download, modify, or bundle the official Codex or ChatGPT application**. Install a supported desktop app from an official OpenAI channel first.
 

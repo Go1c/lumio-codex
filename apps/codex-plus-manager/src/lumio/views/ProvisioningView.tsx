@@ -58,7 +58,8 @@ export function ProvisioningView({
           try {
             // `verify-account` 是这轮唯一一次真实拉取账户；不接住它，首页只有 bootstrap 的占位值。
             const result = await runProvisioningStep(step);
-            if (result.account !== null) onAccountResolved(result.account);
+            // Rust 旧包可能漏掉 account 字段；`undefined !== null` 会把假账户推进首页导致黑屏。
+            if (result.account) onAccountResolved(result.account);
           } catch (error: unknown) {
             onStepFailed(step, errorCodeOf(error));
             return;

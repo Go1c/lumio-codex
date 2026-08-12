@@ -25,7 +25,7 @@
 | 桌面客户端 | 本仓 `apps/codex-plus-manager` | 安装包分发，无独立域名 |
 | 官网 | 本仓 `site/` | `https://lumio.games` |
 | API / 账户 / 计费后台 | [`Go1c/sub2api`](https://github.com/Go1c/sub2api)（或你们的 Sub2API 部署仓） | `https://api.lumio.games` |
-| 支付页 | 后台同源或官网反代 | App 打开 `https://lumio.games/payment` |
+| 支付页 | Sub2API 同源 | App 打开 `https://api.lumio.games/purchase` |
 
 ## 发布通道（务必分清）
 
@@ -41,7 +41,7 @@
 ## 推荐上线顺序
 
 1. 后台 API 在 `api.lumio.games` 健康（见 [04](./04-backend.md)）  
-2. 官网部署到 `lumio.games`，并确认 `/payment` 可达（见 [02](./02-website-deploy.md)）  
+2. 官网部署到 `lumio.games`；充值页确认 `https://api.lumio.games/purchase` 可达（见 [02](./02-website-deploy.md)、[04](./04-backend.md)）  
 3. 本机或 CI 打出四平台内部包并做冒烟（见 [01](./01-local-build.md)）  
 4. 在 GitHub 创建 Release / Tag，验证 App 更新提醒（见 [03](./03-release.md)）  
 5. 按 [05](./05-maintenance.md) 进入日常维护节奏  

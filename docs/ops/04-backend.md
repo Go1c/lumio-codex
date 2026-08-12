@@ -19,7 +19,7 @@ https://api.lumio.games/
 | 用户资料（余额等） | `auth/me` 一类 | provisioning / 刷新 |
 | 桌面 Key | `GET/POST /keys`，保留名 `Lumio Codex Desktop`，创建带 `Idempotency-Key` | `lumio::account` |
 | 模型目录 | 使用桌面 Key 拉取 | provisioning `sync-models` |
-| 支付 | **当前**：浏览器打开官网 `/payment`，**不**强制 handoff API | `HomeView` + `SITE_BASE_URL` |
+| 支付 | **当前**：浏览器打开 `https://api.lumio.games/purchase`，**不**强制 handoff API | `HomeView` + `API_BASE_URL` |
 
 架构规格中的 `GET /api/v1/desktop/config`、`POST .../payment-handoffs` 若后台尚未部署，客户端已用公开设置 + 打开网站降级；后续补齐时需同步改本仓解析与 [03](./03-release.md) 说明。
 
@@ -38,9 +38,9 @@ https://api.lumio.games/
 ## 3. 与官网、桌面的衔接
 
 ```text
-api.lumio.games     ← App 的 JSON API、（可选）账户网页 /support /reset-password
-lumio.games         ← 营销站；/payment 应能到达真实充值体验
-lumio.games/payment ← App「充值」按钮目标
+api.lumio.games           ← App 的 JSON API、账户网页 /support /reset-password
+api.lumio.games/purchase  ← App「充值」按钮目标（禁止配成 lumio.games）
+lumio.games               ← 营销 / 下载站 only
 ```
 
 登录页「联系支持 / 重置密码」使用 **`apiBaseUrl`**（即 API 源），不是官网源。请保证：

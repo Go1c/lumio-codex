@@ -43,22 +43,17 @@ DNS（域名提供商）：
 
 > 若使用 Cloudflare / 自建 Nginx / S3+CloudFront，把 `site/` 整目录当作文档根即可；确保 `index.html` 为默认页。
 
-## 4. 支付路径 `/payment`
+## 4. 支付路径（API 站，不是官网）
 
 桌面端在线充值打开：
 
 ```text
-https://lumio.games/payment
+https://api.lumio.games/purchase
 ```
 
-常量见 `crates/codex-plus-core/src/lumio/product.rs`（`SITE_BASE_URL` + `PAYMENT_PATH`）。
+常量见 `crates/codex-plus-core/src/lumio/product.rs`（`API_BASE_URL` + `PAYMENT_PATH`）。**不要**配成 `https://lumio.games/...`。
 
-**上线前必须二选一落实：**
-
-1. **反代 / 跳转**：在官网源站把 `/payment` 307/302 到 Sub2API 前端真实支付页（用户最终完成充值）。  
-2. **同路径静态页**：放一个说明页，再链到后台支付入口。
-
-未配置时用户会打开 404——App 侧只会打开浏览器，不会替你建支付会话。  
+支付页由 Sub2API / `api.lumio.games` 提供。官网 `site/` 只做营销与下载，不承载充值。  
 （规格里的一次性 payment-handoff API 尚未作为强制依赖；当前是「打开网站」。）
 
 ## 5. 部署后验收
@@ -66,7 +61,7 @@ https://lumio.games/payment
 - [ ] `https://lumio.games/` 打开为 Lumio 官网（非旧 Codex++ 页）  
 - [ ] 顶栏「下载」滚到下载区；确认层后能进 Releases  
 - [ ] FAQ 三条可用；无「登录 / 注册」导航  
-- [ ] `https://lumio.games/payment` 可达（或明确跳转）  
+- [ ] `https://api.lumio.games/purchase` 可达  
 - [ ] HTTPS 有效；`www` 与裸域策略自洽  
 
 ## 6. 改官网内容时

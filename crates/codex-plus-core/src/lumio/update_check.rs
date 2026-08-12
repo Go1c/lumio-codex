@@ -75,8 +75,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn payment_url_stays_on_the_marketing_site() {
-        assert_eq!(product::payment_url(), "https://lumio.games/payment");
+    fn payment_url_targets_api_purchase_page() {
+        // 充值只允许 API 站 /purchase；禁止落到营销站 lumio.games。
+        assert_eq!(product::payment_url(), "https://api.lumio.games/purchase");
+        assert!(product::payment_url().starts_with("https://api.lumio.games/"));
+        assert!(!product::payment_url().starts_with(product::SITE_BASE_URL));
+        assert!(!product::payment_url().contains("lumio.games/payment"));
         assert!(product::SITE_BASE_URL.starts_with("https://lumio.games"));
         assert_ne!(
             product::SITE_BASE_URL,

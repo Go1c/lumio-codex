@@ -42,7 +42,7 @@ Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测�
 5. 配置 LumioAPI、Responses 协议、模型目录和服务端默认模型。
 6. 展示余额、试用额度和套餐状态。
 7. 一键启动官方 Codex，后续模型切换仍使用 Codex 原生选择器。
-8. 充值时在系统浏览器打开官网 `/payment`（当前为打开网站；安全一次性交接可后续增强）。
+8. 充值时在系统浏览器打开 `https://api.lumio.games/purchase`（当前为打开网站；安全一次性交接可后续增强）。
 
 Lumio Codex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用**。请先从 OpenAI 官方渠道安装受支持的桌面应用。
 

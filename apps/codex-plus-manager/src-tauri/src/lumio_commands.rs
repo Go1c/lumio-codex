@@ -135,6 +135,8 @@ pub struct LumioAuthPayload {
 #[serde(rename_all = "camelCase")]
 pub struct LumioProvisionStepPayload {
     pub step: String,
+    /// 仅 `verify-account` 带回真实账户；其余步骤为 `null`。
+    pub account: Option<LumioAccountPayload>,
 }
 
 #[derive(Debug, Serialize)]
@@ -424,11 +426,14 @@ pub async fn lumio_provision_step(
 ) -> Result<LumioCommandResult<LumioProvisionStepPayload>, ()> {
     let outcome = run_provision_step(&session, &step)
         .await
-        .map(|()| LumioProvisionStepPayload { step });
+        .map(|account| LumioProvisionStepPayload { step, account });
     result(outcome)
 }
 
-async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), String> {
+async fn run_provision_step(
+    session: &LumioSession,
+    step: &str,
+) -> Result<Option<LumioAccountPayload>, String> {
     let client = &session.client;
     match step {
         "verify-account" => {
@@ -436,8 +441,9 @@ async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), St
                 .auth
                 .with_access_token(client, move |token| async move { client.me(&token).await })
                 .await?;
+            let payload = account_payload(&profile);
             *lock(&session.account) = Some(profile);
-            Ok(())
+            Ok(Some(payload))
         }
         "prepare-connection" => {
             let key = session
@@ -446,7 +452,8 @@ async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), St
                     ensure_desktop_key(client, &token).await
                 })
                 .await?;
-            session.auth.set_api_key(key)
+            session.auth.set_api_key(key)?;
+            Ok(None)
         }
         "sync-models" => {
             let key = session
@@ -460,7 +467,7 @@ async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), St
                 .or_else(|| models.first().cloned())
                 .ok_or_else(|| SERVICE_UNAVAILABLE.to_string())?;
             *lock(&session.model) = Some(selected);
-            Ok(())
+            Ok(None)
         }
         "write-config" => {
             let api_key = session
@@ -481,7 +488,8 @@ async fn run_provision_step(session: &LumioSession, step: &str) -> Result<(), St
                     base_url: gateway_base_url(),
                 },
             )
-            .map(|_| ())
+            .map(|_| ())?;
+            Ok(None)
         }
         _ => Err(UNKNOWN.to_string()),
     }

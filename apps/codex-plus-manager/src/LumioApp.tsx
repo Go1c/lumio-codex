@@ -201,7 +201,7 @@ export function LumioApp() {
   );
   const onProvisioned = useCallback(() => {
     const current = stateRef.current;
-    if (current.account === null) return;
+    if (!current.account) return;
     dispatch({
       type: "online-ready",
       account: current.account,

@@ -96,7 +96,7 @@ const SERVICE: LumioServiceSettings = {
   agreementDocuments: [{ id: "terms", title: "服务条款", contentMd: "# 条款" }],
   defaultModel: "gpt-example",
   siteBaseUrl: "https://lumio.games",
-  paymentPath: "/payment",
+  paymentPath: "/purchase",
   apiBaseUrl: "https://api.lumio.games",
 };
 

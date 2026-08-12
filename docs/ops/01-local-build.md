@@ -150,7 +150,7 @@ Pop-Location
 - [ ] 冷启动进入未登录 / 或凭据续跑  
 - [ ] 注册或登录 → provisioning → 首页在线  
 - [ ] 「启动 Codex」能拉起官方应用  
-- [ ] 「充值」打开浏览器到 `https://lumio.games/payment`（或你部署的同源路径）  
+- [ ] 「充值」打开浏览器到 `https://api.lumio.games/purchase` 
 - [ ] 断网后若本机配置健康，可进离线首页并仍能启动  
 - [ ] 设置页：官方应用路径检测、配置恢复二次确认文案诚实  
 - [ ] 有 GitHub Release 且版本更高时，首页出现更新提醒  

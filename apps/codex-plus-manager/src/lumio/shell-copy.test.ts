@@ -252,11 +252,17 @@ test("the provisioning view carries the spec copy for slow and failed steps", as
 test("provisioning feeds the verified account back into the state machine", async () => {
   const view = await readFile(new URL("./views/ProvisioningView.tsx", import.meta.url), "utf8");
   const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  const invoke = await readFile(new URL("./invoke.ts", import.meta.url), "utf8");
 
   // `verify-account` 拉到的是真实 profile；不接住它，首页就会把 bootstrap 的占位余额当真值渲染。
   assert.match(view, /result\.account/);
   assert.match(view, /onAccountResolved/);
   assert.match(shell, /type: "account-refreshed"/);
+  // 漏字段时 `undefined !== null` 为真，会把假账户推进首页黑屏；边界必须先归一化。
+  assert.match(invoke, /normalizeOptionalAccount/);
+  assert.match(view, /if \(result\.account\)/);
+  assert.doesNotMatch(view, /result\.account !== null/);
+  assert.match(shell, /if \(!current\.account\)/);
 });
 
 test("the home view explains every disabled action instead of hiding it", async () => {
@@ -377,9 +383,18 @@ test("the telemetry switch stays disabled with a stated reason this cycle", asyn
 
 test("the home surface opens payment in the browser when online", async () => {
   const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+  const paymentHelper = view.slice(
+    view.indexOf("function paymentUrl"),
+    view.indexOf("interface HomeViewProps"),
+  );
 
   assert.match(view, /openInBrowser/);
-  assert.match(view, /paymentPath/);
+  assert.match(paymentHelper, /apiBaseUrl/);
+  assert.match(paymentHelper, /paymentPath/);
+  assert.match(paymentHelper, /\/purchase/);
+  // 充值必须挂 api.lumio.games，禁止拼到营销站 siteBaseUrl。
+  assert.doesNotMatch(paymentHelper, /siteBaseUrl/);
+  assert.doesNotMatch(paymentHelper, /\/payment/);
   assert.match(view, /已在浏览器中打开支付页面/);
   assert.doesNotMatch(view, /充值功能尚未开放/);
 });

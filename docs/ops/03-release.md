@@ -129,7 +129,7 @@ git push origin v1.2.46
 - [ ] 版本号三处（+ workspace）一致  
 - [ ] `cargo fmt` / `lumio` 测 / manager 测 / `npm test` / `npm run check` 通过  
 - [ ] `node .spec/tools/spec-lint.mjs`（若动过 `.spec/`）  
-- [ ] 官网与 `/payment` 仍健康（[02](./02-website-deploy.md)）  
+- [ ] 官网健康；充值页 `https://api.lumio.games/purchase` 仍可达（[02](./02-website-deploy.md)、[04](./04-backend.md)）  
 - [ ] API `https://api.lumio.games/` 健康（[04](./04-backend.md)）  
 - [ ] 四平台包已产出并抽测冒烟（[01](./01-local-build.md) §7）  
 - [ ] Tag + Release 已发布；更新提醒在旧版上可复现  

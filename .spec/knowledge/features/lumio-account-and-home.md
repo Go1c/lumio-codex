@@ -30,7 +30,8 @@ metadata:
 
 - 字段级配置恢复（相对整文件回滚）
 - 系统凭据库替换本地文件（需新依赖，另开 ADR）
-- 安全支付交接（一次性 handoff token）；当前为打开官网 `/payment`
+- 安全支付交接（一次性 handoff token）；当前为打开 `https://api.lumio.games/purchase`
+- 已知坑：`provision` 步骤 payload 若漏 `account`，前端 `undefined !== null` 会推进假账户并在首页读 `email` 黑屏；IPC 侧用 `normalizeOptionalAccount`，UI 用 truthy 守卫
 - 真实遥测上报、开机启动、签名后的自动安装更新
 - 登录后 provisioning 路径可再补一次接管冲突检查（启动有凭据路径已拦）
 

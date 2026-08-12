@@ -111,6 +111,16 @@ function reportSessionExpiry(error: unknown): void {
 /** `ok` 为真却没有 payload 属于契约违约，用一个稳定错误码上报而不是静默放行。 */
 export const MISSING_PAYLOAD_ERROR_CODE = "COMMAND_PAYLOAD_MISSING";
 
+/**
+ * IPC / 旧包可能漏掉 `account` 字段（JS 侧为 `undefined`）。
+ * 调用方若写 `account !== null` 会把假账户推进首页并在读 `email` 时黑屏。
+ */
+export function normalizeOptionalAccount(
+  account: LumioAccountSummary | null | undefined,
+): LumioAccountSummary | null {
+  return account ?? null;
+}
+
 /** 失败分支抛稳定错误码；成功分支允许 payload 合法为空。 */
 export function readCommandResult<T>(result: LumioCommandResult<T>): T | null {
   if (!result.ok) {
@@ -161,6 +171,10 @@ export async function sendVerifyCode(email: string): Promise<LumioVerifyCodeResu
   return runCommand<LumioVerifyCodeResult>(LUMIO_COMMANDS.sendVerifyCode, { email });
 }
 
+function normalizeAuthResult(result: LumioAuthResult): LumioAuthResult {
+  return { ...result, account: normalizeOptionalAccount(result.account) };
+}
+
 export async function registerAccount(input: {
   email: string;
   password: string;
@@ -168,22 +182,28 @@ export async function registerAccount(input: {
   acceptedRevision: string;
   invitationCode: string;
 }): Promise<LumioAuthResult> {
-  return runCommand<LumioAuthResult>(LUMIO_COMMANDS.register, {
-    email: input.email,
-    password: input.password,
-    verifyCode: input.verifyCode,
-    acceptedRevision: input.acceptedRevision,
-    // 空串由命令层归一化成「未填写」，前端不替服务端判断这个字段是否必填。
-    invitationCode: input.invitationCode,
-  });
+  return normalizeAuthResult(
+    await runCommand<LumioAuthResult>(LUMIO_COMMANDS.register, {
+      email: input.email,
+      password: input.password,
+      verifyCode: input.verifyCode,
+      acceptedRevision: input.acceptedRevision,
+      // 空串由命令层归一化成「未填写」，前端不替服务端判断这个字段是否必填。
+      invitationCode: input.invitationCode,
+    }),
+  );
 }
 
 export async function signIn(email: string, password: string): Promise<LumioAuthResult> {
-  return runCommand<LumioAuthResult>(LUMIO_COMMANDS.login, { email, password });
+  return normalizeAuthResult(
+    await runCommand<LumioAuthResult>(LUMIO_COMMANDS.login, { email, password }),
+  );
 }
 
 export async function submitTwoFactor(code: string): Promise<LumioAuthResult> {
-  return runCommand<LumioAuthResult>(LUMIO_COMMANDS.loginTwoFactor, { code });
+  return normalizeAuthResult(
+    await runCommand<LumioAuthResult>(LUMIO_COMMANDS.loginTwoFactor, { code }),
+  );
 }
 
 export async function signOut(): Promise<void> {
@@ -195,7 +215,10 @@ export async function refreshAccount(): Promise<LumioAccountSummary> {
 }
 
 export async function runProvisioningStep(step: string): Promise<LumioProvisionStepResult> {
-  return runCommand<LumioProvisionStepResult>(LUMIO_COMMANDS.provisionStep, { step });
+  const result = await runCommand<LumioProvisionStepResult>(LUMIO_COMMANDS.provisionStep, {
+    step,
+  });
+  return { ...result, account: normalizeOptionalAccount(result.account) };
 }
 
 export async function checkTakeover(): Promise<LumioTakeoverHealth> {

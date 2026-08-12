@@ -69,8 +69,8 @@
       <div class="section-head">
         <h2 id="downloads-title">下载</h2>
         <p>
-          当前为内测渠道，制品未签名；macOS 首次打开请右键选择「打开」，Windows 出现 SmartScreen
-          提示时核对校验值后继续。
+          当前为内测渠道，制品未签名。从浏览器下载后，macOS 可能提示「已损坏」——这是隔离标记，不是真坏了；
+          请在终端执行下方命令，或右键「打开」。Windows 出现 SmartScreen 时核对后继续。
         </p>
       </div>
       <div class="dl-grid">
@@ -129,8 +129,9 @@
       <div class="modal">
         <h3 id="dl-confirm-title">你正在下载内测版</h3>
         <p>
-          这是未签名的内部测试制品。macOS 首次打开请在应用图标上<strong>右键 → 打开</strong>；Windows
-          出现 SmartScreen 提示时请核对 SHA-256 后继续。
+          这是未签名的内部测试制品。macOS 若提示「已损坏」，在终端执行：
+          <code>xattr -cr "/Applications/Lumio Codex.app"</code>
+          后再打开；也可对 App 右键 → 打开。Windows 出现 SmartScreen 时请核对 SHA-256 后继续。
         </p>
         <div class="modal-actions">
           <button class="button button-secondary" type="button" data-close-modal>取消</button>

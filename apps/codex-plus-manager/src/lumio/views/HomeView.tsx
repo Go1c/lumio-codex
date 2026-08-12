@@ -45,10 +45,10 @@ function formatSyncTime(iso: string | null): string {
 }
 
 function paymentUrl(state: LumioState): string | null {
-  const site = state.service?.siteBaseUrl?.replace(/\/$/, "");
-  const path = state.service?.paymentPath ?? "/payment";
-  if (!site) return null;
-  return `${site}${path.startsWith("/") ? path : `/${path}`}`;
+  const base = state.service?.apiBaseUrl?.replace(/\/$/, "");
+  const path = state.service?.paymentPath ?? "/purchase";
+  if (!base) return null;
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 interface HomeViewProps {
@@ -137,7 +137,7 @@ export function HomeView({
     return () => clearTimeout(timer);
   }, [paymentBalanceUpdated]);
 
-  if (account === null) {
+  if (!account) {
     return (
       <section aria-live="polite" className="lumio-loading">
         <p>正在读取账户信息…</p>

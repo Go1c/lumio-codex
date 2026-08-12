@@ -25,7 +25,7 @@ const SETTINGS: LumioServiceSettings = {
   ],
   defaultModel: "gpt-example",
   siteBaseUrl: "https://lumio.games",
-  paymentPath: "/payment",
+  paymentPath: "/purchase",
   apiBaseUrl: "https://api.lumio.games",
 };
 
