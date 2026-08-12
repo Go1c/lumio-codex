@@ -83,6 +83,36 @@ test("shell copy excludes Codex++ enhancement surfaces", () => {
   }
 });
 
+test("the shell no longer renders marketing-style brand decoration", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  const signedOut = await readFile(new URL("./views/SignedOutView.tsx", import.meta.url), "utf8");
+
+  for (const source of [shell, signedOut]) {
+    assert.doesNotMatch(source, /lumio-aurora/);
+    assert.doesNotMatch(source, /lumio-orbit/);
+  }
+});
+
+test("the removed decoration classes are gone from the stylesheet too", async () => {
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+
+  assert.doesNotMatch(css, /lumio-aurora/);
+  assert.doesNotMatch(css, /lumio-orbit/);
+});
+
+test("the signed-out surface states the positioning promise verbatim", async () => {
+  const signedOut = await readFile(new URL("./views/SignedOutView.tsx", import.meta.url), "utf8");
+
+  assert.match(signedOut, /更快开始使用官方 Codex。/);
+  assert.match(
+    signedOut,
+    /这个小工具只做一件事：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。之后你使用的始终是官方 Codex 应用，一切保持原生。/,
+  );
+  assert.match(signedOut, /不修改官方应用/);
+  assert.match(signedOut, /配置可一键恢复/);
+  assert.match(signedOut, /凭据由系统保护/);
+});
+
 test("React entry renders only LumioApp", async () => {
   const main = await readFile(new URL("../main.tsx", import.meta.url), "utf8");
 

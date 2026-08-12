@@ -1,16 +1,9 @@
 import {
   Activity,
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  CircleUserRound,
-  CloudOff,
   Download,
   FileArchive,
   Home,
   Laptop,
-  LockKeyhole,
-  LogIn,
   RefreshCw,
   Rocket,
   RotateCcw,
@@ -19,14 +12,19 @@ import {
   Sparkles,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 
-import { loadLumioBootstrap, shellLabels } from "./lumio/invoke.ts";
+import { lumioErrorLabel } from "./lumio/errors.ts";
+import { LumioCommandError, loadLumioBootstrap, loadPublicSettings, shellLabels } from "./lumio/invoke.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
 import type { LumioState } from "./lumio/state.ts";
 import type { LumioAccountSummary, LumioCodexApp, LumioPhase } from "./lumio/types.ts";
+import { SignedOutView } from "./lumio/views/SignedOutView.tsx";
+import { ToastHost, useToasts } from "./lumio/views/Toast.tsx";
 
 type View = "home" | "settings";
+
+const SERVICE_RETRY_MS = 30_000;
 
 const phaseCopy: Record<LumioPhase, string> = {
   bootstrapping: "正在检查本机环境",
@@ -37,6 +35,10 @@ const phaseCopy: Record<LumioPhase, string> = {
   "ready-offline": "使用本机缓存",
   "needs-repair": "需要检查配置",
 };
+
+function errorCodeOf(error: unknown): string {
+  return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
+}
 
 function formatBalance(balance: number): string {
   return new Intl.NumberFormat("zh-CN", {
@@ -63,6 +65,7 @@ function Toggle({ checked, label }: { checked: boolean; label: string }) {
 export function LumioApp() {
   const [state, dispatch] = useReducer(reduceLumioState, undefined, initialLumioState);
   const [view, setView] = useState<View>("home");
+  const { toasts, pushToast, dismiss } = useToasts();
 
   useEffect(() => {
     let active = true;
@@ -70,28 +73,50 @@ export function LumioApp() {
       .then((payload) => {
         if (active) dispatch({ type: "bootstrapped", payload });
       })
-      .catch(() => {
-        if (active) {
-          dispatch({ type: "repair-required", errorCode: "BOOTSTRAP_FAILED" });
-        }
+      .catch((error: unknown) => {
+        if (active) dispatch({ type: "repair-required", errorCode: errorCodeOf(error) });
       });
     return () => {
       active = false;
     };
   }, []);
 
-  const account = state.bootstrap?.account ?? null;
-  const codexApp = state.bootstrap?.codexApp ?? null;
+  // The public settings gate every entry-point button, so an unreachable
+  // service must keep retrying instead of leaving the surface permanently dark.
+  useEffect(() => {
+    if (state.serviceAvailable) return;
+    let active = true;
+
+    const load = () => {
+      void loadPublicSettings()
+        .then((settings) => {
+          if (active) dispatch({ type: "service-settings-loaded", settings });
+        })
+        .catch((error: unknown) => {
+          if (active) dispatch({ type: "service-unavailable", errorCode: errorCodeOf(error) });
+        });
+    };
+
+    load();
+    const timer = setInterval(load, SERVICE_RETRY_MS);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [state.serviceAvailable]);
+
+  const openSettings = useCallback(() => setView("settings"), []);
   const online = state.phase === "ready-online";
   const offline = state.phase === "ready-offline";
+  const ready = online || offline;
+  // Stage pages own the whole main area: leaving them mid-flight would strand
+  // the account in a half-configured state (interaction spec §4).
+  const navLocked = !ready && state.phase !== "signed-out";
 
   return (
     <div className="lumio-app">
-      <div aria-hidden="true" className="lumio-aurora lumio-aurora-one" />
-      <div aria-hidden="true" className="lumio-aurora lumio-aurora-two" />
-
       <header className="lumio-topbar">
-        <button className="lumio-brand" onClick={() => setView("home")} type="button">
+        <span className="lumio-brand">
           <span className="lumio-logo-wrap">
             <img alt="" className="lumio-logo" src="/lumio-icon.png" />
           </span>
@@ -99,26 +124,28 @@ export function LumioApp() {
             <strong>Lumio Codex</strong>
             <small>DESKTOP</small>
           </span>
-        </button>
+        </span>
 
-        <nav aria-label="主导航" className="lumio-nav">
+        <nav aria-label="主导航" className={`lumio-nav${navLocked ? " is-locked" : ""}`}>
           <button
             aria-current={view === "home" ? "page" : undefined}
             className={view === "home" ? "is-active" : ""}
+            disabled={navLocked}
             onClick={() => setView("home")}
             type="button"
           >
             <Home size={16} />
-            首页
+            {shellLabels.home}
           </button>
           <button
             aria-current={view === "settings" ? "page" : undefined}
             className={view === "settings" ? "is-active" : ""}
+            disabled={navLocked}
             onClick={() => setView("settings")}
             type="button"
           >
             <Settings size={16} />
-            设置
+            {shellLabels.settings}
           </button>
         </nav>
 
@@ -129,19 +156,41 @@ export function LumioApp() {
       </header>
 
       <main className="lumio-main">
-        {view === "home" ? (
-          <HomeView
-            account={account}
-            codexApp={codexApp}
-            phase={state.phase}
-            state={state}
-          />
-        ) : (
+        {state.phase === "bootstrapping" ? (
+          <section aria-live="polite" className="lumio-loading">
+            <span className="lumio-loading-mark">
+              <RefreshCw size={24} />
+            </span>
+            <p>正在检测官方应用并读取本机状态…</p>
+          </section>
+        ) : state.phase === "needs-repair" ? (
+          <BootstrapFailurePanel errorCode={state.errorCode} />
+        ) : view === "settings" ? (
           <SettingsView
             autoUpdateEnabled={state.autoUpdateEnabled}
-            codexApp={codexApp}
+            codexApp={state.codexApp}
             telemetryEnabled={state.telemetryEnabled}
           />
+        ) : state.phase === "signed-out" ? (
+          <SignedOutView
+            actionNotes={state.actionNotes}
+            actions={state.actions}
+            codexApp={state.codexApp}
+            errorCode={state.errorCode}
+            onCreateAccount={() => dispatch({ type: "auth-step-changed", step: "register" })}
+            onOpenSettings={openSettings}
+            onSignIn={() => dispatch({ type: "auth-step-changed", step: "login" })}
+            serviceAvailable={state.serviceAvailable}
+          />
+        ) : state.phase === "authenticating" || state.phase === "provisioning" ? (
+          <section aria-live="polite" className="lumio-loading">
+            <span className="lumio-loading-mark">
+              <RefreshCw size={24} />
+            </span>
+            <p>{phaseCopy[state.phase]}…</p>
+          </section>
+        ) : (
+          <HomeView account={state.account} codexApp={state.codexApp} phase={state.phase} state={state} />
         )}
       </main>
 
@@ -149,11 +198,27 @@ export function LumioApp() {
         <span>内部测试渠道</span>
         <span className="lumio-footer-separator" />
         <span>官方应用需单独安装</span>
-        {state.bootstrap ? (
-          <span className="lumio-footer-version">v{state.bootstrap.version}</span>
-        ) : null}
+        {state.bootstrap ? <span className="lumio-footer-version">v{state.bootstrap.version}</span> : null}
       </footer>
+
+      <ToastHost onDismiss={dismiss} toasts={toasts} />
     </div>
+  );
+}
+
+function BootstrapFailurePanel({ errorCode }: { errorCode: string | null }) {
+  return (
+    <section className="lumio-repair-panel">
+      <span className="lumio-panel-icon is-warning">
+        <ShieldCheck size={24} />
+      </span>
+      <div>
+        <p className="lumio-eyebrow">启动检查未完成</p>
+        <h1>需要检查配置</h1>
+        <p>本机配置尚未被修改。</p>
+        <code>{lumioErrorLabel(errorCode)}</code>
+      </div>
+    </section>
   );
 }
 
@@ -165,35 +230,12 @@ interface HomeViewProps {
 }
 
 function HomeView({ account, codexApp, phase, state }: HomeViewProps) {
-  if (phase === "bootstrapping") {
+  if (account === null) {
     return (
       <section aria-live="polite" className="lumio-loading">
-        <span className="lumio-loading-mark">
-          <RefreshCw size={24} />
-        </span>
-        <p>正在检测官方应用并读取本机状态…</p>
+        <p>正在读取账户信息…</p>
       </section>
     );
-  }
-
-  if (phase === "needs-repair") {
-    return (
-      <section className="lumio-repair-panel">
-        <span className="lumio-panel-icon is-warning">
-          <CloudOff size={24} />
-        </span>
-        <div>
-          <p className="lumio-eyebrow">启动检查未完成</p>
-          <h1>暂时无法读取 Lumio Codex 状态</h1>
-          <p>请稍后重新打开应用。本机配置尚未被修改。</p>
-          <code>{state.errorCode ?? "BOOTSTRAP_FAILED"}</code>
-        </div>
-      </section>
-    );
-  }
-
-  if (account === null) {
-    return <SignedOutHero codexApp={codexApp} />;
   }
 
   return (
@@ -232,8 +274,8 @@ function HomeView({ account, codexApp, phase, state }: HomeViewProps) {
             <Sparkles size={20} />
           </span>
           <p>{shellLabels.defaultModel}</p>
-          <strong>等待服务端同步</strong>
-          <small>模型目录将由 LumioAPI 提供</small>
+          <strong>{state.defaultModel ?? "等待服务端同步"}</strong>
+          <small>模型由服务端管理</small>
         </article>
       </div>
 
@@ -258,91 +300,6 @@ function HomeView({ account, codexApp, phase, state }: HomeViewProps) {
   );
 }
 
-function SignedOutHero({
-  codexApp,
-}: {
-  codexApp: LumioCodexApp | null;
-}) {
-  return (
-    <div className="lumio-signed-out">
-      <section className="lumio-hero">
-        <div className="lumio-hero-copy">
-          <span className="lumio-kicker">
-            <Sparkles size={14} />
-            LumioAPI 原生桌面入口
-          </span>
-          <h1>
-            让连接更简单，
-            <span>让 Codex 保持原生。</span>
-          </h1>
-          <p>
-            Lumio Codex 会自动完成账户连接和本机配置。后续模型切换仍在官方 Codex 中进行。
-          </p>
-          <button className="lumio-button is-primary is-large" disabled type="button">
-            <LogIn size={18} />
-            账户功能接入中
-            <ArrowUpRight size={17} />
-          </button>
-          <small className="lumio-inline-note">
-            <LockKeyhole size={14} />
-            不需要手动填写底层连接信息
-          </small>
-        </div>
-
-        <div className="lumio-orbit-card">
-          <div className="lumio-orbit-glow" />
-          <div className="lumio-orbit-logo">
-            <img alt="Lumio" src="/lumio-icon.png" />
-          </div>
-          <div className="lumio-orbit-ring ring-one" />
-          <div className="lumio-orbit-ring ring-two" />
-          <span className="lumio-orbit-node node-one">
-            <Check size={14} />
-          </span>
-          <span className="lumio-orbit-node node-two">
-            <ShieldCheck size={14} />
-          </span>
-          <p>LUMIO × CODEX</p>
-          <small>RESPONSES READY</small>
-        </div>
-      </section>
-
-      <section className="lumio-status-strip">
-        <article>
-          <span className="lumio-status-icon">
-            <CircleUserRound size={19} />
-          </span>
-          <div>
-            <small>{shellLabels.accountStatus}</small>
-            <strong>尚未登录</strong>
-          </div>
-          <ChevronRight size={17} />
-        </article>
-        <article>
-          <span className={`lumio-status-icon${codexApp ? " is-success" : ""}`}>
-            <Laptop size={19} />
-          </span>
-          <div>
-            <small>官方应用</small>
-            <strong>{codexApp ? "检测成功" : "等待手动选择"}</strong>
-          </div>
-          {codexApp ? <Check size={17} /> : <ChevronRight size={17} />}
-        </article>
-        <article>
-          <span className="lumio-status-icon is-success">
-            <Activity size={19} />
-          </span>
-          <div>
-            <small>服务入口</small>
-            <strong>api.lumio.games</strong>
-          </div>
-          <Check size={17} />
-        </article>
-      </section>
-    </div>
-  );
-}
-
 interface SettingsViewProps {
   autoUpdateEnabled: boolean;
   codexApp: LumioCodexApp | null;
@@ -354,7 +311,7 @@ function SettingsView({ autoUpdateEnabled, codexApp, telemetryEnabled }: Setting
     <section className="lumio-settings-page">
       <div className="lumio-page-heading">
         <p className="lumio-eyebrow">桌面偏好</p>
-        <h1>设置</h1>
+        <h1>{shellLabels.settings}</h1>
         <p>这里只保留 Lumio Codex 运行所需的本机选项。</p>
       </div>
 
@@ -387,13 +344,11 @@ function SettingsView({ autoUpdateEnabled, codexApp, telemetryEnabled }: Setting
           </span>
           <div>
             <strong>{shellLabels.officialAppPath}</strong>
-            <p className="lumio-path-value">
-              {codexApp?.path ?? "未自动检测到，可在功能接入后手动选择"}
-            </p>
+            <p className="lumio-path-value">{codexApp?.path ?? "未自动检测到，可在功能接入后手动选择"}</p>
           </div>
           <button className="lumio-small-button" disabled type="button">
             <RefreshCw size={15} />
-            重新检测
+            {shellLabels.recheck}
           </button>
         </article>
 
@@ -437,7 +392,7 @@ function SettingsView({ autoUpdateEnabled, codexApp, telemetryEnabled }: Setting
 
       <p className="lumio-settings-note">
         <ShieldCheck size={15} />
-        当前为内部测试外壳；不可用的选项会保持禁用，不会修改本机配置。
+        不可用的选项会保持禁用，不会修改本机配置。
       </p>
     </section>
   );

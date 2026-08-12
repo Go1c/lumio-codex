@@ -32,8 +32,10 @@ button {
   font: inherit;
 }
 
-button:focus-visible {
-  outline: 2px solid #9a8cff;
+button:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid #9aa1b5;
   outline-offset: 3px;
 }
 
@@ -61,29 +63,6 @@ button:focus-visible {
   mask-image: linear-gradient(to bottom, black, transparent 85%);
   content: "";
   pointer-events: none;
-}
-
-.lumio-aurora {
-  position: absolute;
-  z-index: -1;
-  width: 460px;
-  height: 460px;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.16;
-  pointer-events: none;
-}
-
-.lumio-aurora-one {
-  top: -280px;
-  left: 16%;
-  background: #6758ff;
-}
-
-.lumio-aurora-two {
-  right: -260px;
-  bottom: -280px;
-  background: #2ad7c5;
 }
 
 .lumio-topbar {
@@ -118,10 +97,7 @@ button:focus-visible {
   overflow: hidden;
   border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 11px;
-  background: linear-gradient(145deg, rgb(127 105 255 / 32%), rgb(31 35 61 / 72%));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 18%),
-    0 8px 22px rgb(74 60 190 / 24%);
+  background: rgb(255 255 255 / 5%);
 }
 
 .lumio-logo {
@@ -146,8 +122,7 @@ button:focus-visible {
 .lumio-footer,
 .lumio-eyebrow,
 .lumio-kicker,
-.lumio-orbit-card > small,
-.lumio-orbit-card > p {
+.lumio-quiet-title {
   font-family: "JetBrains Mono", monospace;
 }
 
@@ -195,6 +170,11 @@ button:focus-visible {
   color: #fff;
 }
 
+.lumio-nav.is-locked button {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .lumio-phase {
   display: inline-flex;
   align-items: center;
@@ -240,6 +220,7 @@ button:focus-visible {
 .lumio-signed-out {
   display: grid;
   align-content: center;
+  gap: 30px;
   min-height: 100%;
   padding: 42px 0 36px;
 }
@@ -261,36 +242,34 @@ button:focus-visible {
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
-  border: 1px solid rgb(144 126 255 / 22%);
+  border: 1px solid rgb(255 255 255 / 15%);
   border-radius: 999px;
-  background: rgb(127 104 255 / 8%);
-  color: #a99dff;
+  background: rgb(255 255 255 / 3%);
+  color: #8e9098;
   font-size: 10px;
   letter-spacing: 0.08em;
 }
 
 .lumio-hero h1 {
-  margin: 25px 0 18px;
+  margin: 24px 0 16px;
   color: #f7f7fb;
-  font-size: clamp(40px, 5vw, 65px);
+  font-size: clamp(30px, 3.6vw, 38px);
   font-weight: 650;
-  letter-spacing: -0.055em;
-  line-height: 1.07;
-}
-
-.lumio-hero h1 span {
-  background: linear-gradient(92deg, #9c8cff 10%, #7bdcd3 88%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  letter-spacing: -0.02em;
+  line-height: 1.18;
 }
 
 .lumio-hero-copy > p {
-  max-width: 570px;
-  margin: 0 0 27px;
-  color: #969aaf;
-  font-size: 15px;
-  line-height: 1.75;
+  max-width: 520px;
+  margin: 0 0 24px;
+  color: #8e9098;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.lumio-hero-cta {
+  display: flex;
+  gap: 12px;
 }
 
 .lumio-button {
@@ -323,18 +302,26 @@ button:focus-visible {
   padding: 0 21px;
 }
 
+/* 官方风主按钮：中性浅色实底，不用品牌渐变 */
 .lumio-button.is-primary {
-  background: linear-gradient(135deg, #7865f5, #6553da);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 22%),
-    0 10px 28px rgb(99 77 221 / 22%);
-  color: #fff;
+  background: #ececf1;
+  color: #16181f;
+}
+
+.lumio-button.is-primary:not(:disabled):hover {
+  background: #fff;
 }
 
 .lumio-button.is-secondary {
   border-color: rgb(255 255 255 / 10%);
   background: rgb(255 255 255 / 5%);
   color: #d8d9e4;
+}
+
+.lumio-button.is-warning {
+  border-color: rgb(219 168 92 / 24%);
+  background: rgb(219 168 92 / 7%);
+  color: #c4a074;
 }
 
 .lumio-button:disabled,
@@ -353,117 +340,54 @@ button:focus-visible {
   font-size: 11px;
 }
 
-.lumio-orbit-card {
-  position: relative;
+/* 克制原则：右侧不放品牌动效，改为安静的承诺清单 */
+.lumio-quiet-card {
   display: grid;
-  place-items: center;
-  width: min(340px, 100%);
-  aspect-ratio: 1;
-  justify-self: center;
+  align-content: center;
+  gap: 4px;
+  padding: 26px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 16px;
+  background: rgb(255 255 255 / 3%);
 }
 
-.lumio-orbit-glow {
-  position: absolute;
-  width: 54%;
-  height: 54%;
-  border-radius: 50%;
-  background: #7867ef;
-  filter: blur(70px);
-  opacity: 0.22;
+.lumio-quiet-title {
+  margin: 0 0 14px;
+  color: #6e7077;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
-.lumio-orbit-logo {
-  z-index: 2;
-  width: 104px;
-  height: 104px;
-  overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 26px;
-  background: linear-gradient(145deg, #24223a, #121523);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 20%),
-    0 26px 70px rgb(0 0 0 / 46%),
-    0 0 50px rgb(110 91 239 / 18%);
-  transform: rotate(-3deg);
+.lumio-quiet-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 0;
 }
 
-.lumio-orbit-logo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.lumio-quiet-row + .lumio-quiet-row {
+  border-top: 1px solid rgb(255 255 255 / 5%);
 }
 
-.lumio-orbit-ring {
-  position: absolute;
-  border: 1px solid rgb(154 141 255 / 18%);
-  border-radius: 50%;
+.lumio-quiet-tick {
+  flex: none;
+  margin-top: 2px;
+  color: #6fbfa8;
 }
 
-.lumio-orbit-ring::before {
-  position: absolute;
-  top: -3px;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #a798ff;
-  box-shadow: 0 0 14px #8f7fff;
-  content: "";
+.lumio-quiet-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 620;
 }
 
-.lumio-orbit-ring.ring-one {
-  width: 66%;
-  height: 66%;
-  animation: lumio-spin 18s linear infinite;
-}
-
-.lumio-orbit-ring.ring-two {
-  width: 88%;
-  height: 88%;
-  border-color: rgb(96 216 205 / 13%);
-  animation: lumio-spin-reverse 28s linear infinite;
-}
-
-.lumio-orbit-node {
-  position: absolute;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 11px;
-  background: rgb(20 23 38 / 88%);
-  box-shadow: 0 14px 30px rgb(0 0 0 / 28%);
-  color: #8ee0d5;
-  backdrop-filter: blur(12px);
-}
-
-.lumio-orbit-node.node-one {
-  top: 20%;
-  right: 9%;
-}
-
-.lumio-orbit-node.node-two {
-  bottom: 18%;
-  left: 8%;
-  color: #aa9eff;
-}
-
-.lumio-orbit-card > p,
-.lumio-orbit-card > small {
-  position: absolute;
-  bottom: 21px;
-  margin: 0;
-  color: #6e7388;
-  font-size: 9px;
-  letter-spacing: 0.13em;
-}
-
-.lumio-orbit-card > small {
-  bottom: 7px;
-  color: #4e5368;
-  font-size: 7px;
+.lumio-quiet-row small {
+  display: block;
+  margin-top: 3px;
+  color: #6e7077;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 @keyframes lumio-spin {
@@ -472,37 +396,57 @@ button:focus-visible {
   }
 }
 
-@keyframes lumio-spin-reverse {
-  to {
-    transform: rotate(-360deg);
-  }
+.lumio-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 3px solid #ef6673;
+  border-radius: 8px;
+  background: rgb(242 113 126 / 7%);
+  color: #f4b6bd;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.lumio-banner.is-warning {
+  border-left-color: #d9a552;
+  background: rgb(219 168 92 / 7%);
+  color: #e8cba0;
 }
 
 .lumio-status-strip {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  margin-top: 34px;
-  overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 7%);
-  border-radius: 15px;
-  background: rgb(255 255 255 / 2.5%);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%);
+  gap: 13px;
 }
 
-.lumio-status-strip article {
+.lumio-status-strip article,
+.lumio-status-action {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 17px 20px;
+  padding: 15px 18px;
+  border: 1px solid rgb(255 255 255 / 7%);
+  border-radius: 13px;
+  background: rgb(255 255 255 / 3%);
+  text-align: left;
 }
 
-.lumio-status-strip article + article {
-  border-left: 1px solid rgb(255 255 255 / 7%);
+.lumio-status-action {
+  cursor: pointer;
+  transition: border-color 150ms ease;
 }
 
-.lumio-status-strip article > svg {
+.lumio-status-action:hover {
+  border-color: rgb(255 255 255 / 15%);
+}
+
+.lumio-status-strip article > svg,
+.lumio-status-action > svg {
   color: #555a70;
 }
 
@@ -543,7 +487,13 @@ button:focus-visible {
 .lumio-status-icon.is-success {
   border-color: rgb(73 211 176 / 14%);
   background: rgb(73 211 176 / 7%);
-  color: #72d9c0;
+  color: #6fbfa8;
+}
+
+.lumio-status-icon.is-warning {
+  border-color: rgb(219 168 92 / 18%);
+  background: rgb(219 168 92 / 7%);
+  color: #c4a074;
 }
 
 .lumio-dashboard,
@@ -565,7 +515,7 @@ button:focus-visible {
 
 .lumio-eyebrow {
   margin: 0 0 9px;
-  color: #8d80ef;
+  color: #6e7077;
   font-size: 10px;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -643,7 +593,6 @@ button:focus-visible {
 }
 
 .lumio-balance-card > strong {
-  color: #a89aff;
   font-size: 30px;
 }
 
@@ -653,7 +602,7 @@ button:focus-visible {
 }
 
 .lumio-card-icon {
-  color: #9a8df5;
+  color: #8e9098;
 }
 
 .lumio-action-panel {
@@ -729,7 +678,7 @@ button:focus-visible {
 }
 
 .lumio-setting-icon {
-  color: #8f84e9;
+  color: #8e9098;
 }
 
 .lumio-setting-icon.is-warning {
@@ -758,8 +707,8 @@ button:focus-visible {
 }
 
 .lumio-toggle.is-on {
-  border-color: rgb(131 112 245 / 45%);
-  background: #5947ca;
+  border-color: rgb(16 163 127 / 45%);
+  background: #10a37f;
 }
 
 .lumio-toggle.is-on span {
@@ -812,10 +761,10 @@ button:focus-visible {
   place-items: center;
   width: 54px;
   height: 54px;
-  border: 1px solid rgb(142 126 247 / 18%);
+  border: 1px solid rgb(255 255 255 / 12%);
   border-radius: 16px;
-  background: rgb(128 106 242 / 7%);
-  color: #998cf0;
+  background: rgb(255 255 255 / 5%);
+  color: #b7bdcd;
 }
 
 .lumio-loading-mark svg {
@@ -853,6 +802,60 @@ button:focus-visible {
   color: #8a8fa4;
   font-family: "JetBrains Mono", monospace;
   font-size: 10px;
+}
+
+.lumio-toasts {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 80;
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+}
+
+.lumio-toast {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 360px;
+  padding: 11px 15px;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 11px;
+  background: #12141f;
+  box-shadow: 0 16px 44px rgb(0 0 0 / 45%);
+  color: #d1d5e0;
+  font-size: 12px;
+  animation: lumio-toast-in 200ms ease;
+}
+
+.lumio-toast.is-success {
+  border-color: rgb(62 230 180 / 30%);
+  color: #6fbfa8;
+}
+
+.lumio-toast.is-error {
+  border-color: rgb(242 113 126 / 32%);
+  color: #f4b6bd;
+}
+
+.lumio-toast button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #6e7077;
+  cursor: pointer;
+}
+
+@keyframes lumio-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
 }
 
 .lumio-footer {
@@ -935,10 +938,6 @@ button:focus-visible {
 
   .lumio-hero {
     grid-template-columns: 1fr;
-  }
-
-  .lumio-orbit-card {
-    display: none;
   }
 
   .lumio-status-strip,
