@@ -37,13 +37,13 @@ metadata:
 
 ## 官网与更新提醒
 
-- 可部署静态站：仓库根目录 [`site/`](../../../site/)（`lumio.games`）
+- 可部署静态站：仓库根目录 [`site/`](../../../codex/site/)（`lumio.games`）
 - 更新提醒：`lumio_check_update` 对照 GitHub Releases latest，首页横幅引导打开下载页（不自动安装）
 
 ## 相关
 
-- [架构设计](../../../docs/specs/2026-08-11-lumio-codex-branded-client-design.md)
-- [交互设计](../../../docs/specs/2026-08-12-lumio-ux-interaction-design.md)
-- [实现计划](../../../docs/plans/2026-08-12-lumio-account-and-home.md)
+- [架构设计](../../../codex/docs/specs/2026-08-11-lumio-codex-branded-client-design.md)
+- [交互设计](../../../codex/docs/specs/2026-08-12-lumio-ux-interaction-design.md)
+- [实现计划](../../../codex/docs/plans/2026-08-12-lumio-account-and-home.md)
 - [ADR-0001 凭据本地文件](../../decisions/0001-lumio-credentials-local-file.md)
 - 可点击原型：`prototypes/lumio-ux/`

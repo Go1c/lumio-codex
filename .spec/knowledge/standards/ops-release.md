@@ -8,7 +8,7 @@ metadata:
 
 # 运维与发布（索引）
 
-权威操作手册在仓库 [`docs/ops/`](../../../docs/ops/README.md)，不在本文件展开步骤。
+权威操作手册在仓库 [`codex/docs/ops/`](../../../codex/docs/ops/README.md)，不在本文件展开步骤。
 
 ## 何时查 docs/ops
 
@@ -20,11 +20,11 @@ metadata:
 
 ## 阅读顺序
 
-1. [docs/ops/README.md](../../../docs/ops/README.md)
+1. [codex/docs/ops/README.md](../../../codex/docs/ops/README.md)
 2. 01 本地编译 → 02 官网 → 03 发版 → 04 后台 → 05 维护
 
 ## 硬事实（防漂移）
 
 - 公开签名发布闸门未开前，只分发 `-internal-unsigned`。
 - 生产 API 基址与官网域名以 `lumio/product.rs` 与 `docs/ops` 为准。
-- 运维步骤变更必须同步 `docs/ops/`，并更新本索引的 description 若触发场景变了。
+- 运维步骤变更必须同步 `codex/docs/ops/`，并更新本索引的 description 若触发场景变了。

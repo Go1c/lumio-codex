@@ -177,8 +177,10 @@ fn macos_packager_keeps_launcher_inside_single_visible_lumio_app() {
 #[test]
 fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // 仓库根在 codex/ 工作区之上一级（monorepo 布局）。
     let workflow = manifest_dir
         .parent()
+        .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()
@@ -212,8 +214,10 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
 #[test]
 fn github_public_release_workflow_is_blocked_until_signing_is_ready() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    // 仓库根在 codex/ 工作区之上一级（monorepo 布局）。
     let workflow = manifest_dir
         .parent()
+        .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .unwrap()

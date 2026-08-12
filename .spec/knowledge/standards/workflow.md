@@ -16,7 +16,7 @@ metadata:
 - `origin`：`https://github.com/Go1c/lumio-codex.git`。持续集成分支为 **`publish`**（发版与内部 CI 主线）。
 - `upstream`（可选）：`https://github.com/BigPizzaV3/CodexPlusPlus.git`，用于偶发同步上游；合并前遵守确认规则。
 - 功能分支从 `publish` 拉出，命名 `feat/…` / `fix/…`；完成后 PR 回 `publish`。
-- **部署 / 打包 / Release 步骤**不在本文展开，一律以 [`docs/ops/`](../../../docs/ops/README.md) 为准（知识索引见 [`ops-release.md`](./ops-release.md)）。
+- **部署 / 打包 / Release 步骤**不在本文展开，一律以 [`codex/docs/ops/`](../../../codex/docs/ops/README.md) 为准（知识索引见 [`ops-release.md`](./ops-release.md)）。
 
 ## 提交规范（通用）
 

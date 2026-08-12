@@ -9,12 +9,12 @@
 
 # Upstream inject assets are hashed byte-exact in CI (Windows runners
 # must not rewrite them to CRLF).
-assets/inject/upstream/**/*.js text eol=lf
-assets/inject/upstream/**/*.css text eol=lf
-assets/inject/upstream/**/*.json text eol=lf
-assets/inject/upstream/**/*.html text eol=lf
-assets/inject/upstream/**/*.png binary
-assets/inject/upstream/**/*.jpg binary
-assets/inject/upstream/**/*.jpeg binary
-assets/inject/upstream/**/*.webp binary
-assets/inject/upstream/**/*.ico binary
+codex/assets/inject/upstream/**/*.js text eol=lf
+codex/assets/inject/upstream/**/*.css text eol=lf
+codex/assets/inject/upstream/**/*.json text eol=lf
+codex/assets/inject/upstream/**/*.html text eol=lf
+codex/assets/inject/upstream/**/*.png binary
+codex/assets/inject/upstream/**/*.jpg binary
+codex/assets/inject/upstream/**/*.jpeg binary
+codex/assets/inject/upstream/**/*.webp binary
+codex/assets/inject/upstream/**/*.ico binary
