@@ -19,6 +19,7 @@ metadata:
 | [`standards/code-style.md`](standards/code-style.md) | 代码与文档风格:语言约定、命名、注释原则、生成物纪律——写代码/建文档时查 |
 | [`standards/testing.md`](standards/testing.md) | 测试与验收:测试分层政策、TDD 时机、验收 DoD 与验证证据——实现功能/修 bug 时查 |
 | [`standards/dispatch.md`](standards/dispatch.md) | 派活模板:worker 派遣与 reviewer 触发的 prompt 骨架——主 loop 扇出任务或触发审查时查 |
+| [`standards/ops-release.md`](standards/ops-release.md) | 部署/打包/发版/后台维护入口——准备上线推送、打安装包、发 Release 或改运维流程时查 |
 
 ## features/(功能设计与记录 · 供了解)
 

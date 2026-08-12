@@ -16,9 +16,11 @@
 
 Lumio Codex is a lightweight desktop client for LumioAPI users. It detects an already installed official Codex or ChatGPT desktop app, handles Lumio account onboarding, shows balance and plan status, configures the Responses endpoint, and hands off to the official app so users keep the native Codex model picker.
 
-The production API is fixed at `https://api.lumio.games/`. Users never need to enter a Base URL or API key manually.
+The production API is fixed at `https://api.lumio.games/`; the marketing site is `https://lumio.games/`. Users never need to enter a Base URL or API key manually.
 
-> **Development status:** `publish` is the ongoing development branch. Only artifacts explicitly marked `internal-unsigned` are produced today. Account integration, secure storage, configuration takeover, payment handoff, and the production update path are still being implemented. No public production installer will be released before Apple Developer ID signing and notarization, Windows code signing, and rollback rehearsal are complete.
+**Ops / release manuals (Chinese):** start at [docs/ops/README.md](docs/ops/README.md) (local build, website deploy, GitHub releases, Sub2API backend, maintenance).
+
+> **Development / release status:** `publish` is the integration branch. Account flows, config takeover, offline launch, the marketing site, pay-via-browser, and GitHub update reminders are in place. Distribution is still primarily `internal-unsigned` builds. No public production installer ships before Apple Developer ID signing and notarization, Windows code signing, and a rollback drill (see CI `Public release gate`).
 
 ## Product flow
 

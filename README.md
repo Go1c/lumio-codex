@@ -16,9 +16,20 @@
 
 Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测用户已经安装的官方 Codex / ChatGPT 桌面应用，完成 Lumio 账户接入、余额与套餐展示、Responses 配置和启动交接，让用户继续使用官方 Codex 的原生模型选择器。
 
-生产 API 固定为 `https://api.lumio.games/`。用户不需要手填 Base URL 或 API Key。
+生产 API 固定为 `https://api.lumio.games/`。官网为 `https://lumio.games/`。用户不需要手填 Base URL 或 API Key。
 
-> **开发状态：** `publish` 是持续开发分支。当前只提供明确标记为 `internal-unsigned` 的内部测试制品；账户、安全存储、配置接管、支付交接和正式更新链路仍在逐步落地。没有完成 Apple Developer ID 签名与公证、Windows 代码签名和回滚演练前，不发布正式公开安装包。
+> **开发 / 发布状态：** `publish` 是持续集成与发版准备分支。账户、登录、配置接管、离线启动、官网、充值打开网站、GitHub 更新提醒已落地。当前对外分发仍以明确标记为 `internal-unsigned` 的内部测试制品为主。没有完成 Apple Developer ID 签名与公证、Windows 代码签名和回滚演练前，**不发布**正式公开安装包（见 CI `Public release gate`）。
+
+### 部署 · 打包 · 发版（运维手册）
+
+正式上线推送请按顺序阅读：
+
+1. **[docs/ops/README.md](docs/ops/README.md)** — 总览与上线顺序  
+2. [本地编译与打包](docs/ops/01-local-build.md)  
+3. [官网部署](docs/ops/02-website-deploy.md)  
+4. [版本发布与更新提醒](docs/ops/03-release.md)  
+5. [后台 API（Sub2API）](docs/ops/04-backend.md)  
+6. [日常维护与文档同步](docs/ops/05-maintenance.md)
 
 ## 产品流程
 
@@ -31,7 +42,7 @@ Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测�
 5. 配置 LumioAPI、Responses 协议、模型目录和服务端默认模型。
 6. 展示余额、试用额度和套餐状态。
 7. 一键启动官方 Codex，后续模型切换仍使用 Codex 原生选择器。
-8. 充值时通过一次性登录交接在系统浏览器打开 `/payment`，无需再次登录。
+8. 充值时在系统浏览器打开官网 `/payment`（当前为打开网站；安全一次性交接可后续增强）。
 
 Lumio Codex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用**。请先从 OpenAI 官方渠道安装受支持的桌面应用。
 
@@ -66,17 +77,16 @@ Lumio 精简模式不公开 Provider、Base URL、Key、协议、多供应商、
 
 ## 安全与隐私
 
-- Token 和 API Key 分别写入 macOS Keychain 或 Windows Credential Manager；日志、崩溃信息和界面只显示脱敏值。
-- 第一次接管前保存 Codex 配置快照，只合并 Lumio 负责的 Provider 字段；退出账户时删除凭据并恢复快照。
-- 遥测默认关闭。用户主动开启后也只发送版本、平台、启动阶段和脱敏错误码。
-- 不收集邮箱、API Key、提示词、代码、文件路径或请求内容作为遥测。
-- 服务临时不可用时，已有有效本机配置的登录用户仍可启动 Codex；注册、账户刷新和充值会明确显示不可用。
+- 访问令牌与 API Key 落在 Lumio 数据目录的 owner-only 文件（见 `.spec/decisions/0001-lumio-credentials-local-file.md`）；日志与界面只显示脱敏值。系统钥匙串为后续可选项。
+- 第一次接管前保存 Codex 配置快照，只合并 Lumio 负责的字段；设置中可整文件恢复接管前快照。
+- 遥测 UI 默认关闭且本期未接真实上报通道。
+- 服务临时不可用时，已有有效本机配置的登录用户仍可启动 Codex；注册、账户刷新在离线时明确不可用。
 
 生产秘密、签名凭据、S3 凭据和部署配置不得进入仓库。
 
 ## 本地开发
 
-需要现有的 Node.js 22、稳定版 Rust、Tauri 2 平台依赖，以及用于端到端测试的官方桌面应用。不要把真实凭据写入测试或提交。
+需要 Node.js 22、稳定版 Rust、Tauri 2 平台依赖，以及用于端到端测试的官方桌面应用。不要把真实凭据写入测试或提交。完整命令与打安装包步骤见 **[docs/ops/01-local-build.md](docs/ops/01-local-build.md)**。
 
 ```bash
 git clone https://github.com/Go1c/lumio-codex.git
@@ -87,7 +97,8 @@ npm test
 npm run vite:build
 
 cd ../../
-cargo test -p codex-plus-core --test lumio_product --test installers
+cargo fmt --all -- --check
+cargo test -p codex-plus-core --lib lumio
 cargo test -p codex-plus-manager
 cargo check -p codex-plus-manager -p codex-plus-launcher
 ```
@@ -104,11 +115,14 @@ npm run build
 ```text
 apps/codex-plus-manager/       Lumio Codex Tauri 与 React 客户端
 apps/codex-plus-launcher/      内部启动辅助程序
-crates/codex-plus-core/        跨平台检测、配置与启动基础能力
+crates/codex-plus-core/        跨平台检测、配置、账户与启动
 crates/codex-plus-data/        本地数据层
-assets/brand/                  品牌源图与透明补边派生图
+site/                          官网静态站（lumio.games）
+docs/ops/                      部署 / 打包 / 发版 / 后台维护
+assets/brand/                  品牌源图
 scripts/installer/windows/     Windows NSIS 内测安装脚本
 scripts/installer/macos/       macOS DMG 内测打包脚本
+.spec/                         Agent 规则与知识库
 ```
 
 ## 开源、上游与第三方声明
