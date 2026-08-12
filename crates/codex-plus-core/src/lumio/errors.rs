@@ -93,8 +93,17 @@ fn split_trailing_whitespace(token: &str) -> (&str, &str) {
     token.split_at(end)
 }
 
+/// 一个词里可能藏着多个密钥（`{"access_token":"…","refresh_token":"…"}` 整体不含空白，
+/// 是一个词）。因此按分隔符切成候选片段**逐段**检查，任一段命中就整词脱敏。
 fn is_secret_like(word: &str) -> bool {
-    let candidate = word.rsplit(['=', ':']).next().unwrap_or(word);
+    word.split(['=', ':', ',']).any(candidate_is_secret_like)
+}
+
+fn candidate_is_secret_like(raw: &str) -> bool {
+    // JSON 的引号、括号、结尾的分号等会挡在前缀锚点前面，先剥掉首尾的非字母数字字符；
+    // `-` `_` `.` 是密钥自身的组成部分，必须保留。
+    let candidate =
+        raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.');
     if candidate.is_empty() {
         return false;
     }
@@ -104,10 +113,12 @@ fn is_secret_like(word: &str) -> bool {
     if candidate.starts_with("sk-") || candidate.starts_with("rt_") {
         return true;
     }
-    // JWT: 三段 base64url，用 `.` 分隔。签名段长度不做要求（截断后的签名仍是密文），
-    // header 与 payload 段则必须够长，避免把 `1.2.46` 这类版本号误判为令牌。
+    // JWT: 三段 base64url，用 `.` 分隔。header 段恒以 `eyJ`（`{"` 的 base64url 编码）开头，
+    // 以此为锚点，才不会把 `production.kubernetes.local` 这类点分标识符当成令牌。
+    // 签名段长度不做要求——截断后的签名仍是密文。
     let segments: Vec<&str> = candidate.split('.').collect();
     if segments.len() == 3
+        && segments[0].starts_with("eyJ")
         && segments[0].len() >= 8
         && segments[1].len() >= 8
         && !segments[2].is_empty()
@@ -261,7 +272,14 @@ mod tests {
     fn unrecognized_reasons_do_not_leak_the_server_string() {
         let code = normalize_reason(418, Some("SOME_BRAND_NEW_SERVER_REASON"));
         assert_eq!(code, "SERVICE_UNAVAILABLE");
-        assert!(!code.contains("BRAND_NEW"));
+    }
+
+    #[test]
+    fn an_unrecognized_reason_on_401_still_reads_as_an_expired_session() {
+        assert_eq!(
+            normalize_reason(401, Some("SOME_UNRECOGNIZED_REASON")),
+            "AUTH_SESSION_EXPIRED"
+        );
     }
 
     #[test]
@@ -282,5 +300,42 @@ mod tests {
             redact("stage=prepare-connection code=KEY_PROVISION_FAILED"),
             "stage=prepare-connection code=KEY_PROVISION_FAILED"
         );
+    }
+
+    #[test]
+    fn redaction_survives_json_quoting_around_a_refresh_token() {
+        let clean = redact(r#"{"refresh_token":"rt_0123456789abcdef"}"#);
+        assert!(!clean.contains("rt_0123456789abcdef"), "{clean}");
+        assert!(clean.contains("[redacted]"), "{clean}");
+    }
+
+    #[test]
+    fn redaction_reaches_every_field_of_a_multi_field_json_body() {
+        let clean = redact(
+            r#"{"access_token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.Sfl","refresh_token":"rt_0123456789abcdef"}"#,
+        );
+        assert!(
+            !clean.contains("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.Sfl"),
+            "{clean}"
+        );
+        assert!(!clean.contains("rt_0123456789abcdef"), "{clean}");
+    }
+
+    #[test]
+    fn redaction_sees_through_surrounding_punctuation() {
+        let clean = redact("(sk-abcdef0123456789)");
+        assert!(!clean.contains("sk-abcdef0123456789"), "{clean}");
+        assert!(clean.contains("[redacted]"), "{clean}");
+    }
+
+    #[test]
+    fn dotted_identifiers_are_not_mistaken_for_jwts() {
+        for readable in [
+            "host=production.kubernetes.local",
+            "codex-plus-core.integration.smoke",
+            "stage=prepare-connection.provision.step",
+        ] {
+            assert_eq!(redact(readable), readable);
+        }
     }
 }
