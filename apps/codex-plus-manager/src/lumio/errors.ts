@@ -32,7 +32,7 @@ const UNKNOWN_CODE = "UNKNOWN";
 function normalizeCode(code: string | null | undefined): string {
   if (typeof code !== "string") return UNKNOWN_CODE;
   const trimmed = code.trim();
-  if (trimmed === "" || !(trimmed in LUMIO_ERROR_COPY)) return UNKNOWN_CODE;
+  if (trimmed === "" || !Object.hasOwn(LUMIO_ERROR_COPY, trimmed)) return UNKNOWN_CODE;
   return trimmed;
 }
 

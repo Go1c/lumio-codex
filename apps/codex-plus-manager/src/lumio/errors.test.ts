@@ -43,6 +43,13 @@ test("unknown and empty codes fall back without throwing", () => {
   assert.equal(lumioErrorCopy(undefined), "出现未知问题，请稍后重试");
 });
 
+test("codes that collide with object prototype members still fall back", () => {
+  for (const inherited of ["toString", "constructor", "valueOf", "hasOwnProperty"]) {
+    assert.equal(lumioErrorCopy(inherited), "出现未知问题，请稍后重试");
+    assert.equal(lumioErrorLabel(inherited), "出现未知问题，请稍后重试（UNKNOWN）");
+  }
+});
+
 test("labels append the code chip so users can quote it to support", () => {
   assert.equal(
     lumioErrorLabel("AUTH_INVALID_CREDENTIALS"),
