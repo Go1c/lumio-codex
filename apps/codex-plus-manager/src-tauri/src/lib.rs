@@ -24,6 +24,7 @@ pub fn run() {
     let app_result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            app.manage(lumio_commands::LumioSession::new().map_err(|error| error.to_string())?);
             let mut main_window_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -42,6 +43,22 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             lumio_commands::lumio_bootstrap,
+            lumio_commands::lumio_public_settings,
+            lumio_commands::lumio_send_verify_code,
+            lumio_commands::lumio_register,
+            lumio_commands::lumio_login,
+            lumio_commands::lumio_login_two_factor,
+            lumio_commands::lumio_logout,
+            lumio_commands::lumio_refresh_account,
+            lumio_commands::lumio_provision_step,
+            lumio_commands::lumio_takeover_health,
+            lumio_commands::lumio_restore_config,
+            lumio_commands::lumio_launch_codex,
+            lumio_commands::lumio_detect_codex_app,
+            lumio_commands::lumio_select_codex_app,
+            lumio_commands::lumio_open_browser,
+            lumio_commands::lumio_set_telemetry,
+            lumio_commands::lumio_export_logs,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])
