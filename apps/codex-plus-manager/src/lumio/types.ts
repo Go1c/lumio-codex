@@ -50,9 +50,20 @@ export interface LumioServiceSettings {
   agreementDocuments: LumioAgreementDocument[];
   defaultModel: string | null;
   siteBaseUrl: string;
+  paymentPath: string;
+  /** 账户网页源（重置密码等）；与官网 siteBaseUrl 分开。 */
+  apiBaseUrl: string;
   // Optional while the command layer lands: the register form must stay usable
   // against public settings that predate the invitation switch.
   invitationCodeEnabled?: boolean;
+}
+
+export interface LumioUpdateReminder {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  downloadUrl: string;
+  releaseSummary: string;
 }
 
 export interface LumioAuthResult {

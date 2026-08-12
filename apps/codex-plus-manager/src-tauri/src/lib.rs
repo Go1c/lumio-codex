@@ -57,6 +57,7 @@ pub fn run() {
             lumio_commands::lumio_detect_codex_app,
             lumio_commands::lumio_select_codex_app,
             lumio_commands::lumio_open_browser,
+            lumio_commands::lumio_check_update,
             lumio_commands::lumio_set_telemetry,
             lumio_commands::lumio_export_logs,
             lumio_hide_to_tray,

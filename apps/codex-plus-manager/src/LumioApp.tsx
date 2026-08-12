@@ -6,6 +6,7 @@ import {
   LumioCommandError,
   SESSION_EXPIRED_ERROR_CODE,
   checkTakeover,
+  checkUpdate,
   loadLumioBootstrap,
   loadPublicSettings,
   onSessionExpired,
@@ -19,6 +20,7 @@ import type {
   LumioBootstrap,
   LumioCodexApp,
   LumioPhase,
+  LumioUpdateReminder,
 } from "./lumio/types.ts";
 import { HomeView } from "./lumio/views/HomeView.tsx";
 import { LoginView } from "./lumio/views/LoginView.tsx";
@@ -102,6 +104,8 @@ async function planStartup(): Promise<LumioEvent[]> {
 export function LumioApp() {
   const [state, dispatch] = useReducer(reduceLumioState, undefined, initialLumioState);
   const [view, setView] = useState<View>("home");
+  const [updateReminder, setUpdateReminder] = useState<LumioUpdateReminder | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const { toasts, pushToast, dismiss } = useToasts();
   // Read by callbacks that must keep a stable identity across renders.
   const stateRef = useRef(state);
@@ -118,6 +122,20 @@ export function LumioApp() {
       active = false;
     };
   }, []);
+
+  // 更新提醒与账户阶段无关：有 bootstrap 版本号就可以对照远端 latest。
+  useEffect(() => {
+    if (!state.bootstrap) return;
+    let active = true;
+    void checkUpdate()
+      .then((reminder) => {
+        if (active) setUpdateReminder(reminder);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [state.bootstrap]);
 
   // The public settings gate every entry-point button, so an unreachable
   // service must keep retrying instead of leaving the surface permanently dark.
@@ -362,11 +380,13 @@ export function LumioApp() {
           </section>
         ) : (
           <HomeView
+            onDismissUpdate={() => setUpdateDismissed(true)}
             onOpenSettings={openSettings}
             onReconnected={onReconnected}
             onRefreshed={onRefreshed}
             pushToast={pushToast}
             state={state}
+            updateReminder={updateDismissed ? null : updateReminder}
           />
         )}
       </main>

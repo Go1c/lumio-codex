@@ -7,3 +7,4 @@ pub mod launch;
 pub mod product;
 mod secret_file;
 pub mod session;
+pub mod update_check;

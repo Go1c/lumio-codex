@@ -10,6 +10,7 @@ import type {
   LumioServiceSettings,
   LumioTakeoverHealth,
   LumioTelemetryResult,
+  LumioUpdateReminder,
   LumioVerifyCodeResult,
 } from "./types.ts";
 
@@ -29,6 +30,7 @@ export const LUMIO_COMMANDS = {
   detectCodexApp: "lumio_detect_codex_app",
   selectCodexApp: "lumio_select_codex_app",
   openBrowser: "lumio_open_browser",
+  checkUpdate: "lumio_check_update",
   setTelemetry: "lumio_set_telemetry",
   exportLogs: "lumio_export_logs",
 } as const;
@@ -219,6 +221,10 @@ export async function selectCodexApp(path: string): Promise<LumioCodexApp> {
 
 export async function openInBrowser(url: string): Promise<void> {
   await runNullableCommand<unknown>(LUMIO_COMMANDS.openBrowser, { url });
+}
+
+export async function checkUpdate(): Promise<LumioUpdateReminder> {
+  return runCommand<LumioUpdateReminder>(LUMIO_COMMANDS.checkUpdate);
 }
 
 export async function setTelemetry(enabled: boolean): Promise<LumioTelemetryResult> {

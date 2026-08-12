@@ -188,7 +188,7 @@ function ErrorBanner({
         <button
           className="lumio-link-button"
           onClick={() => {
-            void openInBrowser(`${settings.siteBaseUrl}/support`).catch((error: unknown) =>
+            void openInBrowser(`${settings.apiBaseUrl}/support`).catch((error: unknown) =>
               pushToast(errorCodeOf(error)),
             );
           }}
@@ -233,7 +233,7 @@ function ForgotPasswordDialog({
             disabled={!settings.passwordResetEnabled}
             onClick={() => {
               onClose();
-              void openInBrowser(`${settings.siteBaseUrl}/reset-password`).catch((error: unknown) =>
+              void openInBrowser(`${settings.apiBaseUrl}/reset-password`).catch((error: unknown) =>
                 pushToast(errorCodeOf(error)),
               );
             }}

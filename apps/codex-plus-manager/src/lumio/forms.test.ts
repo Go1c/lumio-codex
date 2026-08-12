@@ -24,7 +24,9 @@ const SETTINGS: LumioServiceSettings = {
     { id: "usage-policy", title: "使用政策", contentMd: "" },
   ],
   defaultModel: "gpt-example",
-  siteBaseUrl: "https://api.lumio.games",
+  siteBaseUrl: "https://lumio.games",
+  paymentPath: "/payment",
+  apiBaseUrl: "https://api.lumio.games",
 };
 
 const VALID: RegisterFormInput = {

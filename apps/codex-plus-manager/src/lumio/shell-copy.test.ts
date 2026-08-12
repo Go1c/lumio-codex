@@ -21,6 +21,7 @@ test("the shell binds exactly the lumio command surface", () => {
     detectCodexApp: "lumio_detect_codex_app",
     selectCodexApp: "lumio_select_codex_app",
     openBrowser: "lumio_open_browser",
+    checkUpdate: "lumio_check_update",
     setTelemetry: "lumio_set_telemetry",
     exportLogs: "lumio_export_logs",
   });
@@ -372,6 +373,24 @@ test("the telemetry switch stays disabled with a stated reason this cycle", asyn
 
   assert.match(view, /使用数据收集尚未开放/);
   assert.match(view, /<Toggle checked=\{false\} disabled label=\{shellLabels\.telemetry\} \/>/);
+});
+
+test("the home surface opens payment in the browser when online", async () => {
+  const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /openInBrowser/);
+  assert.match(view, /paymentPath/);
+  assert.match(view, /已在浏览器中打开支付页面/);
+  assert.doesNotMatch(view, /充值功能尚未开放/);
+});
+
+test("the shell checks for updates and can open the download page", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(shell, /checkUpdate\(/);
+  assert.match(view, /updateReminder/);
+  assert.match(view, /查看更新/);
 });
 
 test("React entry renders only LumioApp", async () => {

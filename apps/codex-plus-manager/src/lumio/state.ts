@@ -94,7 +94,6 @@ export type LumioEvent =
   | { type: "session-expired"; errorCode: string }
   | { type: "signed-out" };
 
-const PAY_DISABLED_NOTE = "充值功能尚未开放";
 const OFFLINE_NOTE = "需要恢复网络连接";
 const NO_APP_NOTE = "未检测到官方应用，去设置中选择";
 const SERVICE_DOWN_NOTE = "服务暂时不可用，稍后自动重试";
@@ -112,7 +111,7 @@ function disabledActions(): LumioActions {
 }
 
 function noNotes(): LumioActionNotes {
-  return { launch: null, refresh: null, pay: PAY_DISABLED_NOTE, register: null, signIn: null };
+  return { launch: null, refresh: null, pay: null, register: null, signIn: null };
 }
 
 /**
@@ -312,13 +311,13 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
           ...state.actions,
           canLaunch: event.codexApp !== null,
           canRefresh: true,
-          canPay: false,
+          canPay: true,
         },
         actionNotes: {
           ...state.actionNotes,
           launch: event.codexApp === null ? NO_APP_NOTE : null,
           refresh: null,
-          pay: PAY_DISABLED_NOTE,
+          pay: null,
         },
       };
 

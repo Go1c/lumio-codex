@@ -1,13 +1,30 @@
-import { Activity, CheckCircle2, CloudOff, RefreshCw, Rocket, ShieldCheck, Sparkles, WalletCards } from "lucide-react";
+import {
+  Activity,
+  CheckCircle2,
+  CloudOff,
+  Download,
+  RefreshCw,
+  Rocket,
+  ShieldCheck,
+  Sparkles,
+  WalletCards,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { LumioCommandError, launchCodex, refreshAccount, shellLabels } from "../invoke.ts";
+import {
+  LumioCommandError,
+  launchCodex,
+  openInBrowser,
+  refreshAccount,
+  shellLabels,
+} from "../invoke.ts";
 import type { LumioState } from "../state.ts";
-import type { LumioAccountSummary } from "../types.ts";
+import type { LumioAccountSummary, LumioUpdateReminder } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
 
 const RECONNECT_PROBE_MS = 30_000;
 const RECONNECT_BANNER_MS = 3000;
+const PAYMENT_POLL_MS = 10_000;
 
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
@@ -27,25 +44,44 @@ function formatSyncTime(iso: string | null): string {
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(parsed);
 }
 
+function paymentUrl(state: LumioState): string | null {
+  const site = state.service?.siteBaseUrl?.replace(/\/$/, "");
+  const path = state.service?.paymentPath ?? "/payment";
+  if (!site) return null;
+  return `${site}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 interface HomeViewProps {
   state: LumioState;
+  updateReminder: LumioUpdateReminder | null;
   onRefreshed: (account: LumioAccountSummary, cachedAt: string) => void;
   onReconnected: (account: LumioAccountSummary, cachedAt: string) => void;
   onOpenSettings: () => void;
+  onDismissUpdate: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
 }
 
-export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pushToast }: HomeViewProps) {
+export function HomeView({
+  state,
+  updateReminder,
+  onRefreshed,
+  onReconnected,
+  onOpenSettings,
+  onDismissUpdate,
+  pushToast,
+}: HomeViewProps) {
   const { account, actionNotes, actions, codexApp } = state;
   const offline = state.phase === "ready-offline";
   // 没有同步时间就没有同步过：账户数值此刻是启动时的占位而非缓存下来的真值，不能当余额渲染。
   const syncTimeUnknown = state.cachedAt === null;
   const [refreshing, setRefreshing] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentBalanceUpdated, setPaymentBalanceUpdated] = useState(false);
   const [reconnected, setReconnected] = useState(false);
+  const openingBalance = account?.balance ?? null;
 
-  // Offline is a degraded normal state, so recovery is probed in the background
-  // rather than asking the user to retry by hand (interaction spec §5.5).
   useEffect(() => {
     if (!offline) return;
     let active = true;
@@ -71,6 +107,36 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
     return () => clearTimeout(timer);
   }, [reconnected]);
 
+  useEffect(() => {
+    if (!paymentOpen || paymentBalanceUpdated || openingBalance === null) return;
+    let active = true;
+    const poll = () => {
+      void refreshAccount()
+        .then((fresh) => {
+          if (!active) return;
+          onRefreshed(fresh, new Date().toISOString());
+          if (fresh.balance !== openingBalance) {
+            setPaymentBalanceUpdated(true);
+          }
+        })
+        .catch(() => undefined);
+    };
+    const timer = setInterval(poll, PAYMENT_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [paymentOpen, paymentBalanceUpdated, openingBalance, onRefreshed]);
+
+  useEffect(() => {
+    if (!paymentBalanceUpdated) return;
+    const timer = setTimeout(() => {
+      setPaymentOpen(false);
+      setPaymentBalanceUpdated(false);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [paymentBalanceUpdated]);
+
   if (account === null) {
     return (
       <section aria-live="polite" className="lumio-loading">
@@ -95,6 +161,28 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
       .finally(() => setLaunching(false));
   };
 
+  const openPayment = () => {
+    const url = paymentUrl(state);
+    if (url === null) {
+      pushToast("PAYMENT_HANDOFF_CREATE_FAILED");
+      return;
+    }
+    setPaying(true);
+    void openInBrowser(url)
+      .then(() => {
+        setPaymentOpen(true);
+        setPaymentBalanceUpdated(false);
+      })
+      .catch((error: unknown) => pushToast(errorCodeOf(error)))
+      .finally(() => setPaying(false));
+  };
+
+  const openUpdatePage = () => {
+    const url = updateReminder?.downloadUrl;
+    if (!url) return;
+    void openInBrowser(url).catch((error: unknown) => pushToast(errorCodeOf(error)));
+  };
+
   return (
     <div className="lumio-dashboard">
       <section className="lumio-welcome-row">
@@ -108,6 +196,21 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
           凭据由系统保护
         </span>
       </section>
+
+      {updateReminder?.updateAvailable ? (
+        <p className="lumio-notice is-update" role="status">
+          <Download size={15} />
+          <span>
+            发现新版本 {updateReminder.latestVersion ?? ""}（当前 v{updateReminder.currentVersion}）
+          </span>
+          <button className="lumio-small-button" onClick={openUpdatePage} type="button">
+            查看更新
+          </button>
+          <button className="lumio-link-button" onClick={onDismissUpdate} type="button">
+            稍后
+          </button>
+        </p>
+      ) : null}
 
       {reconnected ? (
         <p className="lumio-notice is-success" role="status">
@@ -188,9 +291,15 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
           </p>
         </div>
         <div className="lumio-actions">
-          <button className="lumio-button is-secondary" disabled type="button">
+          <button
+            className="lumio-button is-secondary"
+            disabled={!actions.canPay || paying}
+            onClick={openPayment}
+            title={actions.canPay ? undefined : (actionNotes.pay ?? undefined)}
+            type="button"
+          >
             <WalletCards size={17} />
-            {shellLabels.payment}
+            {paying ? "正在打开…" : shellLabels.payment}
           </button>
           <button
             className="lumio-button is-primary"
@@ -204,7 +313,7 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
         </div>
       </section>
 
-      <p className="lumio-settings-note">{actionNotes.pay}</p>
+      {actions.canPay ? null : <p className="lumio-settings-note">{actionNotes.pay}</p>}
       {actions.canLaunch ? null : (
         <p className="lumio-settings-note">
           {actionNotes.launch}
@@ -213,6 +322,39 @@ export function HomeView({ state, onRefreshed, onReconnected, onOpenSettings, pu
           </button>
         </p>
       )}
+
+      {paymentOpen ? (
+        <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">
+          <div className="lumio-modal">
+            {paymentBalanceUpdated ? (
+              <>
+                <h3>余额已更新</h3>
+                <p>当前余额 {formatBalance(account.balance)}。</p>
+              </>
+            ) : (
+              <>
+                <h3>已在浏览器中打开支付页面</h3>
+                <p>完成支付后回到这里，余额会自动更新。</p>
+                <div className="lumio-modal-actions">
+                  <button
+                    className="lumio-button is-secondary"
+                    onClick={() => {
+                      setPaymentOpen(false);
+                      setPaymentBalanceUpdated(false);
+                    }}
+                    type="button"
+                  >
+                    关闭
+                  </button>
+                  <button className="lumio-button is-primary" onClick={openPayment} type="button">
+                    重新打开浏览器
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

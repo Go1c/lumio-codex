@@ -102,6 +102,19 @@ pub struct LumioServiceSettingsPayload {
     pub agreement_documents: Vec<LumioAgreementDocumentPayload>,
     pub default_model: Option<String>,
     pub site_base_url: String,
+    pub payment_path: String,
+    /// 账户相关网页（重置密码 / 支持）所在源，与官网 `site_base_url` 分开。
+    pub api_base_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioUpdateReminderPayload {
+    pub current_version: String,
+    pub latest_version: Option<String>,
+    pub update_available: bool,
+    pub download_url: String,
+    pub release_summary: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -301,7 +314,9 @@ pub async fn lumio_public_settings(
                 })
                 .collect(),
             default_model: settings.default_model,
-            site_base_url: product::API_BASE_URL.to_string(),
+            site_base_url: product::SITE_BASE_URL.to_string(),
+            payment_path: product::PAYMENT_PATH.to_string(),
+            api_base_url: product::API_BASE_URL.trim_end_matches('/').to_string(),
         }
     });
     result(outcome)
@@ -562,6 +577,23 @@ pub fn lumio_open_browser(
     url: String,
 ) -> Result<LumioCommandResult<LumioEmptyPayload>, ()> {
     result(launch::open_in_browser(&url).map(|()| LumioEmptyPayload {}))
+}
+
+#[tauri::command]
+pub async fn lumio_check_update(
+    _session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioUpdateReminderPayload>, ()> {
+    let outcome =
+        codex_plus_core::lumio::update_check::check_update_reminder(env!("CARGO_PKG_VERSION"))
+            .await
+            .map(|reminder| LumioUpdateReminderPayload {
+                current_version: reminder.current_version,
+                latest_version: reminder.latest_version,
+                update_available: reminder.update_available,
+                download_url: reminder.download_url,
+                release_summary: reminder.release_summary,
+            });
+    result(outcome)
 }
 
 #[tauri::command]

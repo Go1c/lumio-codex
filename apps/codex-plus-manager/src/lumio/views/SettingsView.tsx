@@ -21,7 +21,7 @@ const DETECT_FLASH_MS = 1200;
 // to take effect. Telemetry is in the same bucket: the backend only flips an
 // in-memory flag and never sends or persists anything.
 const LAUNCH_AT_LOGIN_NOTE = "本机开机启动尚未开放";
-const AUTO_UPDATE_NOTE = "自动更新尚未开放";
+const AUTO_UPDATE_NOTE = "自动安装尚未开放；有新版本时会在首页提醒";
 const TELEMETRY_NOTE = "使用数据收集尚未开放";
 const INVALID_APP_COPY = "所选应用无法识别为官方 Codex";
 

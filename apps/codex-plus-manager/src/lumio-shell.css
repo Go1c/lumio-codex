@@ -984,6 +984,13 @@ a:focus-visible {
   color: #6fbfa8;
 }
 
+.lumio-notice.is-update {
+  border-color: rgb(120 170 255 / 22%);
+  background: rgb(120 170 255 / 8%);
+  color: #c5d7ff;
+  flex-wrap: wrap;
+}
+
 .lumio-tag {
   display: inline-flex;
   align-items: center;

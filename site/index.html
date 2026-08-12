@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lumio Codex · 更快开始使用官方 Codex</title>
+    <meta
+      name="description"
+      content="Lumio Codex 是轻量接入工具：帮你完成注册、登录和本机配置。你使用的始终是官方 Codex 应用。"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,550;9..144,650&family=Source+Sans+3:wght@400;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <nav class="site-nav" aria-label="主导航">
+      <a class="brand" href="#top">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Lumio Codex</span>
+      </a>
+      <div class="nav-links">
+        <a href="#faq">常见问题</a>
+        <a class="button button-primary" href="#downloads">下载</a>
+      </div>
+    </nav>
+
+    <header class="hero" id="top">
+      <div class="hero-inner">
+        <span class="brand-name">Lumio Codex</span>
+        <h1>更快开始使用官方 Codex</h1>
+        <p class="lead">
+          Lumio Codex 是一个轻量接入工具：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。
+          你使用的始终是官方 Codex 应用。
+        </p>
+        <div class="cta">
+          <a class="button button-primary button-large" href="#downloads">下载 Lumio Codex</a>
+        </div>
+      </div>
+    </header>
+
+    <section class="section" id="how" aria-labelledby="how-title">
+      <div class="section-head">
+        <h2 id="how-title">三步开始</h2>
+      </div>
+      <div class="how-grid">
+        <article class="card">
+          <span class="num">01</span>
+          <h3>下载安装</h3>
+          <p>选择你的平台安装。官方 Codex 应用需单独安装，本工具不捆绑、不修改它。</p>
+        </article>
+        <article class="card">
+          <span class="num">02</span>
+          <h3>在 App 内登录</h3>
+          <p>邮箱注册或登录后，连接与本机配置自动完成，无需填写任何服务地址或密钥。</p>
+        </article>
+        <article class="card">
+          <span class="num">03</span>
+          <h3>启动官方 Codex</h3>
+          <p>点「启动 Codex」进入官方应用开始工作；余额与充值都在 App 内完成。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="downloads" aria-labelledby="downloads-title">
+      <div class="section-head">
+        <h2 id="downloads-title">下载</h2>
+        <p>
+          当前为内测渠道，制品未签名；macOS 首次打开请右键选择「打开」，Windows 出现 SmartScreen
+          提示时核对校验值后继续。
+        </p>
+      </div>
+      <div class="dl-grid">
+        <article class="card dl-card" data-platform="mac-arm">
+          <span class="chip" hidden data-rec-chip>你的设备</span>
+          <h3>macOS · Apple 芯片</h3>
+          <span class="meta" data-release-meta>前往 GitHub Releases</span>
+          <button class="button button-primary" type="button" data-open-download>下载</button>
+        </article>
+        <article class="card dl-card" data-platform="mac-intel">
+          <span class="chip" hidden data-rec-chip>你的设备</span>
+          <h3>macOS · Intel</h3>
+          <span class="meta" data-release-meta>前往 GitHub Releases</span>
+          <button class="button button-secondary" type="button" data-open-download>下载</button>
+        </article>
+        <article class="card dl-card" data-platform="windows">
+          <span class="chip" hidden data-rec-chip>你的设备</span>
+          <h3>Windows · x64</h3>
+          <span class="meta" data-release-meta>前往 GitHub Releases</span>
+          <button class="button button-secondary" type="button" data-open-download>下载</button>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="faq" aria-labelledby="faq-title">
+      <div class="section-head">
+        <h2 id="faq-title">常见问题</h2>
+      </div>
+      <div class="faq">
+        <details open>
+          <summary>Lumio Codex 是官方应用吗？</summary>
+          <p>
+            不是。它是一个独立的辅助接入工具，仅为了让你更快用上官方 Codex、减少安装配置步骤。完成连接后，你日常使用的就是官方 Codex 本身。
+          </p>
+        </details>
+        <details>
+          <summary>它会修改官方 Codex 吗？</summary>
+          <p>
+            不会。官方应用保持原样；本工具只写入自己管理的连接配置，写入前先备份，随时可一键恢复。
+          </p>
+        </details>
+        <details>
+          <summary>在哪里注册和充值？</summary>
+          <p>都在 App 内：邮箱验证码注册，充值时会打开系统浏览器完成支付。官网不提供账户入口。</p>
+        </details>
+      </div>
+    </section>
+
+    <footer class="site-footer">
+      <strong>Lumio Codex</strong> · 官方 Codex 快速接入工具 · 内测渠道<br />
+      开源软件（AGPL-3.0-only），fork 自 BigPizzaV3/CodexPlusPlus。<br />
+      OpenAI、Codex、ChatGPT 为其各自所有者的商标，与本项目无从属关系；官方应用需单独安装。
+    </footer>
+
+    <div class="modal-backdrop" id="dl-confirm" role="dialog" aria-modal="true" aria-labelledby="dl-confirm-title">
+      <div class="modal">
+        <h3 id="dl-confirm-title">你正在下载内测版</h3>
+        <p>
+          这是未签名的内部测试制品。macOS 首次打开请在应用图标上<strong>右键 → 打开</strong>；Windows
+          出现 SmartScreen 提示时请核对 SHA-256 后继续。
+        </p>
+        <div class="modal-actions">
+          <button class="button button-secondary" type="button" data-close-modal>取消</button>
+          <a class="button button-primary" id="dl-go" href="https://github.com/Go1c/lumio-codex/releases" rel="noopener noreferrer">
+            前往发布页
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <script src="./site.js" defer></script>
+  </body>
+</html>

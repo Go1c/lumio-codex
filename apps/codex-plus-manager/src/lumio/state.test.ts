@@ -95,7 +95,9 @@ const SERVICE: LumioServiceSettings = {
   agreementRevision: "v2026-03",
   agreementDocuments: [{ id: "terms", title: "服务条款", contentMd: "# 条款" }],
   defaultModel: "gpt-example",
-  siteBaseUrl: "https://api.lumio.games",
+  siteBaseUrl: "https://lumio.games",
+  paymentPath: "/payment",
+  apiBaseUrl: "https://api.lumio.games",
 };
 
 function signedOut(): LumioState {
@@ -289,7 +291,7 @@ test("a second failure on the same run suggests the repair page", () => {
   assert.equal(state.provisioning.suggestRepair, true);
 });
 
-test("online readiness enables launch and refresh but never payment", () => {
+test("online readiness enables launch, refresh, and payment", () => {
   const next = reduceLumioState(signedOut(), {
     type: "online-ready",
     account: { email: "user@example.com", balance: 12.5, planLabel: "Trial" },
@@ -301,8 +303,8 @@ test("online readiness enables launch and refresh but never payment", () => {
   assert.equal(next.phase, "ready-online");
   assert.equal(next.actions.canLaunch, true);
   assert.equal(next.actions.canRefresh, true);
-  assert.equal(next.actions.canPay, false);
-  assert.equal(next.actionNotes.pay, "充值功能尚未开放");
+  assert.equal(next.actions.canPay, true);
+  assert.equal(next.actionNotes.pay, null);
   assert.equal(next.defaultModel, "gpt-example");
 });
 
@@ -452,7 +454,7 @@ test("signing out while the service is reachable keeps both entry points open", 
   assert.equal(next.actions.canRegister, true);
   assert.equal(next.actionNotes.signIn, null);
   assert.equal(next.actionNotes.register, null);
-  assert.equal(next.actionNotes.pay, "充值功能尚未开放");
+  assert.equal(next.actionNotes.pay, null);
 });
 
 test("signing out with registration closed explains the disabled register entry", () => {
