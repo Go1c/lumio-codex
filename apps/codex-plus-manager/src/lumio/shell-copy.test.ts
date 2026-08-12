@@ -292,6 +292,24 @@ test("the repair view offers the three spec actions and never a force overwrite"
   assert.doesNotMatch(view, /强制覆盖/);
 });
 
+test("an expired session takes the same global exit no matter which command hit it", async () => {
+  const invoke = await readFile(new URL("./invoke.ts", import.meta.url), "utf8");
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+
+  // 归一化在命令层：调用点各写一遍就会漏掉一个，漏掉的那个会把用户留在陈旧数据上。
+  assert.match(invoke, /onSessionExpired/);
+  assert.match(invoke, /reportSessionExpiry/);
+  assert.match(shell, /onSessionExpired\(/);
+  assert.match(shell, /type: "session-expired"/);
+});
+
+test("the settings page offers a way back to the signed-out surface", async () => {
+  const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /退出登录/);
+  assert.match(view, /onSignOut/);
+});
+
 test("the settings view keeps every approved row and its explanation", async () => {
   const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
 

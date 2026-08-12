@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { Activity, Download, FileArchive, Laptop, RefreshCw, Rocket, RotateCcw, ShieldCheck } from "lucide-react";
+import { Activity, Download, FileArchive, Laptop, LogOut, RefreshCw, Rocket, RotateCcw, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { lumioErrorLabel } from "../errors.ts";
@@ -57,16 +57,20 @@ function Toggle({
 interface SettingsViewProps {
   autoUpdateEnabled: boolean;
   codexApp: LumioCodexApp | null;
+  signedIn: boolean;
   telemetryEnabled: boolean;
   onCodexAppChanged: (app: LumioCodexApp) => void;
+  onSignOut: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
 }
 
 export function SettingsView({
   autoUpdateEnabled,
   codexApp,
+  signedIn,
   telemetryEnabled,
   onCodexAppChanged,
+  onSignOut,
   pushToast,
 }: SettingsViewProps) {
   const [detecting, setDetecting] = useState(false);
@@ -272,6 +276,21 @@ export function SettingsView({
             {restoring ? "正在恢复…" : "恢复"}
           </button>
         </article>
+
+        {signedIn ? (
+          <article className="lumio-setting-row">
+            <span className="lumio-setting-icon">
+              <LogOut size={19} />
+            </span>
+            <div>
+              <strong>退出登录</strong>
+              <p>只清除本机保存的登录状态；本机配置保持现状，需要撤销接管请用上面的配置恢复</p>
+            </div>
+            <button className="lumio-small-button" onClick={onSignOut} type="button">
+              退出登录
+            </button>
+          </article>
+        ) : null}
       </div>
 
       <p className="lumio-settings-note">

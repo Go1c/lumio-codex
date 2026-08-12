@@ -85,6 +85,27 @@ export interface LumioCommandResult<T> {
 
 const UNKNOWN_ERROR_CODE = "UNKNOWN";
 
+/** 刷新令牌过期或被撤销后，任何命令都可能抛这个码。 */
+export const SESSION_EXPIRED_ERROR_CODE = "AUTH_SESSION_EXPIRED";
+
+export function isSessionExpired(error: unknown): boolean {
+  return error instanceof LumioCommandError && error.errorCode === SESSION_EXPIRED_ERROR_CODE;
+}
+
+let sessionExpiredListener: (() => void) | null = null;
+
+/**
+ * 会话彻底过期是全局降级（交互规格 §7：全局 toast → 回登录页），不是某一个调用点的局部
+ * 失败。出口登记在命令层，新增命令自动继承，不必也不该在每个 catch 里各写一遍。
+ */
+export function onSessionExpired(listener: (() => void) | null): void {
+  sessionExpiredListener = listener;
+}
+
+function reportSessionExpiry(error: unknown): void {
+  if (isSessionExpired(error)) sessionExpiredListener?.();
+}
+
 /** `ok` 为真却没有 payload 属于契约违约，用一个稳定错误码上报而不是静默放行。 */
 export const MISSING_PAYLOAD_ERROR_CODE = "COMMAND_PAYLOAD_MISSING";
 
@@ -106,14 +127,24 @@ export function readRequiredCommandResult<T>(result: LumioCommandResult<T>): T {
 }
 
 async function runCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return readRequiredCommandResult(await invoke<LumioCommandResult<T>>(command, args));
+  try {
+    return readRequiredCommandResult(await invoke<LumioCommandResult<T>>(command, args));
+  } catch (error: unknown) {
+    reportSessionExpiry(error);
+    throw error;
+  }
 }
 
 async function runNullableCommand<T>(
   command: string,
   args?: Record<string, unknown>,
 ): Promise<T | null> {
-  return readCommandResult(await invoke<LumioCommandResult<T>>(command, args));
+  try {
+    return readCommandResult(await invoke<LumioCommandResult<T>>(command, args));
+  } catch (error: unknown) {
+    reportSessionExpiry(error);
+    throw error;
+  }
 }
 
 export async function loadLumioBootstrap(): Promise<LumioBootstrap> {

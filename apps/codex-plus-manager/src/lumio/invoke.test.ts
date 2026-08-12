@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   LumioCommandError,
   MISSING_PAYLOAD_ERROR_CODE,
+  SESSION_EXPIRED_ERROR_CODE,
+  isSessionExpired,
   readCommandResult,
   readRequiredCommandResult,
 } from "./invoke.ts";
@@ -64,6 +66,13 @@ test("commands whose payload is legitimately empty read the absence as a value",
     }),
     null,
   );
+});
+
+test("session expiry is classified from the error code, not from each call site", () => {
+  assert.equal(isSessionExpired(new LumioCommandError(SESSION_EXPIRED_ERROR_CODE)), true);
+  assert.equal(isSessionExpired(new LumioCommandError("AUTH_INVALID_CREDENTIALS")), false);
+  assert.equal(isSessionExpired(new Error(SESSION_EXPIRED_ERROR_CODE)), false);
+  assert.equal(isSessionExpired(null), false);
 });
 
 test("the nullable reader still refuses to swallow the failure branch", () => {

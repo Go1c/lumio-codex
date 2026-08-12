@@ -1,11 +1,14 @@
 import { Home, RefreshCw, Settings } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import { lumioErrorLabel } from "./lumio/errors.ts";
 import {
   LumioCommandError,
+  SESSION_EXPIRED_ERROR_CODE,
   checkTakeover,
   loadLumioBootstrap,
   loadPublicSettings,
+  onSessionExpired,
   shellLabels,
   signOut,
 } from "./lumio/invoke.ts";
@@ -142,6 +145,20 @@ export function LumioApp() {
     // 启动编排在 bootstrapping 阶段自己探活一次，这里同时轮询会和它的判定赛跑。
   }, [startupPending, state.serviceAvailable]);
 
+  // 过期的会话在哪个命令上暴露都一样：提示一次，回到登录入口，绝不继续展示陈旧数据。
+  useEffect(() => {
+    onSessionExpired(() => {
+      pushToast(lumioErrorLabel(SESSION_EXPIRED_ERROR_CODE));
+      dispatch({ type: "session-expired", errorCode: SESSION_EXPIRED_ERROR_CODE });
+      // 服务不可达时登录表单没有可用的服务端规则，停在未登录首页由它解释原因。
+      if (stateRef.current.service !== null && stateRef.current.serviceAvailable) {
+        dispatch({ type: "auth-step-changed", step: "login" });
+      }
+      setView("home");
+    });
+    return () => onSessionExpired(null);
+  }, [pushToast]);
+
   const openSettings = useCallback(() => setView("settings"), []);
 
   // Stable identities: ProvisioningView keys its run loop on these callbacks.
@@ -174,6 +191,10 @@ export function LumioApp() {
       .catch(() => undefined)
       .finally(() => dispatch({ type: "signed-out" }));
   }, []);
+  const onSignOutRequested = useCallback(() => {
+    setView("home");
+    onDeferred();
+  }, [onDeferred]);
   const onRefreshed = useCallback(
     (account: LumioAccountSummary, cachedAt: string) =>
       dispatch({ type: "account-refreshed", account, cachedAt }),
@@ -279,7 +300,9 @@ export function LumioApp() {
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
             onCodexAppChanged={onCodexAppChanged}
+            onSignOut={onSignOutRequested}
             pushToast={pushToast}
+            signedIn={state.account !== null}
             telemetryEnabled={state.telemetryEnabled}
           />
         ) : state.phase === "signed-out" ? (
