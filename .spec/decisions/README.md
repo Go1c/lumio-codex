@@ -29,3 +29,6 @@
 | 编号 | 决策 | 状态 |
 |------|------|------|
 | [0001](0001-lumio-credentials-local-file.md) | Lumio 凭据本期存 Lumio 自有数据目录的受限权限文件，不引入系统凭据库依赖 | 生效 |
+| [0002](0002-sub2api-single-account-source.md) | 以 Sub2API 为唯一账号中心，cchaven-control 降级为纯业务服务 | 生效 |
+| [0003](0003-monorepo-three-way-merge.md) | 双仓合并为 codex/ + cchaven/ + web/ 三块并列的 monorepo，subtree 保留历史 | 生效 |
+| [0004](0004-cchaven-desktop-union-merge-recovery.md) | CC避风港桌面端以引擎兼容的 P2 为骨架，把 P1 的产品外壳整段移植上去 | 生效 |

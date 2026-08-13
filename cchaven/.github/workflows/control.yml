@@ -1,0 +1,73 @@
+name: Control Plane
+
+on:
+  pull_request:
+    paths:
+      - "services/cchaven-control/**"
+      - ".github/workflows/control.yml"
+  push:
+    paths:
+      - "services/cchaven-control/**"
+      - ".github/workflows/control.yml"
+
+defaults:
+  run:
+    working-directory: services/cchaven-control
+
+jobs:
+  quality:
+    name: 静态检查与单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: services/cchaven-control/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未格式化："
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+      - run: go build ./...
+      - name: 单元测试（含竞态检测）
+        run: go test -race ./internal/...
+
+  integration:
+    name: 集成与端到端测试
+    runs-on: ubuntu-latest
+
+    # 用真实 PostgreSQL 跑集成测试；本地 macOS 因内核 SysV 共享内存限制
+    # 无法直接运行 embedded-postgres，CI 是这套测试的主要执行环境。
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cchaven
+          POSTGRES_PASSWORD: cchaven
+          POSTGRES_DB: cchaven_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cchaven"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: services/cchaven-control/go.sum
+
+      - name: 集成与端到端测试
+        env:
+          CCHAVEN_TEST_DATABASE_URL: postgres://cchaven:cchaven@localhost:5432/cchaven_test?sslmode=disable
+        run: go test -v ./test/

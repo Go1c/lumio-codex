@@ -1,53 +1,76 @@
-# Lumio Codex 运维与发布指引（总览）
+# Lumio Monorepo · 运维手册（跨产品）
 
-本目录是**正式上线推送**的操作手册。写代码前看 `.spec/`；**部署、打包、发版、维护后台**看这里。
+本目录是 **跨产品** 运维的入口：统一官网三站的部署、域名与 DNS 切换、服务端前置项、
+整体上线验收。**单个产品内部**的编译打包、发版、后台维护仍在各自的 `docs/ops/`。
 
-| 文档 | 用途 |
-|------|------|
-| [01-local-build.md](./01-local-build.md) | 本机环境、编译、跑测、打内部安装包 |
-| [02-website-deploy.md](./02-website-deploy.md) | 官网 `site/` → `lumio.games` |
-| [03-release.md](./03-release.md) | 版本号、GitHub Release、更新提醒、签名门槛 |
-| [04-backend.md](./04-backend.md) | 后台 `api.lumio.games`（Sub2API）与桌面端契约 |
-| [05-maintenance.md](./05-maintenance.md) | 日常维护清单、文档如何保持同步 |
+## 哪些事看哪份手册
 
-## 线上拓扑（当前）
+| 你要做的事 | 看这里 |
+| --- | --- |
+| 部署 `lumiogame.com` / `cc.lumiogame.com` / `codex.lumiogame.com` 三站 | [01-web-sites-deploy.md](./01-web-sites-deploy.md) |
+| 加 DNS 记录、配证书、旧域名 301、切换顺序与回滚 | [02-domains-and-dns.md](./02-domains-and-dns.md) |
+| Sub2API 侧 CORS、`/auth/me` 契约、充值页可达性等本仓做不了的事 | [03-service-prerequisites.md](./03-service-prerequisites.md) |
+| 三站上线后逐项验收 | [04-golive-checklist.md](./04-golive-checklist.md) |
+| Lumio Codex 桌面端编译、打内测包、发 Release、Sub2API 契约 | [`codex/docs/ops/`](../../codex/docs/ops/README.md) |
+| CCHaven 控制面部署、管理后台、桌面端打包、存量用户迁移 | [`cchaven/docs/ops/`](../../cchaven/docs/ops/README.md) |
+| 三站的本地开发、环境变量、收口命令 | [`web/README.md`](../../web/README.md) |
+
+一句话分工：**本目录管「网站与域名」，产品目录管「客户端与服务端」。**
+同一套步骤只写一处；产品手册里涉及三站的段落一律链回这里，不复制步骤。
+
+## 目标线上拓扑
+
+| 域名 | 承载 | 产物来源 | 状态 |
+| --- | --- | --- | --- |
+| `lumiogame.com` | 总门户：品牌首页 + 唯一的注册 / 登录 / 2FA / 账户中心 | `web/apps/portal/dist/` | 待启用（见下方前置条件） |
+| `cc.lumiogame.com` | CC避风港产品站（介绍 / 定价 / 下载） | `web/apps/cc/dist/` | 新增 |
+| `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载） | `web/apps/codex/dist/` | 新增 |
+| `api.lumio.games` | Sub2API：账号真源 + Key + 充值页 | 本仓库之外 | 已在线，**绝不可变更** |
+| `api.cc.lumiogame.com` | CCHaven 控制面 API | `cchaven/services/cchaven-control` → `bin/control` | 新增，**域名待用户最终确认** |
+| `admin.cchaven.cn` | CCHaven 运营后台 | `cchaven/apps/admin/dist/` | 沿用，未随本次迁移变动 |
+| `lumio.games` | 旧 Codex 官网（GitHub Pages） | `codex/site/` | 下线并 301 到 `codex.lumiogame.com` |
+| `cchaven.cn` | 旧 CC 官网 | `cchaven/apps/web/dist/` | 下线并 301 到 `cc.lumiogame.com` |
 
 ```text
-用户浏览器 ──► https://lumio.games          （本仓 site/ 静态站）
-用户桌面 App ──► https://api.lumio.games/   （Sub2API，独立仓库）
-用户桌面 App ──► 本机官方 Codex 应用
-更新提醒     ──► GitHub Releases (Go1c/lumio-codex)
-下载制品     ──► GitHub Actions artifact / Releases
+             ┌──────────────────────┐        ┌────────────────────────┐
+ 浏览器 ────►│    lumiogame.com     │───────►│       Sub2API          │
+             │  门户 / 账号中心     │        │   api.lumio.games      │
+             └──────────┬───────────┘        │  账号真源 + /purchase  │
+                        │                    └───────────▲────────────┘
+       ┌────────────────┴────────────────┐                │ Bearer 令牌校验
+       ▼                                 ▼                │ GET /api/v1/auth/me
+┌──────────────────┐            ┌─────────────────────┐   │
+│ cc.lumiogame.com │            │ codex.lumiogame.com │   │
+│   CC 产品站      │            │  Codex 产品站       │   │
+└────────┬─────────┘            └─────────────────────┘   │
+         ┆ /api/* 反代（规划中，现版本 CC 站不调控制面）    │
+         ▼                                                 │
+┌────────────────────────┐                                 │
+│ api.cc.lumiogame.com   │─────────────────────────────────┘
+│  cchaven-control       │  （桌面端 / 后台在用）
+└────────────────────────┘
 ```
 
-| 组件 | 仓库 / 路径 | 生产域名 |
-|------|-------------|----------|
-| 桌面客户端 | 本仓 `apps/codex-plus-manager` | 安装包分发，无独立域名 |
-| 官网 | 本仓 `site/` | `https://lumio.games` |
-| API / 账户 / 计费后台 | [`Go1c/sub2api`](https://github.com/Go1c/sub2api)（或你们的 Sub2API 部署仓） | `https://api.lumio.games` |
-| 支付页 | 后台同源或官网反代 | App 打开 `https://lumio.games/payment` |
+## 两条硬事实（改任何东西前先确认）
 
-## 发布通道（务必分清）
+- **`api.lumio.games` 是存量桌面客户端硬编码的地址**（`codex/crates/codex-plus-core/src/lumio/product.rs`
+  的 `API_BASE_URL`），迁移期间不做任何变更、不加跳转、不换证书链之外的东西。
+- **账号只有一套**：邮箱 / 口令 / 2FA / 余额都在 Sub2API。`cchaven-control` 的自有终端用户
+  认证端点已下线（返回 410），三站与桌面端都不得再引入第二套注册登录。
 
-1. **内部未签名包（当前可走）**  
-   推 `publish` 或跑 workflow `Internal unsigned build artifacts`，产物带 `-internal-unsigned`，保留 14 天。用于受控内测。
+## 前置条件（阻塞上线）
 
-2. **公开正式包（签名门槛未开）**  
-   workflow `Public release gate` 会故意失败，直到 Apple Developer ID + 公证、Windows 代码签名、受保护 CI 凭据、S3 更新源与回滚演练齐备。**未满足前不要宣称「正式公开安装包已上线」。**
+1. **`lumiogame.com` 当前挂的是 Workflow 产品介绍页**（与本仓无关的第三个产品），
+   必须先迁离，门户才能占用该域名。这是 DNS / 托管侧操作，本仓无代码可改。
+2. **`api.cc.lumiogame.com` 这个域名尚待用户最终拍板**。它已经写进 Phase 3 的代码默认值
+   （桌面端 `CCHAVEN_API_BASE`、运维文档），若最终改名，需同步改这些默认值后重新打包。
+3. **Sub2API 侧需要为三个子域放行 CORS**，见 [03-service-prerequisites.md](./03-service-prerequisites.md)。
 
-3. **更新提醒（已接通）**  
-   客户端 `lumio_check_update` 读 `https://api.github.com/repos/Go1c/lumio-codex/releases/latest`。只有打出 GitHub Release（带 semver tag）后，首页才会提示新版本。
+## 改了什么要同步哪份文档
 
-## 推荐上线顺序
-
-1. 后台 API 在 `api.lumio.games` 健康（见 [04](./04-backend.md)）  
-2. 官网部署到 `lumio.games`，并确认 `/payment` 可达（见 [02](./02-website-deploy.md)）  
-3. 本机或 CI 打出四平台内部包并做冒烟（见 [01](./01-local-build.md)）  
-4. 在 GitHub 创建 Release / Tag，验证 App 更新提醒（见 [03](./03-release.md)）  
-5. 按 [05](./05-maintenance.md) 进入日常维护节奏  
-
-## 秘密与合规
-
-- 生产密钥、签名证书、S3、数据库密码、`.env` **永不进本仓库**。  
-- 许可证：`AGPL-3.0-only`。公开分发修改版须提供对应源码。  
-- 品牌与上游声明见根目录 [README.md](../../README.md)、[THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)。
+| 改动 | 必须更新 |
+| --- | --- |
+| `web/` 的构建脚本、产物路径、新增环境变量 | [01-web-sites-deploy.md](./01-web-sites-deploy.md) + [`web/README.md`](../../web/README.md) 环境变量表 |
+| 域名、证书、301 规则 | [02-domains-and-dns.md](./02-domains-and-dns.md) + 各产品手册中的域名表 |
+| Sub2API 契约（信封、字段、错误码） | [03-service-prerequisites.md](./03-service-prerequisites.md) + [`codex/docs/ops/04-backend.md`](../../codex/docs/ops/04-backend.md) |
+| 账号体系 / 身份收口相关设计 | `.spec/knowledge/features/lumio-unified-portal-and-identity.md`（决策另记 `.spec/decisions/`） |

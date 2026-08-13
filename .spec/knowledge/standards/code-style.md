@@ -28,7 +28,7 @@ metadata:
 ## 语言 / 框架特定风格（**落地必填**）
 
 - 对话与项目规范使用中文；代码标识符可用英文，注释尽量使用中文。
-- Rust workspace 使用 edition 2024，遵循 `cargo fmt` 与上游既有 Rust 风格；React + TypeScript 代码遵循 `apps/codex-plus-manager/` 周边既有写法，不另立平行模式。
+- Rust workspace 使用 edition 2024，遵循 `cargo fmt` 与上游既有 Rust 风格；React + TypeScript 代码遵循 `codex/apps/codex-plus-manager/` 周边既有写法，不另立平行模式。
 - 改动保持隔离且 opt-in；上下文窗口功能不得破坏现有 per-profile 单值行为。
 - 不为当前需求顺手重构，也不引入任务外依赖。
 - `.spec/tools/spec-lint.mjs` 使用 Node 内置模块、ESM 且零第三方依赖；修改框架文件时保持这一边界。

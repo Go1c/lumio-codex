@@ -36,7 +36,7 @@ metadata:
 ## 项目测试栈与命令（**落地必填**）
 
 - Rust 默认验证使用 `cargo test`，格式检查使用 `cargo fmt --all -- --check`，不得另起工具链。
-- Rust 测试沿用上游 `#[test]` + `tempfile` 风格（参考 `crates/codex-plus-core/tests/relay_config.rs`）。配置生成相关测试读取 `config.toml` 文本断言，例如 `assert!(config.contains("model_catalog_json"))`。
+- Rust 测试沿用上游 `#[test]` + `tempfile` 风格（参考 `codex/crates/codex-plus-core/tests/relay_config.rs`）。配置生成相关测试读取 `config.toml` 文本断言，例如 `assert!(config.contains("model_catalog_json"))`。
 - 改变行为必须同步新增或更新对应测试；bug 修复必须保留回归测试。
-- 前端改动在 `apps/codex-plus-manager/` 使用 `npm run check`、`npm test` 与 `npm run vite:build`；不得为运行验证擅自安装依赖。
+- 前端改动在 `codex/apps/codex-plus-manager/` 使用 `npm run check`、`npm test` 与 `npm run vite:build`；不得为运行验证擅自安装依赖。
 - `.spec/` 框架验证使用 `node .spec/tools/spec-lint.mjs`，自测使用 `node --test .spec/tools/spec-lint.test.mjs`。

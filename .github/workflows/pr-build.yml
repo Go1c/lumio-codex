@@ -4,7 +4,13 @@ on:
   pull_request:
   push:
     branches: [publish]
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "After build, upload to S3 and create a GitHub prerelease"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -13,6 +19,9 @@ jobs:
   windows-artifacts:
     name: Windows x64 internal unsigned
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: codex
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,7 +31,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/codex-plus-manager/package-lock.json
+          cache-dependency-path: codex/apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -31,19 +40,19 @@ jobs:
         run: choco install nsis -y
 
       - name: Install frontend dependencies
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm ci
 
       - name: Frontend tests
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm test
 
       - name: TypeScript check
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run check
 
       - name: Build frontend
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
 
       - name: Rust tests
@@ -106,8 +115,8 @@ jobs:
         with:
           name: lumio-codex-windows-x64-internal-unsigned-${{ github.run_number }}
           path: |
-            dist/windows/LumioCodex-*-windows-x64-portable-internal-unsigned.zip
-            dist/windows/LumioCodex-*-windows-x64-setup-internal-unsigned.exe
+            codex/dist/windows/LumioCodex-*-windows-x64-portable-internal-unsigned.zip
+            codex/dist/windows/LumioCodex-*-windows-x64-setup-internal-unsigned.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -124,6 +133,9 @@ jobs:
           - arch: arm64
             runner: macos-14
             target: aarch64-apple-darwin
+    defaults:
+      run:
+        working-directory: codex
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,7 +145,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/codex-plus-manager/package-lock.json
+          cache-dependency-path: codex/apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -141,11 +153,11 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm ci
 
       - name: Build frontend
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
 
       - name: Build release binaries
@@ -197,6 +209,172 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lumio-codex-macos-${{ matrix.arch }}-internal-unsigned-${{ github.run_number }}
-          path: dist/macos/LumioCodex-*-macos-${{ matrix.arch }}-internal-unsigned.dmg
+          path: codex/dist/macos/LumioCodex-*-macos-${{ matrix.arch }}-internal-unsigned.dmg
           if-no-files-found: error
           retention-days: 14
+
+  publish-internal:
+    name: Publish S3 + GitHub prerelease
+    needs: [windows-artifacts, macos-dmg]
+    if: >
+      github.event_name != 'pull_request' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_PUBLIC_BASE: ${{ secrets.S3_PUBLIC_BASE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require S3 secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in S3_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY S3_BUCKET S3_PUBLIC_BASE; do
+            if [ -z "${!key:-}" ]; then
+              echo "Missing configured secret mapped to env: $key" >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Set repo secrets: S3_ENDPOINT S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET S3_PUBLIC_BASE" >&2
+            exit 1
+          fi
+
+      - name: Resolve publish version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            VERSION="${VERSION#V}"
+            TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="0.0.0-internal-${GITHUB_RUN_NUMBER}"
+            TAG="internal-run-${GITHUB_RUN_NUMBER}"
+          fi
+          VERSION="$(printf '%s' "$VERSION" | tr -c '0-9A-Za-z._-' '-')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prefix=releases/${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: lumio-codex-*-internal-unsigned-${{ github.run_number }}
+          merge-multiple: true
+
+      - name: Stage release files + checksums
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          mkdir -p dist/publish
+          shopt -s nullglob
+          files=(artifacts/LumioCodex-*-internal-unsigned.*)
+          if [ "${#files[@]}" -lt 4 ]; then
+            echo "Expected at least 4 internal-unsigned artifacts, found ${#files[@]}" >&2
+            find artifacts -type f -print >&2 || true
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            base="$(basename "$f")"
+            # Prefer artifacts whose filename embeds this VERSION when present.
+            case "$base" in
+              *"-$VERSION-"*) cp -f "$f" "dist/publish/$base" ;;
+            esac
+          done
+          if [ "$(find dist/publish -type f | wc -l | tr -d ' ')" -eq 0 ]; then
+            # Fallback: copy whatever the build jobs produced (publish branch run numbers).
+            for f in "${files[@]}"; do
+              cp -f "$f" "dist/publish/$(basename "$f")"
+            done
+          fi
+          (
+            cd dist/publish
+            sha256sum LumioCodex-*-internal-unsigned.* | tee SHA256SUMS.txt
+          )
+          echo "count=$(find dist/publish -type f ! -name SHA256SUMS.txt | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          ls -la dist/publish
+
+      - name: Upload to S3
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="${{ steps.ver.outputs.prefix }}"
+          aws --endpoint-url "$S3_ENDPOINT" s3 sync dist/publish "s3://${S3_BUCKET}/${PREFIX}/" --no-progress
+          PUBLIC_BASE="${S3_PUBLIC_BASE%/}"
+          {
+            echo "{"
+            echo "  \"channel\": \"internal-unsigned\","
+            echo "  \"version\": \"${{ steps.ver.outputs.version }}\","
+            echo "  \"tag\": \"${{ steps.ver.outputs.tag }}\","
+            echo "  \"published_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+            echo "  \"commit\": \"${GITHUB_SHA}\","
+            echo "  \"assets\": ["
+            first=1
+            for f in dist/publish/LumioCodex-*-internal-unsigned.*; do
+              name="$(basename "$f")"
+              if [ "$first" -eq 1 ]; then first=0; else echo ","; fi
+              printf '    {"name":"%s","url":"%s/%s/%s"}' "$name" "$PUBLIC_BASE" "${{ steps.ver.outputs.version }}" "$name"
+            done
+            echo
+            echo "  ]"
+            echo "}"
+          } > dist/latest-internal.json
+          aws --endpoint-url "$S3_ENDPOINT" s3 cp dist/latest-internal.json \
+            "s3://${S3_BUCKET}/releases/latest-internal.json" --content-type application/json --no-progress
+          echo "S3 mirror: ${PUBLIC_BASE}/${{ steps.ver.outputs.version }}/"
+          echo "Pointer: ${PUBLIC_BASE%/releases}/releases/latest-internal.json"
+
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.tag }}"
+          VERSION="${{ steps.ver.outputs.version }}"
+          PUBLIC_BASE="${S3_PUBLIC_BASE%/}"
+          NOTES="$(mktemp)"
+          {
+            echo "## Lumio Codex ${VERSION} (internal-unsigned)"
+            echo
+            echo "未签名内测包。Windows 可能触发 SmartScreen；macOS 请右键打开。"
+            echo
+            echo "### CDN (primary)"
+            echo
+            echo "- Index: \`${PUBLIC_BASE}/${VERSION}/\`"
+            echo "- Pointer: \`${PUBLIC_BASE%/releases}/releases/latest-internal.json\`"
+            echo
+            echo "### Checksums"
+            echo
+            echo '```'
+            cat dist/publish/SHA256SUMS.txt
+            echo '```'
+            echo
+            echo "GitHub Release assets are the fallback mirror of the same files."
+          } > "$NOTES"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/publish/* --clobber
+            gh release edit "$TAG" --notes-file "$NOTES" --prerelease --title "Lumio Codex ${VERSION} (internal-unsigned)"
+          else
+            gh release create "$TAG" dist/publish/* \
+              --title "Lumio Codex ${VERSION} (internal-unsigned)" \
+              --notes-file "$NOTES" \
+              --prerelease \
+              --target "$GITHUB_SHA"
+          fi
+          echo "Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
