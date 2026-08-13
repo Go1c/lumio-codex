@@ -26,7 +26,7 @@ metadata:
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | `lumiogame.com` | 品牌首页 + **唯一**的注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）|
+| `apps/portal` | `lumiogame.com` | 品牌首页 + **唯一**的注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）+ CC 桌面端授权页 `/authorize` |
 | `apps/cc` | `cc.lumiogame.com` | CC避风港产品站（介绍 / 定价 / 下载）|
 | `apps/codex` | `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载）|
 
@@ -55,6 +55,19 @@ metadata:
 风险由「短 access token 有效期 + 收紧 CORS + 三站同属一个可信根域」兜住；
 日后接入统一网关时 `session.ts` 是唯一改动点。
 
+### CC 桌面端授权（门户 `/authorize`）
+
+CC 桌面端仍由 `cchaven-control` 签发自己的令牌，但授权时的用户身份来自 Sub2API：桌面端开
+`{portal}/authorize?client_id=cchaven-desktop&redirect_uri=http://127.0.0.1:<port>/callback&…`
+（PKCE S256），门户先按控制面注册的回调形态校验 `redirect_uri`，再带 Sub2API access token
+调 `GET/POST {cc}/api/v1/oauth/authorize`（`apps/portal/src/lib/ccControl.ts`——控制面信封是
+`{data}` / `{error}`，与 Sub2API 不同，故不复用 `packages/auth`），最后按响应 `redirect_to`
+跳回本机回环。`redirect_uri` 与 `redirect_to` 都过白名单（`isAllowedDesktopRedirect()`），
+越界不跳。令牌交换 `/oauth/token` 仍在桌面端，门户不参与。
+
+前置：控制面须配 `CCHAVEN_PORTAL_URL` 把门户列为可信来源（CORS 与 CSRF 同源校验共用同一份
+`TrustedOrigins`），漏配则桌面端完全登不进，且 dev 放行 localhost 任意端口、本地测不出来。
+
 ### 充值
 
 只有一个落点 `https://api.lumio.games/purchase`：门户账户中心按钮（`purchaseUrl()`）、
@@ -64,9 +77,10 @@ metadata:
 
 ## 待解决
 
-- 门户尚无桌面端授权确认页 `/authorize`；CCHaven 桌面端浏览器登录依赖它
-  （需带 Sub2API 令牌调控制面 `POST /api/v1/oauth/authorize` 并跟随 `redirect_to`）。
-- 现版本三站都不调用 CC 控制面，门户上没有 CC 的权益 / 邀请视图。
+- `/authorize` 只有单测，未与真库跑的控制面端到端联调；首次联调重点看
+  `OPTIONS` 预检与 `redirect_to` 的实际形态。授权请求的设备字段（`device_name` /
+  `os_version` / `arch` / `app_version`）浏览器无从得知，当前送空对象。
+- 除 `/authorize` 外，三站都不调用 CC 控制面，门户上没有 CC 的权益 / 邀请视图。
 - CC 的旧站 `cchaven/apps/web` 与旧 Codex 官网 `codex/site/` 待下线。
 - 存量 CC 用户的身份映射需一次性迁移（`cmd/migrate-identities`，高风险，需单独确认）；
   迁移不带口令，这批用户首次登录必须走「忘记密码」。
