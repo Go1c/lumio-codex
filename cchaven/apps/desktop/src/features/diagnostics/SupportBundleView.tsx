@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t } from "../../i18n";
 import type { DiagnosticsClient } from "../../lib/diagnosticsApi";
 import type { SupportBundlePreview } from "./types";
 
@@ -44,7 +45,7 @@ export default function SupportBundleView({
   }
 
   return (
-    <section className="diagnostics-support-bundle" aria-label="Support bundle">
+    <section className="diagnostics-support-bundle" aria-label={t("logs.tabSupportBundle")}>
       <p className="diagnostics-empty" style={{ padding: "0 0 12px" }}>
         Preview redaction summary before export. Export stays disabled until a
         preview has loaded.
@@ -76,33 +77,33 @@ export default function SupportBundleView({
       )}
 
       {preview && (
-        <div className="diagnostics-preview" role="region" aria-label="Redaction preview">
-          <h3>Redaction summary</h3>
+        <div className="diagnostics-preview" role="region" aria-label={t("logs.redactionPreview")}>
+          <h3>{t("logs.redactionSummary")}</h3>
           <dl className="diagnostics-kv">
             <div style={{ display: "contents" }}>
-              <dt>Event count</dt>
+              <dt>{t("logs.eventCount")}</dt>
               <dd>{preview.eventCount}</dd>
             </div>
             <div style={{ display: "contents" }}>
-              <dt>Time range</dt>
+              <dt>{t("logs.timeRange")}</dt>
               <dd>
                 {preview.timeRange.from ?? "—"} → {preview.timeRange.to ?? "—"}
               </dd>
             </div>
             <div style={{ display: "contents" }}>
-              <dt>Secret hits</dt>
+              <dt>{t("logs.secretHits")}</dt>
               <dd>{preview.redactionSummary.secretHits}</dd>
             </div>
             <div style={{ display: "contents" }}>
-              <dt>Path redactions</dt>
+              <dt>{t("logs.pathRedactions")}</dt>
               <dd>{preview.redactionSummary.pathRedactions}</dd>
             </div>
             <div style={{ display: "contents" }}>
-              <dt>Fields removed</dt>
+              <dt>{t("logs.fieldsRemoved")}</dt>
               <dd>{preview.redactionSummary.fieldsRemoved}</dd>
             </div>
             <div style={{ display: "contents" }}>
-              <dt>Includes paths</dt>
+              <dt>{t("logs.includesPaths")}</dt>
               <dd>{preview.includesPaths ? "yes" : "no"}</dd>
             </div>
           </dl>

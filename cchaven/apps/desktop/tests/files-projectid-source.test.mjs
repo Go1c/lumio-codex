@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const fileTreeSource = await readFile(
-  new URL("../src/components/FileTree.tsx", import.meta.url),
+const explorerSource = await readFile(
+  new URL("../src/components/FilesExplorer.tsx", import.meta.url),
   "utf8",
 );
 const workspaceSource = await readFile(
-  new URL("../src/components/WorkspaceView.tsx", import.meta.url),
+  new URL("../src/components/Workspace.tsx", import.meta.url),
+  "utf8",
+);
+const apiSource = await readFile(
+  new URL("../src/lib/api.ts", import.meta.url),
   "utf8",
 );
 const filesRsSource = await readFile(
@@ -15,39 +19,37 @@ const filesRsSource = await readFile(
   "utf8",
 );
 
-test("FileTree uses projectId instead of absolute localRoot", () => {
-  assert.match(fileTreeSource, /projectId\s*:\s*string/);
-  assert.match(fileTreeSource, /browse_files",\s*\{\s*projectId\s*\}/);
-  assert.match(
-    fileTreeSource,
-    /read_file",\s*\{\s*projectId,\s*relativePath:\s*path,\s*\}/s,
-  );
-  assert.match(
-    fileTreeSource,
-    /open_in_finder",\s*\{\s*projectId,\s*relativePath:/s,
-  );
-  assert.doesNotMatch(fileTreeSource, /localRoot/);
-  assert.doesNotMatch(fileTreeSource, /baseDir/);
+test("the explorer addresses files by projectId, never by absolute root", () => {
+  assert.match(explorerSource, /projectId\s*:\s*string/);
+  assert.doesNotMatch(explorerSource, /localRoot/);
+  assert.doesNotMatch(explorerSource, /baseDir/);
 });
 
-test("WorkspaceView passes projectId into FileTree", () => {
-  assert.match(workspaceSource, /<FileTree\s+projectId=\{project\.id\}\s*\/>/);
-  assert.doesNotMatch(workspaceSource, /FileTree\s+localRoot=/);
+test("the workspace passes projectId into the explorer", () => {
+  assert.match(workspaceSource, /<FilesExplorer[\s\S]{0,200}projectId=\{project\.id\}/);
 });
 
-test("Tauri file commands accept project_id and relative_path only", () => {
-  assert.match(filesRsSource, /pub fn browse_files\(project_id: String\)/);
-  assert.match(
-    filesRsSource,
-    /pub fn read_file\(project_id: String, relative_path: String\)/,
-  );
-  assert.match(filesRsSource, /pub fn open_in_finder\(/);
-  assert.match(filesRsSource, /project_id: String,/);
-  assert.match(filesRsSource, /relative_path: Option<String>/);
-  assert.match(filesRsSource, /fn local_root_for_project_id/);
-  assert.doesNotMatch(
-    filesRsSource,
-    /pub fn browse_files\(local_root: String\)/,
-  );
+test("every file command carries projectId and a relative path", () => {
+  for (const command of [
+    "list_files",
+    "read_file",
+    "create_entry",
+    "rename_entry",
+    "delete_entry",
+    "undo_delete",
+    "reveal_entry",
+    "open_entry",
+  ]) {
+    assert.match(apiSource, new RegExp(`"${command}"[^\\n]*projectId`));
+  }
+});
+
+test("the Rust side resolves the root from persisted config", () => {
+  assert.match(filesRsSource, /pub fn local_root_for_project_id/);
+  assert.match(filesRsSource, /pub fn project_local_root_for/);
+  // Confinement is enforced centrally, not per call site.
+  assert.match(filesRsSource, /pub fn resolve_project_path/);
+  assert.match(filesRsSource, /fn ensure_under_root/);
   assert.doesNotMatch(filesRsSource, /base_dir: String/);
+  assert.doesNotMatch(filesRsSource, /pub fn browse_files\(local_root: String\)/);
 });

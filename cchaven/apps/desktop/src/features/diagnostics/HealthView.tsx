@@ -1,4 +1,5 @@
 import type { HealthSnapshot } from "./types";
+import { t } from "../../i18n";
 
 const BOUNDARY_SECTIONS = [
   "desktop",
@@ -35,7 +36,7 @@ function BoundarySection({
     <section className="diagnostics-section" aria-label={`${title} boundary`}>
       <h3 className="diagnostics-section-title">{title}</h3>
       {entries.length === 0 ? (
-        <div className="diagnostics-empty">No data</div>
+        <div className="diagnostics-empty">{t("logs.noData")}</div>
       ) : (
         <dl className="diagnostics-kv">
           {entries.map(([key, value]) => (
@@ -64,9 +65,9 @@ export default function HealthView({
   }
 
   return (
-    <section className="diagnostics-health" aria-label="Health snapshot">
+    <section className="diagnostics-health" aria-label={t("logs.tabHealth")}>
       <div className="diagnostics-health-boundary" role="status">
-        <strong>Last progress boundary</strong>
+        <strong>{t("logs.lastBoundary")}</strong>
         <div className="diagnostics-health-boundary-value">
           {health.lastProgressBoundary}
         </div>

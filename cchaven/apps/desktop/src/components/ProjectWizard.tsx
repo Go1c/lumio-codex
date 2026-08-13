@@ -1,23 +1,46 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
 import { t, tList } from "../i18n";
-import { EVENTS, toApiError } from "../lib/api";
+import { EVENTS, stableFailure, toApiError } from "../lib/api";
+import { DEPLOY_STEPS } from "../lib/mockApi";
 import { useApi } from "../state/ApiProvider";
 import { useToast } from "../state/ToastProvider";
 import { Banner, Modal, Spinner } from "./ui";
 import {
-  DEPLOY_STAGES,
   type AuthMethod,
-  type DeployStage,
+  type CredentialCleanupStatus,
+  type DeployProgress,
+  type DeployStep,
+  type DeploymentPreview,
+  type DeploymentRequest,
   type ProjectConfig,
   type ProbeResult,
   type SshHost,
   type StageState,
-  type StageUpdate,
 } from "../lib/types";
 
 const DEFAULT_EXCLUDES = [".git/", "node_modules/", "target/", ".env"].join("\n");
 
 type TestState = "idle" | "testing" | "ok" | "fail";
+
+function pendingStages(): Record<DeployStep, StageState> {
+  return Object.fromEntries(
+    DEPLOY_STEPS.map((step) => [step, "pending" as StageState]),
+  ) as Record<DeployStep, StageState>;
+}
+
+function formatMib(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Anything still outstanding after a rollback, worded for the user. */
+function pendingCleanup(status: CredentialCleanupStatus): string {
+  if (status.pendingAgentDeletion) return t("deploy.cleanupAgentPending");
+  if (status.pendingRevocation || status.pendingTunnelCleanup) {
+    return t("deploy.cleanupPending");
+  }
+  if (status.active) return t("deploy.cleanupActive");
+  return "";
+}
 
 export interface ProjectWizardProps {
   /** Pre-filled project for 「编辑」; absent when creating. */
@@ -60,16 +83,14 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
     project?.sync.excludes.join("\n") ?? DEFAULT_EXCLUDES,
   );
 
-  // Step 3 — deployment.
+  // Step 3 — the managed ten-step deployment: preview, then write.
   const [deploying, setDeploying] = useState(false);
-  const [stages, setStages] = useState<Record<DeployStage, StageState>>({
-    connect: "pending",
-    installAgent: "pending",
-    createDirectory: "pending",
-    firstSync: "pending",
-  });
-  const [details, setDetails] = useState<Partial<Record<DeployStage, string>>>({});
+  const [stages, setStages] = useState<Record<DeployStep, StageState>>(pendingStages);
+  const [preview, setPreview] = useState<DeploymentPreview | null>(null);
   const [deployError, setDeployError] = useState("");
+  /** Set once the remote has been written to, so cancel must roll it back. */
+  const deploymentStarted = useRef(false);
+  const provisioningStarted = useRef(false);
   const [links, setLinks] = useState<{ serverGuide: string; troubleshooting: string } | null>(
     null,
   );
@@ -99,12 +120,9 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
   }, [api, name, user]);
 
   useEffect(() => {
-    const dispose = api.on<StageUpdate>(EVENTS.deployProgress, (update) => {
+    const dispose = api.on<DeployProgress>(EVENTS.deployProgress, (update) => {
       if (update.projectId !== projectIdRef.current) return;
-      setStages((current) => ({ ...current, [update.stage]: update.state }));
-      if (update.detail) {
-        setDetails((current) => ({ ...current, [update.stage]: update.detail as string }));
-      }
+      setStages((current) => ({ ...current, [update.step]: update.status }));
     });
     return () => {
       void dispose.then((unsubscribe) => unsubscribe());
@@ -114,16 +132,12 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
   const effectiveRemote = remoteEdited ? remoteRoot : presetRemote;
   const effectiveLocal = localEdited ? localRoot : presetLocal;
 
-  const stageLabels = useMemo<Record<DeployStage, string>>(
-    () => ({
-      connect: t("wizard.stageConnect"),
-      installAgent: t("wizard.stageInstall"),
-      createDirectory: t("wizard.stageDirectory", { path: effectiveRemote }),
-      firstSync: details.firstSync
-        ? t("wizard.stageSyncProgress", { detail: details.firstSync })
-        : t("wizard.stageSync"),
-    }),
-    [effectiveRemote, details.firstSync],
+  const stageLabels = useMemo<Record<DeployStep, string>>(
+    () =>
+      Object.fromEntries(
+        DEPLOY_STEPS.map((step) => [step, t(`deploy.step.${step}`)]),
+      ) as Record<DeployStep, string>,
+    [],
   );
 
   async function handlePaste(event: ClipboardEvent<HTMLInputElement>) {
@@ -218,34 +232,149 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
     }
   }
 
-  async function deploy(fromStage = 0) {
+  function deploymentRequest(): DeploymentRequest {
+    const config = buildConfig();
+    return {
+      projectId: config.id,
+      sshHostAlias: sshHostAlias(),
+      workspaceId: config.workspaceId,
+      remoteRoot: config.remoteRoot,
+      includes: config.sync.includes,
+      excludes: config.sync.excludes,
+      protectSecrets: true,
+    };
+  }
+
+  /** How `ssh` addresses this server: the config alias, or `user@host`. */
+  function sshHostAlias(): string {
+    if (auth === "ssh_config" && configAlias.trim()) return configAlias.trim();
+    return `${user.trim()}@${host.trim()}`;
+  }
+
+  /** Read-only plan. Nothing has been written to the server at this point. */
+  async function loadPreview() {
     setDeploying(true);
     setDeployError("");
-    setStages((current) => {
-      const next = { ...current };
-      DEPLOY_STAGES.slice(fromStage).forEach((stage) => {
-        next[stage] = "pending";
-      });
-      return next;
-    });
-
+    setPreview(null);
+    setStages(pendingStages());
     try {
-      const saved = await api.saveProject(buildConfig(), password || undefined);
-      await api.deployProject(saved.id, fromStage);
-      onCompleted(saved);
+      setPreview(await api.previewDeployment(deploymentRequest()));
     } catch (caught) {
-      const failure = toApiError(caught);
-      setDeployError(failure.message);
-      if (failure.stage) {
-        setStages((current) => ({ ...current, [failure.stage as DeployStage]: "failed" }));
-      }
+      setDeployError(t("deploy.previewFailed", { code: stableFailure(caught) }));
     } finally {
       setDeploying(false);
     }
   }
 
-  const failedStage = DEPLOY_STAGES.find((stage) => stages[stage] === "failed");
-  const started = DEPLOY_STAGES.some((stage) => stages[stage] !== "pending");
+  /**
+   * Undo everything the deployment touched, in the reverse order it was done.
+   * Reported rather than swallowed: a half-provisioned server is exactly what
+   * the user needs to know about.
+   */
+  async function rollback(): Promise<string[]> {
+    const failures: string[] = [];
+    if (deploymentStarted.current) {
+      try {
+        await api.cancelDeployment(projectIdRef.current);
+      } catch (caught) {
+        failures.push(t("deploy.cancelFailed", { code: stableFailure(caught) }));
+      }
+      deploymentStarted.current = false;
+    }
+    let credentialDeleted = false;
+    try {
+      const status = await api.cancelProvisioning(projectIdRef.current);
+      credentialDeleted = status.credentialDeleted;
+      if (!credentialDeleted) failures.push(t("deploy.credentialNotDeleted"));
+      const pending = pendingCleanup(status);
+      if (pending) failures.push(pending);
+    } catch (caught) {
+      failures.push(t("deploy.rollbackFailed", { code: stableFailure(caught) }));
+      try {
+        const pending = pendingCleanup(
+          await api.credentialCleanupStatus(projectIdRef.current),
+        );
+        if (pending) failures.push(pending);
+      } catch (statusFailure) {
+        failures.push(t("deploy.cleanupUnknown", { code: stableFailure(statusFailure) }));
+      }
+    }
+    if (provisioningStarted.current && credentialDeleted) {
+      try {
+        await api.deleteProject(projectIdRef.current);
+        provisioningStarted.current = false;
+      } catch (caught) {
+        failures.push(t("deploy.projectCleanupFailed", { code: stableFailure(caught) }));
+      }
+    }
+    return failures;
+  }
+
+  /**
+   * Order matters and is asserted by `tests/deployment-source.test.mjs`:
+   * provision the sync credential, persist the project, write to the server,
+   * and only then probe — the workspace root does not exist until deployment
+   * registers it.
+   */
+  async function deploy() {
+    if (!preview || preview.warnings.length > 0) return;
+    setDeploying(true);
+    setDeployError("");
+    setStages(pendingStages());
+    provisioningStarted.current = true;
+
+    try {
+      await api.provisionCredential({
+        projectId: projectIdRef.current,
+        sshHostAlias: sshHostAlias(),
+        username: user.trim(),
+        password,
+      });
+      const saved = await api.saveProject(buildConfig(), password || undefined);
+
+      deploymentStarted.current = true;
+      await api.executeDeployment(preview.previewId, deploymentRequest());
+      deploymentStarted.current = false;
+
+      await api.probeWorkspaceAccess({
+        projectId: projectIdRef.current,
+        sshHostAlias: sshHostAlias(),
+        workspaceId: saved.workspaceId,
+      });
+
+      provisioningStarted.current = false;
+      await api.startSync(saved.id).catch(() => undefined);
+      onCompleted(saved);
+    } catch (caught) {
+      const failure = toApiError(caught);
+      if (failure.stage) {
+        setStages((current) => ({ ...current, [failure.stage as DeployStep]: "failed" }));
+      }
+      const cleanupFailures = await rollback();
+      setDeployError(
+        cleanupFailures.length
+          ? `${failure.message}（${cleanupFailures.join("；")}）`
+          : failure.message,
+      );
+      setPreview(null);
+    } finally {
+      setDeploying(false);
+    }
+  }
+
+  async function cancelDeployment() {
+    setDeploying(true);
+    const failures = await rollback();
+    setDeploying(false);
+    if (failures.length > 0) {
+      setDeployError(t("deploy.cancelIncomplete", { detail: failures.join("；") }));
+      return;
+    }
+    setPassword("");
+    onCancel();
+  }
+
+  const started = DEPLOY_STEPS.some((step) => stages[step] !== "pending");
 
   return (
     <Modal
@@ -502,43 +631,98 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
             </tbody>
           </table>
 
+          {preview && !started && (
+            <div className="deploy-preview">
+              <p className="deploy-preview-title">{t("deploy.previewTitle")}</p>
+              <table className="summary">
+                <tbody>
+                  <tr>
+                    <td>{t("deploy.previewTarget")}</td>
+                    <td className="mono">{preview.target}</td>
+                  </tr>
+                  <tr>
+                    <td>{t("deploy.previewVersion")}</td>
+                    <td className="mono">
+                      {preview.existingVersion
+                        ? t("deploy.previewUpgrade", {
+                            from: preview.existingVersion,
+                            to: preview.version,
+                          })
+                        : preview.version}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>{t("deploy.previewArtifacts")}</td>
+                    <td className="mono">
+                      {preview.artifacts
+                        .map((artifact) => `${artifact.kind} ${formatMib(artifact.bytes)}`)
+                        .join("，")}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {preview.warnings.length > 0 && (
+                <Banner tone="error">
+                  {preview.warnings.map((code) => t(`deploy.warning.${code}`)).join(" ")}
+                </Banner>
+              )}
+              <p style={{ color: "var(--gray)", fontSize: 13, marginTop: 8 }}>
+                {t("deploy.previewSteps", { n: preview.steps.length })}
+              </p>
+            </div>
+          )}
+
           {started ? (
             <div style={{ margin: "14px 0 4px" }}>
-              {DEPLOY_STAGES.map((stage) => (
+              {DEPLOY_STEPS.map((step) => (
                 <div
-                  key={stage}
-                  className={`deploy-stage ${stages[stage] === "pending" ? "pending" : ""}`}
+                  key={step}
+                  className={`deploy-stage ${stages[step] === "pending" ? "pending" : ""}`}
                 >
                   <span className="st">
-                    {stages[stage] === "running" && <Spinner dark />}
-                    {stages[stage] === "done" && (
+                    {stages[step] === "running" && <Spinner dark />}
+                    {stages[step] === "succeeded" && (
                       <span style={{ color: "var(--green)" }}>✓</span>
                     )}
-                    {stages[stage] === "failed" && <span style={{ color: "var(--red)" }}>✗</span>}
-                    {stages[stage] === "pending" && <span style={{ color: "#bbb" }}>○</span>}
+                    {stages[step] === "failed" && <span style={{ color: "var(--red)" }}>✗</span>}
+                    {stages[step] === "pending" && <span style={{ color: "#bbb" }}>○</span>}
                   </span>
-                  <span>{stageLabels[stage]}</span>
+                  <span>{stageLabels[step]}</span>
                 </div>
               ))}
               {deployError && <Banner tone="error">{deployError}</Banner>}
             </div>
           ) : (
-            <p style={{ color: "var(--gray)", fontSize: 13.5, marginTop: 8 }}>
-              {t("wizard.summaryHint")}
-            </p>
+            !preview && (
+              <p style={{ color: "var(--gray)", fontSize: 13.5, marginTop: 8 }}>
+                {deployError ? "" : t("wizard.summaryHint")}
+              </p>
+            )
           )}
+          {!started && deployError && <Banner tone="error">{deployError}</Banner>}
         </>
       )}
 
       {error && <p style={{ color: "var(--red)", fontSize: 13, marginTop: 12 }}>{error}</p>}
 
       <div className="wizard-nav">
-        {step > 0 ? (
+        {step === 2 && !editing && (started || preview) ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void cancelDeployment()}
+            disabled={deploying}
+          >
+            {t("deploy.cancel")}
+          </button>
+        ) : step > 0 ? (
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => {
               setError("");
+              setPreview(null);
+              setStages(pendingStages());
               setStep(step - 1);
             }}
             disabled={deploying}
@@ -579,20 +763,22 @@ export function ProjectWizard({ project, onCancel, onCompleted }: ProjectWizardP
             <button type="button" className="btn btn-primary" onClick={save}>
               {t("wizard.saveChanges")}
             </button>
-          ) : failedStage ? (
+          ) : !preview ? (
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => deploy(DEPLOY_STAGES.indexOf(failedStage))}
+              onClick={() => void loadPreview()}
+              disabled={deploying}
             >
-              {t("common.retry")}
+              {deploying && <Spinner />}
+              {deploying ? t("deploy.previewing") : t("deploy.preview")}
             </button>
           ) : (
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => deploy(0)}
-              disabled={deploying}
+              onClick={() => void deploy()}
+              disabled={deploying || preview.warnings.length > 0}
             >
               {deploying && <Spinner />}
               {deploying ? t("wizard.deploying") : t("wizard.finish")}

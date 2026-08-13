@@ -19,13 +19,16 @@ cd "$repo_root/apps/desktop"
 npm ci
 npm exec -- tauri build --target "$target" --bundles app,dmg
 
-app="$CARGO_TARGET_DIR/$target/release/bundle/macos/FNS Workspace.app"
+# The bundle is named after `productName` in tauri.conf.json; read it rather
+# than hardcoding, so renaming the product cannot silently break packaging.
+product_name=$(node -p "require('$repo_root/apps/desktop/src-tauri/tauri.conf.json').productName")
+app="$CARGO_TARGET_DIR/$target/release/bundle/macos/$product_name.app"
 dmg_dir="$CARGO_TARGET_DIR/$target/release/bundle/dmg"
 test -d "$app"
 xcrun lipo "$app/Contents/MacOS/fns-workspace-desktop" -verify_arch arm64
 xcrun lipo "$app/Contents/MacOS/fns-agent" -verify_arch arm64
 version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
-dmg="$dmg_dir/FNS Workspace_${version}_aarch64.dmg"
+dmg="$dmg_dir/${product_name}_${version}_aarch64.dmg"
 test -f "$dmg"
 
 "$script_dir/verify-macos-arm64-bundle.sh" "$app" "$dmg"

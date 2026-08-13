@@ -3,13 +3,99 @@
 //! Only non-sensitive configuration is stored, as JSON under the app config
 //! directory. The SSH password lives in the system keychain keyed by project id
 //! (see `auth::keychain`), never here.
+//!
+//! A project describes its server as a [`ServerConfig`] (host / user / port /
+//! auth method) rather than as a bare `~/.ssh/config` alias: the wizard has to
+//! work for users who have never written an SSH config. Everything that shells
+//! out to `ssh` addresses the host through [`ProjectConfig::ssh_host_alias`],
+//! which yields the config alias when there is one and `user@host` otherwise.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 
 /// Directory the wizard puts projects under, on both ends.
 const PROJECT_NAMESPACE: &str = "cchaven";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProjectClientIdentity(fns_protocol::ClientId);
+
+impl ProjectClientIdentity {
+    pub fn load_or_create_in(
+        root: &std::path::Path,
+        project_id: &str,
+    ) -> Result<Self, std::io::Error> {
+        std::fs::create_dir_all(root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let path = root.join(format!("client-{project_id}.json"));
+        match std::fs::read(&path) {
+            Ok(bytes) => return decode_client_identity(&bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let client_id = fns_protocol::ClientId::parse(&uuid::Uuid::new_v4().to_string())
+            .map_err(|_| std::io::Error::other("client identity generation failed"))?;
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": "fns-client-identity/1",
+            "clientId": client_id,
+        }))
+        .map_err(std::io::Error::other)?;
+        let temporary = root.join(format!(".client-{project_id}-{}.tmp", uuid::Uuid::new_v4()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary)?;
+        if let Err(error) = file.write_all(&payload).and_then(|()| file.sync_all()) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+        drop(file);
+        match std::fs::hard_link(&temporary, &path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&temporary);
+                #[cfg(unix)]
+                std::fs::File::open(root)?.sync_all()?;
+                Ok(Self(client_id))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let _ = std::fs::remove_file(&temporary);
+                decode_client_identity(&std::fs::read(path)?)
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary);
+                Err(error)
+            }
+        }
+    }
+
+    pub fn get(self) -> fns_protocol::ClientId {
+        self.0
+    }
+}
+
+fn decode_client_identity(bytes: &[u8]) -> Result<ProjectClientIdentity, std::io::Error> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct StoredIdentity {
+        schema_version: String,
+        client_id: fns_protocol::ClientId,
+    }
+    let identity: StoredIdentity = serde_json::from_slice(bytes).map_err(std::io::Error::other)?;
+    if identity.schema_version != "fns-client-identity/1" {
+        return Err(std::io::Error::other("unsupported client identity"));
+    }
+    Ok(ProjectClientIdentity(identity.client_id))
+}
 
 /// Sync mode — MVP supports only two-way safe.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -59,6 +145,19 @@ impl ServerConfig {
             return alias.clone();
         }
         format!("{}@{}", self.user, self.host)
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            user: default_user(),
+            port: default_port(),
+            auth: AuthMethod::default(),
+            key_path: None,
+            config_alias: None,
+        }
     }
 }
 
@@ -121,6 +220,7 @@ fn protect_secrets_default() -> bool {
 pub struct ProjectConfig {
     pub id: uuid::Uuid,
     pub name: String,
+    #[serde(default)]
     pub server: ServerConfig,
     pub remote_root: String,
     pub local_root: String,
@@ -186,6 +286,36 @@ pub fn validate_workspace_root(root: &str) -> Result<(), String> {
 }
 
 impl ProjectConfig {
+    /// How every `ssh` invocation addresses this project's server.
+    ///
+    /// A `~/.ssh/config` alias when the user picked one, `user@host` otherwise —
+    /// the wizard's password path has no config entry to point at.
+    pub fn ssh_host_alias(&self) -> String {
+        self.server.ssh_target()
+    }
+
+    /// Validate local and remote roots before persistence.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_workspace_root(&self.local_root).map_err(|e| format!("local_root: {e}"))?;
+        validate_workspace_root(&self.remote_root).map_err(|e| format!("remote_root: {e}"))?;
+        if self.name.trim().is_empty() {
+            return Err("project name must not be empty".into());
+        }
+        if self.server.auth == AuthMethod::SshConfig {
+            if self
+                .server
+                .config_alias
+                .as_deref()
+                .is_none_or(|alias| alias.trim().is_empty())
+            {
+                return Err("server.configAlias must not be empty".into());
+            }
+        } else if self.server.host.trim().is_empty() {
+            return Err("server.host must not be empty".into());
+        }
+        Ok(())
+    }
+
     /// Config directory for storing projects.
     pub fn config_dir() -> Result<PathBuf, std::io::Error> {
         let dir = directories::BaseDirs::new()
@@ -218,6 +348,32 @@ impl ProjectConfig {
 
     pub fn get(id: &str) -> Result<Option<ProjectConfig>, std::io::Error> {
         Ok(Self::load_raw()?.remove(id))
+    }
+
+    /// Load a single project by ID, erroring when it is gone. The engineering
+    /// surfaces (deploy, monitor, sync) want the error, not an `Option`.
+    pub fn find_by_id(id: &str) -> Result<ProjectConfig, std::io::Error> {
+        Self::find_in_map(&Self::load_raw()?, id)
+    }
+
+    /// Find a project in an already-loaded map (testable without home config dir).
+    pub(crate) fn find_in_map(
+        projects: &HashMap<String, ProjectConfig>,
+        id: &str,
+    ) -> Result<ProjectConfig, std::io::Error> {
+        if let Some(project) = projects.get(id) {
+            return Ok(project.clone());
+        }
+        projects
+            .values()
+            .find(|project| project.id.to_string() == id)
+            .cloned()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("project not found: {id}"),
+                )
+            })
     }
 
     /// Remove a project from the app. Files on both ends are left untouched.
@@ -279,129 +435,6 @@ pub fn atomic_write_private_bytes(path: &Path, bytes: &[u8]) -> Result<(), std::
         let _ = std::fs::remove_file(&temporary);
     }
     write_result
-}
-
-#[cfg(test)]
-mod task_2b_identity_tests {
-    use super::ProjectClientIdentity;
-
-    #[test]
-    fn two_projects_get_distinct_stable_client_ids_across_restart() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = ProjectClientIdentity::load_or_create_in(dir.path(), "project-a").unwrap();
-        let second = ProjectClientIdentity::load_or_create_in(dir.path(), "project-b").unwrap();
-        assert_ne!(first, second);
-        assert_eq!(
-            first,
-            ProjectClientIdentity::load_or_create_in(dir.path(), "project-a").unwrap()
-        );
-        assert_eq!(
-            second,
-            ProjectClientIdentity::load_or_create_in(dir.path(), "project-b").unwrap()
-        );
-    }
-}
-
-#[cfg(test)]
-mod security_root_and_atomic_write_tests {
-    use super::{
-        ProjectConfig, SyncConfig, SyncMode, atomic_write_private_bytes, validate_workspace_root,
-    };
-    use std::path::PathBuf;
-
-    fn sample_project(local_root: &str, remote_root: &str) -> ProjectConfig {
-        ProjectConfig {
-            id: uuid::Uuid::new_v4(),
-            name: "demo".into(),
-            ssh_host_alias: "devbox".into(),
-            remote_root: remote_root.into(),
-            local_root: local_root.into(),
-            workspace_id: uuid::Uuid::new_v4(),
-            tmux_session: "demo".into(),
-            sync: SyncConfig {
-                mode: SyncMode::TwoWaySafe,
-                includes: vec!["**/*".into()],
-                excludes: vec![],
-                protect_secrets: true,
-            },
-        }
-    }
-
-    #[test]
-    fn rejects_dangerous_root() {
-        for root in [
-            "",
-            "   ",
-            "/",
-            "/etc",
-            "/var",
-            "/usr",
-            "/bin",
-            "/sbin",
-            "/System",
-            "/private",
-            "/etc/",
-            "C:\\",
-            "C:/",
-            "C:",
-            "/Users/me/../../etc",
-            "/tmp/../etc",
-            "relative/../escape",
-        ] {
-            assert!(
-                validate_workspace_root(root).is_err(),
-                "expected rejection for {root:?}"
-            );
-        }
-
-        let project = sample_project("/", "/home/user/project");
-        assert!(project.validate().is_err());
-
-        let project = sample_project("/Users/me/project", "/etc");
-        assert!(project.validate().is_err());
-    }
-
-    #[test]
-    fn accepts_safe_project_roots() {
-        validate_workspace_root("/Users/me/workspace/app").unwrap();
-        validate_workspace_root("/home/dev/code/my-app").unwrap();
-        validate_workspace_root("/var/lib/fns-workspace/tenant-a").unwrap();
-
-        let project = sample_project("/Users/me/workspace/app", "/home/dev/code/my-app");
-        project.validate().unwrap();
-    }
-
-    #[test]
-    fn atomic_write_private_bytes_uses_mode_0600_on_unix() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("projects.json");
-        atomic_write_private_bytes(&path, b"{\"ok\":true}").unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "{\"ok\":true}");
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-        }
-
-        // No leftover temp siblings.
-        let leftovers: Vec<PathBuf> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with(".projects-") && n.ends_with(".tmp"))
-            })
-            .collect();
-        assert!(
-            leftovers.is_empty(),
-            "temp files left behind: {leftovers:?}"
-        );
-    }
 }
 
 /// Stable per-install device id reported to the control plane.
@@ -585,5 +618,147 @@ mod tests {
         assert_eq!(server.ssh_target(), "root@43.156.20.8");
         server.auth = AuthMethod::SshConfig;
         assert_eq!(server.ssh_target(), "prod");
+    }
+}
+
+#[cfg(test)]
+mod task_2b_identity_tests {
+    use super::ProjectClientIdentity;
+
+    #[test]
+    fn two_projects_get_distinct_stable_client_ids_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ProjectClientIdentity::load_or_create_in(dir.path(), "project-a").unwrap();
+        let second = ProjectClientIdentity::load_or_create_in(dir.path(), "project-b").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            first,
+            ProjectClientIdentity::load_or_create_in(dir.path(), "project-a").unwrap()
+        );
+        assert_eq!(
+            second,
+            ProjectClientIdentity::load_or_create_in(dir.path(), "project-b").unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod security_root_and_atomic_write_tests {
+    use super::{
+        AuthMethod, ProjectConfig, ServerConfig, SyncConfig, atomic_write_private_bytes,
+        validate_workspace_root,
+    };
+    use std::path::PathBuf;
+
+    fn sample_project(local_root: &str, remote_root: &str) -> ProjectConfig {
+        ProjectConfig {
+            id: uuid::Uuid::new_v4(),
+            name: "demo".into(),
+            server: ServerConfig {
+                host: "43.156.20.8".into(),
+                user: "root".into(),
+                port: 22,
+                auth: AuthMethod::Password,
+                key_path: None,
+                config_alias: None,
+            },
+            remote_root: remote_root.into(),
+            local_root: local_root.into(),
+            workspace_id: uuid::Uuid::new_v4(),
+            tmux_session: "demo".into(),
+            sync: SyncConfig::default(),
+            created_at: "0".into(),
+        }
+    }
+
+    #[test]
+    fn rejects_dangerous_root() {
+        for root in [
+            "",
+            "   ",
+            "/",
+            "/etc",
+            "/var",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/System",
+            "/private",
+            "/etc/",
+            "C:\\",
+            "C:/",
+            "C:",
+            "/Users/me/../../etc",
+            "/tmp/../etc",
+            "relative/../escape",
+        ] {
+            assert!(
+                validate_workspace_root(root).is_err(),
+                "expected rejection for {root:?}"
+            );
+        }
+
+        let project = sample_project("/", "/home/user/project");
+        assert!(project.validate().is_err());
+
+        let project = sample_project("/Users/me/project", "/etc");
+        assert!(project.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_safe_project_roots() {
+        validate_workspace_root("/Users/me/workspace/app").unwrap();
+        validate_workspace_root("/home/dev/code/my-app").unwrap();
+        validate_workspace_root("/var/lib/fns-workspace/tenant-a").unwrap();
+
+        let project = sample_project("/Users/me/workspace/app", "/home/dev/code/my-app");
+        project.validate().unwrap();
+    }
+
+    #[test]
+    fn a_project_without_a_reachable_server_is_rejected() {
+        let mut project = sample_project("/Users/me/workspace/app", "/home/dev/code/my-app");
+        project.server.host = "  ".into();
+        assert!(project.validate().is_err());
+
+        // An ssh_config project is addressed by alias, so a blank host is fine
+        // but a blank alias is not.
+        project.server.auth = AuthMethod::SshConfig;
+        assert!(project.validate().is_err());
+        project.server.config_alias = Some("prod".into());
+        project.validate().unwrap();
+        assert_eq!(project.ssh_host_alias(), "prod");
+    }
+
+    #[test]
+    fn atomic_write_private_bytes_uses_mode_0600_on_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        atomic_write_private_bytes(&path, b"{\"ok\":true}").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "{\"ok\":true}");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        // No leftover temp siblings.
+        let leftovers: Vec<PathBuf> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(".projects-") && n.ends_with(".tmp"))
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
     }
 }

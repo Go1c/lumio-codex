@@ -19,6 +19,9 @@ cd "$repo_root/apps/desktop"
 npm ci
 npm exec -- tauri build --debug --target "$target" --bundles app
 
-app="$CARGO_TARGET_DIR/$target/debug/bundle/macos/FNS Workspace.app"
+# The bundle is named after `productName` in tauri.conf.json; read it rather
+# than hardcoding, so renaming the product cannot silently break packaging.
+product_name=$(node -p "require('$repo_root/apps/desktop/src-tauri/tauri.conf.json').productName")
+app="$CARGO_TARGET_DIR/$target/debug/bundle/macos/$product_name.app"
 "$script_dir/verify-macos-arm64-bundle.sh" "$app"
 printf '%s\n' "$app"

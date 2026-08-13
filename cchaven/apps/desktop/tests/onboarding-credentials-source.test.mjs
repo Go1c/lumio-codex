@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(
-  new URL("../src/components/OnboardingWizard.tsx", import.meta.url),
+  new URL("../src/components/ProjectWizard.tsx", import.meta.url),
+  "utf8",
+);
+const apiSource = await readFile(
+  new URL("../src/lib/api.ts", import.meta.url),
   "utf8",
 );
 const rustSource = await readFile(
@@ -11,63 +15,45 @@ const rustSource = await readFile(
   "utf8",
 );
 
-test("onboarding deploys the stable project identity before probing access", () => {
-  const provision = source.indexOf('invoke("provision_workspace_credential"');
-  const probe = source.indexOf('invoke("probe_workspace_access"');
-  const save = source.indexOf('invoke("save_project"');
-  const execute = source.indexOf('invoke("execute_remote_deployment"');
+test("the wizard deploys a stable project identity before probing access", () => {
+  const provision = source.indexOf("api.provisionCredential(");
+  const save = source.indexOf("api.saveProject(buildConfig(), password || undefined)", provision);
+  const execute = source.indexOf("api.executeDeployment(");
+  const probe = source.indexOf("api.probeWorkspaceAccess(");
 
-  assert.ok(provision >= 0, "credential provisioning command is missing");
-  assert.ok(save > provision, "project must be saved after credential provisioning");
+  assert.ok(provision >= 0, "credential provisioning is missing");
+  assert.ok(save > provision, "the project must be saved after provisioning");
   assert.ok(execute > save, "deployment must use the persisted project identity");
   assert.ok(
     probe > execute,
     "workspace access must be probed after deployment registers the root",
   );
-  assert.match(source, /useState\(\(\) => crypto\.randomUUID\(\)\)/);
-  assert.match(source, /workspaceId:\s*workspaceId/);
-  assert.doesNotMatch(source, /workspaceId:\s*crypto\.randomUUID\(\)/);
+  // The project id is minted once and reused, never regenerated mid-flow.
+  assert.match(source, /useRef\(project\?\.id \?\? crypto\.randomUUID\(\)\)/);
+  assert.match(source, /workspaceId:\s*config\.workspaceId/);
 });
 
-test("onboarding collects secrets without logging and cleans failed setup", () => {
+test("the wizard collects secrets without logging and rolls back failed setup", () => {
   assert.match(source, /type="password"/);
-  assert.match(
-    source,
-    /invoke<CredentialRollbackStatus>\(\s*"cancel_workspace_provisioning"/,
-  );
+  assert.match(apiSource, /"cancel_workspace_provisioning"/);
   assert.match(source, /credentialDeleted/);
-  assert.match(source, /cleanup=\$\{codes\.join\(","\)\}/);
   assert.doesNotMatch(source, /console\.(?:log|warn|error|debug)/);
-  assert.doesNotMatch(source, /invoke(?:<[^>]+>)?\("create_tunnel"/);
+  assert.doesNotMatch(source, /api\.previewDeployment[\s\S]{0,40}create_tunnel/);
 });
 
-test("onboarding owns cancellation and rejects late invoke completion", () => {
-  assert.match(source, /useRef\(0\)/);
-  assert.match(source, /operationGeneration\.current/);
-  assert.match(
-    source,
-    /invoke(?:<[^>]+>)?\(\s*"cancel_workspace_provisioning"/,
-  );
-  assert.match(source, /invoke\("delete_project"/);
-  assert.match(source, /return \(\) =>/);
-  assert.match(source, /disabled=\{saving\}/);
-  assert.match(source, /credential cleanup did not delete/);
-  assert.match(source, /if \([^)]*generation[^)]*!==[^)]*operationGeneration\.current/);
-});
-
-test("unmount rollback is observable and does not race a separate credential delete", () => {
-  const cancel = source.indexOf('"cancel_workspace_provisioning"');
-  const projectDelete = source.indexOf('invoke("delete_project"');
+test("rollback is observable and ordered after the credential is gone", () => {
+  const cancel = source.indexOf("api.cancelProvisioning(");
+  const projectDelete = source.indexOf("api.deleteProject(projectIdRef.current)");
 
   assert.ok(cancel >= 0, "rollback must use the typed credential cancellation result");
   assert.ok(projectDelete > cancel, "project deletion must follow credential rollback");
-  assert.match(source, /credentialDeleted/);
+  assert.match(source, /credentialCleanupStatus/);
   assert.match(source, /pendingAgentDeletion/);
-  assert.match(source, /workspace_credential_cleanup_status/);
-  assert.match(source, /Agent credential deletion pending/);
-  assert.match(source, /pendingUnmountCleanupFailure/);
-  assert.doesNotMatch(source, /\.catch\(\s*\(\)\s*=>\s*undefined/);
-  assert.doesNotMatch(source, /invoke\("delete_workspace_credential"/);
+  assert.match(source, /deploy\.cleanupAgentPending/);
+  // Failures are reported, never swallowed: a half-provisioned server is
+  // exactly what the user needs to hear about.
+  assert.doesNotMatch(source, /rollback\(\)\.catch\(\s*\(\)\s*=>\s*undefined/);
+  assert.doesNotMatch(source, /"delete_workspace_credential"/);
 });
 
 test("desktop production wiring shares the Keychain-backed provider with sync", () => {

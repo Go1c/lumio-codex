@@ -69,10 +69,10 @@ test("DiagnosticsPane wires tabs and uses client facade methods", async () => {
     path.join(featuresDir, "DiagnosticsPane.tsx"),
     "utf8",
   );
-  assert.match(pane, /Timeline/);
-  assert.match(pane, /Health/);
-  assert.match(pane, /Self Test/);
-  assert.match(pane, /Support Bundle/);
+  assert.match(pane, /logs\.tabTimeline/);
+  assert.match(pane, /logs\.tabHealth/);
+  assert.match(pane, /logs\.tabSelfTest/);
+  assert.match(pane, /logs\.tabSupportBundle/);
   assert.match(pane, /client\.listEvents/);
   assert.match(pane, /client\.getHealth/);
   assert.match(pane, /DiagnosticsClient/);
@@ -89,7 +89,7 @@ test("DiagnosticsPane polls only while mounted and invalidates stale refreshes",
   assert.match(pane, /window\.setTimeout/);
   assert.match(pane, /window\.clearTimeout/);
   assert.match(pane, /mounted\.current/);
-  assert.match(pane, /Refreshing\.\.\./);
+  assert.match(pane, /logs\.refreshing/);
 });
 
 test("SupportBundleView requires preview before export", async () => {

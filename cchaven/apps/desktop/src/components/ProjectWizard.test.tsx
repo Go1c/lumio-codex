@@ -96,44 +96,74 @@ describe("新建项目向导（5.3）", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("完成设置跑完四个阶段并回调上层", async () => {
-    const harness = setup();
+  /** 走到第 3 步并先取得只读的部署预览。 */
+  async function reachPreview(harness: ReturnType<typeof setup>) {
     await fillStepOne(harness);
     await harness.user.type(await screen.findByLabelText("项目名称"), "my-project");
     await harness.user.click(screen.getByRole("button", { name: "下一步" }));
-
     expect(await screen.findByText("✓ 已验证连接")).toBeInTheDocument();
+    await harness.user.click(screen.getByRole("button", { name: "预览部署计划" }));
+    return screen.findByText("即将执行的操作（此刻尚未改动服务器）");
+  }
+
+  it("先给出只读预览，确认后才动服务器", async () => {
+    const harness = setup();
+    expect(await reachPreview(harness)).toBeInTheDocument();
+
+    // 预览阶段绝不能已经写过服务器。
+    expect(harness.api.calls).toContain("previewDeployment");
+    expect(harness.api.calls.some((call) => call.startsWith("executeDeployment"))).toBe(
+      false,
+    );
+    expect(screen.getByText("共 10 步，全程可取消；失败会自动回滚。")).toBeInTheDocument();
+  });
+
+  it("完成设置按既定顺序跑完十步并回调上层", async () => {
+    const harness = setup();
+    await reachPreview(harness);
     await harness.user.click(screen.getByRole("button", { name: "完成设置" }));
 
     await waitFor(() => expect(harness.onCompleted).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("连接服务器")).toBeInTheDocument();
-    expect(screen.getByText("安装CC避风港同步组件（自动完成，无需操作）")).toBeInTheDocument();
-    expect(screen.getByText("创建项目目录 /root/cchaven/my-project")).toBeInTheDocument();
-    expect(screen.getByText(/首次同步/)).toBeInTheDocument();
 
-    // 阶段文案不出现 agent / tmux 术语。
-    const stageText = screen.getByText("安装CC避风港同步组件（自动完成，无需操作）").textContent ?? "";
-    expect(stageText.toLowerCase()).not.toContain("agent");
-    expect(stageText.toLowerCase()).not.toContain("tmux");
+    // 凭据 → 存项目 → 写服务器 → 验证访问：顺序即安全性。
+    const at = (prefix: string) =>
+      harness.api.calls.findIndex((call) => call.startsWith(prefix));
+    const [provision, save, execute, probe] = [
+      at("provisionCredential"),
+      at("saveProject"),
+      at("executeDeployment"),
+      at("probeWorkspaceAccess"),
+    ];
+    expect([provision, save, execute, probe].every((index) => index >= 0)).toBe(true);
+    expect(provision).toBeLessThan(save);
+    expect(save).toBeLessThan(execute);
+    expect(execute).toBeLessThan(probe);
+
+    expect(screen.getByText("检查服务器环境")).toBeInTheDocument();
+    expect(screen.getByText("上传同步代理")).toBeInTheDocument();
+    expect(screen.getByText("验证服务与同步代理")).toBeInTheDocument();
+
+    // 步骤文案对普通用户可读，不出现 agent / tmux / systemd 术语。
+    const steps = ["检查服务器环境", "上传同步代理", "验证服务与同步代理"];
+    for (const step of steps) {
+      const text = (screen.getByText(step).textContent ?? "").toLowerCase();
+      expect(text).not.toContain("agent");
+      expect(text).not.toContain("tmux");
+      expect(text).not.toContain("systemd");
+    }
   });
 
-  it("部署失败停在该阶段并支持从失败处重试", async () => {
+  it("某一步失败时回滚并说明原因", async () => {
     const harness = setup({ failDeployAtStage: 1 });
-    await fillStepOne(harness);
-    await harness.user.type(await screen.findByLabelText("项目名称"), "my-project");
-    await harness.user.click(screen.getByRole("button", { name: "下一步" }));
+    await reachPreview(harness);
     await harness.user.click(screen.getByRole("button", { name: "完成设置" }));
 
     expect(
-      await screen.findByText(
-        "服务器磁盘空间不足（剩余 120 MB）。请清理磁盘后点击重试，或联系客服协助。",
-      ),
+      await screen.findByText(/服务器磁盘空间不足。请清理磁盘后重试。/),
     ).toBeInTheDocument();
-
-    const retry = screen.getByRole("button", { name: "重试" });
-    await harness.user.click(retry);
-    // 重试从失败阶段（索引 1）续跑，而不是从头再来。
-    expect(harness.api.calls).toContain("deployProject:1");
+    // 回滚必须发生：半配置好的服务器比失败更糟。
+    await waitFor(() => expect(harness.api.calls).toContain("cancelProvisioning"));
+    expect(harness.onCompleted).not.toHaveBeenCalled();
   });
 
   it("连接失败时给出按命中率排序的排查清单", async () => {

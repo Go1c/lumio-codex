@@ -13,7 +13,7 @@ fail() {
 }
 
 usage() {
-  fail "usage: $0 /absolute/path/FNS Workspace.app [/absolute/path/FNS Workspace.dmg]"
+  fail "usage: $0 /absolute/path/<ProductName>.app [/absolute/path/<ProductName>.dmg]"
 }
 
 details_for() {

@@ -1,7 +1,25 @@
 import { ApiError, EVENTS, type Api, type EntryKindArg } from "./api";
+import {
+  createMemoryDiagnosticsClient,
+  type DiagnosticsClient,
+  type MemoryDiagnosticsSeed,
+} from "./diagnosticsApi";
+import {
+  createMockRemoteMonitorClient,
+  type MockRemoteMonitorSeed,
+} from "./mockRemoteMonitor";
+import type { RemoteMonitorClient } from "./remoteMonitorApi";
 import type {
   AppInfo,
   Conflict,
+  ConflictControlIdentity,
+  ConflictResolutionOperationView,
+  CredentialCleanupStatus,
+  CredentialRollbackStatus,
+  DeployProgress,
+  DeployStep,
+  DeploymentPreview,
+  DeploymentRequest,
   FileNode,
   FilePreview,
   HeartbeatResponse,
@@ -9,6 +27,7 @@ import type {
   ProbeResult,
   ProjectConfig,
   ProjectPresets,
+  ProvisionCredentialRequest,
   Resolution,
   ResolutionReceipt,
   RestoreOutcome,
@@ -16,11 +35,25 @@ import type {
   SessionView,
   SshHost,
   SshTarget,
-  StageUpdate,
+  SyncEngineStatus,
   SyncStatus,
   TrashTicket,
+  WorkspaceAccessRequest,
 } from "./types";
-import { DEPLOY_STAGES } from "./types";
+
+/** The ten managed deployment steps, in the order `deploy.rs` runs them. */
+export const DEPLOY_STEPS: DeployStep[] = [
+  "validate_remote",
+  "ensure_directories",
+  "upload_server",
+  "upload_agent",
+  "verify_artifacts",
+  "prepare_configuration",
+  "switch_version",
+  "install_services",
+  "start_services",
+  "verify_health",
+];
 
 /**
  * In-memory stand-in for the Tauri backend.
@@ -41,7 +74,12 @@ export interface MockOptions {
   projects?: ProjectConfig[];
   /** Fail connection tests and deployments, for exercising error states. */
   failConnection?: boolean;
+  /** Index into the ten deployment steps at which execution should fail. */
   failDeployAtStage?: number;
+  /** Blocking preview warnings, so the "cannot deploy yet" path is reachable. */
+  deployWarnings?: string[];
+  remoteMonitor?: MockRemoteMonitorSeed;
+  diagnostics?: MemoryDiagnosticsSeed;
   /** Resolve browser authorization automatically after this many ms. */
   authDelayMs?: number;
   /** Make browser authorization time out instead of succeeding. */
@@ -161,6 +199,11 @@ export class MockApi implements Api {
   private signedIn: boolean;
   private options: MockOptions;
   private pendingLogin = false;
+  private deploymentCancelled = false;
+  private provisioned = new Set<string>();
+  private engineRunning = new Set<string>();
+  readonly remoteMonitor: RemoteMonitorClient;
+  readonly diagnostics: DiagnosticsClient;
 
   constructor(options: MockOptions = {}) {
     this.options = options;
@@ -168,6 +211,8 @@ export class MockApi implements Api {
     this.projects = options.projects ? [...options.projects] : [];
     this.conflicts = options.conflicts ? [...options.conflicts] : [];
     this.files = options.files ?? sampleFiles();
+    this.remoteMonitor = createMockRemoteMonitorClient(options.remoteMonitor);
+    this.diagnostics = createMemoryDiagnosticsClient(options.diagnostics);
     this.previews.set("src/engine.rs", "pub struct WriteBatcher {\n    pending: Vec<Mutation>,\n}\n");
     this.previews.set("Cargo.toml", '[package]\nname = "sync-engine"\n');
     this.previews.set("README.md", "# my-project\n");
@@ -378,25 +423,95 @@ export class MockApi implements Api {
     return { ok: true, distro: "Ubuntu 24.04.1 LTS" };
   }
 
-  async deployProject(projectId: string, fromStage = 0): Promise<void> {
-    this.record(`deployProject:${fromStage}`);
-    for (let index = fromStage; index < DEPLOY_STAGES.length; index += 1) {
-      const stage = DEPLOY_STAGES[index];
-      const running: StageUpdate = { projectId, stage, state: "running" };
-      this.emit(EVENTS.deployProgress, running);
+  // --- managed deployment ---
+
+  async previewDeployment(request: DeploymentRequest): Promise<DeploymentPreview> {
+    this.record("previewDeployment");
+    return {
+      previewId: `preview-${request.projectId}`,
+      target: request.sshHostAlias,
+      version: "0.1.0-mock",
+      serviceManager: "system",
+      existingVersion: null,
+      artifacts: [
+        { kind: "server", sha256: "a".repeat(64), bytes: 18_432_000 },
+        { kind: "agent", sha256: "b".repeat(64), bytes: 9_216_000 },
+      ],
+      steps: [...DEPLOY_STEPS],
+      warnings: this.options.deployWarnings ?? [],
+    };
+  }
+
+  async executeDeployment(previewId: string, request: DeploymentRequest): Promise<void> {
+    this.record(`executeDeployment:${previewId}`);
+    this.deploymentCancelled = false;
+    for (const [index, step] of DEPLOY_STEPS.entries()) {
+      if (this.deploymentCancelled) throw new ApiError("部署已取消。", "cancelled");
+      this.emit(EVENTS.deployProgress, {
+        projectId: request.projectId,
+        step,
+        status: "running",
+        errorCode: null,
+      } satisfies DeployProgress);
 
       if (this.options.failDeployAtStage === index) {
-        const message = "服务器磁盘空间不足（剩余 120 MB）。请清理磁盘后点击重试，或联系客服协助。";
-        this.emit(EVENTS.deployProgress, { projectId, stage, state: "failed", error: message });
-        throw new ApiError(message, "deploy", stage);
+        this.emit(EVENTS.deployProgress, {
+          projectId: request.projectId,
+          step,
+          status: "failed",
+          errorCode: "insufficient_disk",
+        } satisfies DeployProgress);
+        throw new ApiError("服务器磁盘空间不足。请清理磁盘后重试。", "insufficient_disk", step);
       }
       this.emit(EVENTS.deployProgress, {
-        projectId,
-        stage,
-        state: "done",
-        detail: stage === "firstSync" ? "456/456 个文件" : undefined,
-      } satisfies StageUpdate);
+        projectId: request.projectId,
+        step,
+        status: "succeeded",
+        errorCode: null,
+      } satisfies DeployProgress);
     }
+  }
+
+  async cancelDeployment(projectId: string): Promise<boolean> {
+    this.record(`cancelDeployment:${projectId}`);
+    this.deploymentCancelled = true;
+    return true;
+  }
+
+  async provisionCredential(request: ProvisionCredentialRequest): Promise<void> {
+    this.record("provisionCredential");
+    if (this.options.failConnection) throw new ApiError("无法登录服务器。", "auth");
+    this.provisioned.add(request.projectId);
+  }
+
+  async probeWorkspaceAccess(request: WorkspaceAccessRequest): Promise<void> {
+    this.record("probeWorkspaceAccess");
+    if (!this.provisioned.has(request.projectId)) {
+      throw new ApiError("同步凭据尚未就绪。", "credential_missing");
+    }
+  }
+
+  async cancelProvisioning(projectId: string): Promise<CredentialRollbackStatus> {
+    this.record("cancelProvisioning");
+    this.provisioned.delete(projectId);
+    return {
+      credentialDeleted: true,
+      active: false,
+      pendingAgentDeletion: false,
+      pendingRevocation: false,
+      pendingTunnelCleanup: false,
+      lastError: null,
+    };
+  }
+
+  async credentialCleanupStatus(_projectId: string): Promise<CredentialCleanupStatus> {
+    return {
+      active: false,
+      pendingAgentDeletion: false,
+      pendingRevocation: false,
+      pendingTunnelCleanup: false,
+      lastError: null,
+    };
   }
 
   // --- files ---
@@ -562,6 +677,7 @@ export class MockApi implements Api {
     _projectId: string,
     conflictId: string,
     resolution: Resolution,
+    _identity?: ConflictControlIdentity,
   ): Promise<ResolutionReceipt> {
     this.record(`resolveConflict:${resolution}`);
     const index = this.conflicts.findIndex((conflict) => conflict.id === conflictId);
@@ -620,5 +736,75 @@ export class MockApi implements Api {
   async resizeTerminal(): Promise<void> {}
   async closeTerminal(): Promise<void> {
     this.record("closeTerminal");
+  }
+
+  async newClaudeSession(projectId: string): Promise<void> {
+    this.record("newClaudeSession");
+    this.emit(
+      EVENTS.terminalOutput(projectId),
+      Array.from(new TextEncoder().encode("claude\r\n")),
+    );
+  }
+
+  async closeTmuxWindow(): Promise<void> {
+    this.record("closeTmuxWindow");
+  }
+
+  async listTmuxWindows(): Promise<void> {
+    this.record("listTmuxWindows");
+  }
+
+  async killAllSessions(projectId: string): Promise<void> {
+    this.record("killAllSessions");
+    this.emit(EVENTS.terminalClosed(projectId), null);
+  }
+
+  // --- sync engine ---
+
+  async startSync(projectId: string): Promise<SyncEngineStatus> {
+    this.record(`startSync:${projectId}`);
+    this.engineRunning.add(projectId);
+    return this.syncEngineStatus(projectId);
+  }
+
+  async stopSync(projectId: string): Promise<void> {
+    this.record(`stopSync:${projectId}`);
+    this.engineRunning.delete(projectId);
+  }
+
+  async syncEngineStatus(projectId: string): Promise<SyncEngineStatus> {
+    const running = this.engineRunning.has(projectId) && !this.options.offline;
+    return {
+      running,
+      localPort: running ? 19_050 : null,
+      message: running ? "已连接到服务器上的同步代理。" : "同步未运行。",
+      error: running ? null : this.options.offline ? { primary: "transport", cleanup: [] } : null,
+    };
+  }
+
+  async cancelConflictRequest(
+    _projectId: string,
+    identity: ConflictControlIdentity,
+  ): Promise<ConflictResolutionOperationView> {
+    this.record("cancelConflictRequest");
+    return {
+      requestId: identity.requestId,
+      projectGeneration: identity.projectGeneration,
+      conflictId: "",
+      conflictRevision: 0,
+      choice: "current",
+      phase: "cancelled",
+      receipt: null,
+      error: null,
+    };
+  }
+
+  async cancelConflictGeneration(): Promise<ConflictResolutionOperationView[]> {
+    this.record("cancelConflictGeneration");
+    return [];
+  }
+
+  async listConflictOperations(): Promise<ConflictResolutionOperationView[]> {
+    return [];
   }
 }

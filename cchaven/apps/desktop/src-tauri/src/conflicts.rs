@@ -56,6 +56,17 @@ pub struct Conflict {
     pub detected_at_ms: i64,
     pub local: ConflictSide,
     pub remote: ConflictSide,
+    /// False while the engine is still settling this conflict; the buttons stay
+    /// disabled rather than queueing an answer the server will reject.
+    #[serde(default = "default_can_resolve")]
+    pub can_resolve: bool,
+    /// The choice already on its way to the server, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_resolution: Option<String>,
+}
+
+fn default_can_resolve() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,6 +293,8 @@ pub fn sample_conflicts(now_ms: i64) -> Vec<Conflict> {
                 modified_ms: now_ms - 3 * 60 * 1000,
                 deleted: false,
             },
+            can_resolve: true,
+            pending_resolution: None,
         },
         Conflict {
             id: "conflict-cargo".into(),
@@ -299,6 +312,8 @@ pub fn sample_conflicts(now_ms: i64) -> Vec<Conflict> {
                 modified_ms: now_ms - 15 * 60 * 1000,
                 deleted: true,
             },
+            can_resolve: true,
+            pending_resolution: None,
         },
     ]
 }

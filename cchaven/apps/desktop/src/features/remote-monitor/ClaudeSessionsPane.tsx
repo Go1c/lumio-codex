@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "../../i18n";
 import type {
   ClaudeSessionsSnapshot,
   RemoteMonitorClient,
@@ -51,7 +52,7 @@ export default function ClaudeSessionsPane({
           error: {
             code: "ssh_failed",
             message:
-              error instanceof Error ? error.message : "Failed to list sessions",
+              error instanceof Error ? error.message : t("sessions.listFailed"),
           },
         });
       } finally {
@@ -95,7 +96,7 @@ export default function ClaudeSessionsPane({
       await load(true);
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : "Switch failed",
+        error instanceof Error ? error.message : t("sessions.switchFailed"),
       );
     } finally {
       setBusyIndex(null);
@@ -105,7 +106,7 @@ export default function ClaudeSessionsPane({
   async function onKill(index: number, title: string) {
     if (
       !confirm(
-        `Kill session "${title}" (window ${index})? This cannot be undone.`,
+        t("sessions.killConfirm", { name: title, index }),
       )
     ) {
       return;
@@ -116,28 +117,30 @@ export default function ClaudeSessionsPane({
       await client.killClaudeSession(projectId, index);
       await load(true);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Kill failed");
+      setActionError(error instanceof Error ? error.message : t("sessions.killFailed"));
     } finally {
       setBusyIndex(null);
     }
   }
 
   return (
-    <div className="remote-monitor-pane" aria-label="Claude sessions">
+    <div className="remote-monitor-pane" aria-label={t("sessions.title")}>
       <div className="remote-monitor-toolbar">
         {snapshot?.tmuxSession ? (
           <span className="remote-monitor-badge">{snapshot.tmuxSession}</span>
         ) : null}
         <span className="muted">
           {snapshot?.windows
-            ? `${snapshot.windows.length} window${snapshot.windows.length === 1 ? "" : "s"}`
+            ? t("sessions.windowCount", { n: snapshot.windows.length })
             : loading
-              ? "Loading…"
+              ? t("common.loading")
               : ""}
         </span>
         <span className="muted">
           {snapshot?.capturedAt
-            ? `Updated ${new Date(snapshot.capturedAt).toLocaleTimeString()}`
+            ? t("sessions.capturedAt", {
+                time: new Date(snapshot.capturedAt).toLocaleTimeString(),
+              })
             : ""}
         </span>
         <button
@@ -145,7 +148,7 @@ export default function ClaudeSessionsPane({
           className="btn btn-secondary"
           onClick={() => void load(false)}
         >
-          Refresh
+          {t("sessions.refresh")}
         </button>
       </div>
 
@@ -163,14 +166,13 @@ export default function ClaudeSessionsPane({
 
       {snapshot?.ok && snapshot.sessionExists === false ? (
         <p className="remote-monitor-empty">
-          No remote tmux session yet. Open the Terminal tab to create or attach
-          this project&apos;s session.
+          {t("sessions.noSession")}
         </p>
       ) : null}
 
       {snapshot?.ok && snapshot.sessionExists && snapshot.windows.length === 0 ? (
         <p className="remote-monitor-empty">
-          Session exists but has no windows. Use Terminal → + New Claude.
+          {t("sessions.empty")}
         </p>
       ) : null}
 
@@ -180,9 +182,9 @@ export default function ClaudeSessionsPane({
             <thead>
               <tr>
                 <th>#</th>
-                <th>Title</th>
-                <th>Active</th>
-                <th>Actions</th>
+                <th>{t("sessions.colTitle")}</th>
+                <th>{t("sessions.colActive")}</th>
+                <th>{t("sessions.colActions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -198,7 +200,7 @@ export default function ClaudeSessionsPane({
                           : "remote-monitor-pill inactive"
                       }
                     >
-                      {win.active ? "current" : "—"}
+                      {win.active ? t("sessions.active") : "—"}
                     </span>
                   </td>
                   <td>
@@ -209,7 +211,7 @@ export default function ClaudeSessionsPane({
                         disabled={busyIndex !== null}
                         onClick={() => void onSwitch(win.index)}
                       >
-                        Switch
+                        {t("sessions.switch")}
                       </button>
                       <button
                         type="button"
@@ -217,7 +219,7 @@ export default function ClaudeSessionsPane({
                         disabled={busyIndex !== null}
                         onClick={() => void onKill(win.index, win.title)}
                       >
-                        Kill
+                        {t("sessions.kill")}
                       </button>
                     </div>
                   </td>
@@ -229,7 +231,7 @@ export default function ClaudeSessionsPane({
       ) : null}
 
       {loading && !snapshot ? (
-        <p className="remote-monitor-empty">Loading Claude sessions…</p>
+        <p className="remote-monitor-empty">{t("sessions.loading")}</p>
       ) : null}
     </div>
   );

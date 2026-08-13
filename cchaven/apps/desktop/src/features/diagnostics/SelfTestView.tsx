@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { t } from "../../i18n";
 import type { DiagnosticsClient } from "../../lib/diagnosticsApi";
 
 export default function SelfTestView({
@@ -8,7 +9,7 @@ export default function SelfTestView({
 }) {
   const [profile, setProfile] = useState("ci-isolation");
   const [runId, setRunId] = useState<string | null>(null);
-  const [status, setStatus] = useState("Idle — choose a test-only profile, then run.");
+  const [status, setStatus] = useState(t("logs.selfTestIdle"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,10 +51,10 @@ export default function SelfTestView({
   }
 
   return (
-    <section className="diagnostics-self-test" aria-label="Self test">
+    <section className="diagnostics-self-test" aria-label={t("logs.tabSelfTest")}>
       <div className="diagnostics-toolbar">
         <div className="diagnostics-field" style={{ minWidth: 220, flex: 1 }}>
-          <label htmlFor="diagnostics-self-test-profile">Profile</label>
+          <label htmlFor="diagnostics-self-test-profile">{t("logs.profile")}</label>
           <input
             id="diagnostics-self-test-profile"
             value={profile}

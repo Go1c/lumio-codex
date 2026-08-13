@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "../../i18n";
 import {
   formatBytes,
   type RemoteMonitorClient,
@@ -47,7 +48,7 @@ export default function ServerStatusPane({ projectId, client }: Props) {
           error: {
             code: "ssh_failed",
             message:
-              error instanceof Error ? error.message : "Failed to load status",
+              error instanceof Error ? error.message : t("server.loadFailed"),
           },
         });
       } finally {
@@ -87,21 +88,23 @@ export default function ServerStatusPane({ projectId, client }: Props) {
   const hostUsed = host?.memory.usedBytes ?? 0;
 
   return (
-    <div className="remote-monitor-pane" aria-label="Server status">
+    <div className="remote-monitor-pane" aria-label={t("server.title")}>
       <div className="remote-monitor-toolbar">
         <span className="muted">
           {snapshot?.capturedAt
-            ? `Last updated ${new Date(snapshot.capturedAt).toLocaleTimeString()}`
+            ? t("server.capturedAt", {
+                time: new Date(snapshot.capturedAt).toLocaleTimeString(),
+              })
             : loading
-              ? "Loading…"
-              : "Not yet"}
+              ? t("common.loading")
+              : t("server.never")}
         </span>
         <button
           type="button"
           className="btn btn-secondary"
           onClick={() => void load(false)}
         >
-          Refresh
+          {t("server.refresh")}
         </button>
         {snapshot?.sshHostAlias ? (
           <span className="remote-monitor-badge">{snapshot.sshHostAlias}</span>
@@ -112,34 +115,38 @@ export default function ServerStatusPane({ projectId, client }: Props) {
         <div className="remote-monitor-error" role="alert">
           <strong>{snapshot.error.code}</strong>: {snapshot.error.message}
           <div className="muted" style={{ marginTop: 4 }}>
-            Check SSH config and project host connectivity.
+            {t("server.checkConnectivity")}
           </div>
         </div>
       ) : null}
 
       {host ? (
         <>
-          <section className="remote-monitor-card" aria-label="Host metrics">
-            <h3>Host</h3>
+          <section className="remote-monitor-card" aria-label={t("server.hostMetrics")}>
+            <h3>{t("server.host")}</h3>
             <div className="remote-monitor-metrics">
               <div className="remote-monitor-metric">
                 <strong>{host.cpu.usagePercent.toFixed(1)}%</strong>
                 <span>
-                  CPU
-                  {host.cpu.cores != null ? ` · ${host.cpu.cores} cores` : ""}
+                  {t("server.cpu")}
+                  {host.cpu.cores != null
+                    ? ` · ${t("server.cores", { n: host.cpu.cores })}`
+                    : ""}
                 </span>
               </div>
               <div className="remote-monitor-metric">
                 <strong>
                   {host.cpu.load1 != null ? host.cpu.load1.toFixed(2) : "—"}
                 </strong>
-                <span>Load (1m)</span>
+                <span>{t("server.load1")}</span>
               </div>
               <div className="remote-monitor-metric">
                 <strong>{formatBytes(host.memory.usedBytes)}</strong>
                 <span>
-                  Memory of {formatBytes(host.memory.totalBytes)} (
-                  {host.memory.usedPercent.toFixed(0)}%)
+                  {t("server.memoryOf", {
+                    total: formatBytes(host.memory.totalBytes),
+                    percent: host.memory.usedPercent.toFixed(0),
+                  })}
                 </span>
               </div>
             </div>
@@ -154,20 +161,22 @@ export default function ServerStatusPane({ projectId, client }: Props) {
                 {host.hostname ? host.hostname : ""}
                 {host.hostname && host.uptimeSeconds != null ? " · " : ""}
                 {host.uptimeSeconds != null
-                  ? `uptime ${Math.floor(host.uptimeSeconds / 3600)}h`
+                  ? t("server.uptime", {
+                      duration: `${Math.floor(host.uptimeSeconds / 3600)}h`,
+                    })
                   : ""}
               </div>
             ) : null}
           </section>
 
-          <section className="remote-monitor-card" aria-label="Disks">
-            <h3>Disk</h3>
+          <section className="remote-monitor-card" aria-label={t("server.disks")}>
+            <h3>{t("server.disks")}</h3>
             <table className="remote-monitor-table">
               <thead>
                 <tr>
-                  <th>Mount</th>
-                  <th>Used</th>
-                  <th>Total</th>
+                  <th>{t("server.colMount")}</th>
+                  <th>{t("server.colUsed")}</th>
+                  <th>{t("server.colTotal")}</th>
                   <th>%</th>
                 </tr>
               </thead>
@@ -190,20 +199,23 @@ export default function ServerStatusPane({ projectId, client }: Props) {
 
       {services ? (
         <>
-          <section className="remote-monitor-card" aria-label="Our services">
-            <h3>Our services</h3>
+          <section className="remote-monitor-card" aria-label={t("server.services")}>
+            <h3>{t("server.services")}</h3>
             <div className="remote-monitor-highlight">
-              Our services memory: {formatBytes(ourMem)}
+              {t("server.ourMemory", { memory: formatBytes(ourMem) })}
               {hostUsed > 0 ? (
-                <span className="muted"> / host used {formatBytes(hostUsed)}</span>
+                <span className="muted">
+                  {" "}
+                  {t("server.hostUsed", { memory: formatBytes(hostUsed) })}
+                </span>
               ) : null}
             </div>
             <table className="remote-monitor-table">
               <thead>
                 <tr>
-                  <th>Service</th>
-                  <th>Status</th>
-                  <th>Procs</th>
+                  <th>{t("server.colService")}</th>
+                  <th>{t("server.colStatus")}</th>
+                  <th>{t("server.colProcs")}</th>
                   <th>RSS</th>
                   <th>CPU%</th>
                 </tr>
@@ -214,7 +226,7 @@ export default function ServerStatusPane({ projectId, client }: Props) {
                   .map((item) => (
                     <tr key={item.key}>
                       <td>{item.displayName}</td>
-                      <td>{item.running ? "Running" : "Not running"}</td>
+                      <td>{item.running ? t("server.serviceRunning") : t("server.serviceStopped")}</td>
                       <td>{item.processCount}</td>
                       <td>{formatBytes(item.memoryRssBytes)}</td>
                       <td>{item.cpuPercent.toFixed(1)}</td>
@@ -226,24 +238,24 @@ export default function ServerStatusPane({ projectId, client }: Props) {
 
           <section
             className="remote-monitor-card"
-            aria-label="Claude processes on host"
+            aria-label={t("server.claudeProcesses")}
           >
-            <h3>Claude processes (host)</h3>
+            <h3>{t("server.claudeProcesses")}</h3>
             {(() => {
               const claude = services.items.find((i) => i.key === "claude");
               if (!claude || !claude.running) {
                 return (
                   <p className="remote-monitor-empty">
-                    No claude processes detected on this host. Dialogue-level
-                    list is under Claude Sessions.
+                    {t("server.noClaudeProcesses")}
                   </p>
                 );
               }
               return (
                 <p>
-                  {claude.processCount} process
-                  {claude.processCount === 1 ? "" : "es"} ·{" "}
-                  {formatBytes(claude.memoryRssBytes)} RSS
+                  {t("server.claudeProcessCount", {
+                    n: claude.processCount,
+                    memory: formatBytes(claude.memoryRssBytes),
+                  })}
                 </p>
               );
             })()}
@@ -252,7 +264,7 @@ export default function ServerStatusPane({ projectId, client }: Props) {
       ) : null}
 
       {loading && !snapshot ? (
-        <p className="remote-monitor-empty">Loading server status…</p>
+        <p className="remote-monitor-empty">{t("server.loading")}</p>
       ) : null}
     </div>
   );

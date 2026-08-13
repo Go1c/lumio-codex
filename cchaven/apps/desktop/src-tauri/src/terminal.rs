@@ -3,7 +3,9 @@
 //!
 //! The command is built as argv (never a shell string) and the password, when
 //! one is needed, is delivered through the askpass socket rather than the
-//! command line or the environment.
+//! command line or the environment. On top of plain attach/detach the manager
+//! drives the remote tmux session: open a new Claude window, close the current
+//! one, list windows, and tear the whole session down.
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
@@ -13,20 +15,22 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 use crate::askpass::AskpassServer;
-use crate::project::{AuthMethod, ServerConfig};
+use crate::project::{AuthMethod, ProjectConfig, ServerConfig};
 use crate::ssh;
 
 /// Terminal session state.
 pub struct TerminalSession {
     pub writer: Box<dyn Write + Send>,
     pub master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    /// Sanitised tmux session name, needed to tear the remote session down.
+    pub tmux_session: String,
     /// Kept alive for the session: OpenSSH may re-prompt after a reconnect.
     askpass: Option<AskpassServer>,
 }
 
 /// Manage active terminal sessions by project ID.
 pub struct TerminalManager {
-    pub sessions: Mutex<HashMap<String, TerminalSession>>,
+    sessions: Mutex<HashMap<String, TerminalSession>>,
 }
 
 /// Everything needed to attach one project's terminal.
@@ -67,15 +71,6 @@ impl TerminalManager {
         }
     }
 
-    /// The remote command that attaches to (or creates) the persistent session.
-    pub fn remote_command(tmux_session: &str, remote_root: &str) -> String {
-        format!(
-            "tmux new-session -A -s {session} -c {root}",
-            session = crate::deploy::shell_quote(&Self::sanitize_session_name(tmux_session)),
-            root = crate::deploy::shell_quote(remote_root)
-        )
-    }
-
     /// Escape a string for safe inclusion in a single-quoted POSIX shell string.
     /// Result is wrapped in single quotes; internal `'` become `'\''`.
     pub fn posix_shell_single_quote(value: &str) -> String {
@@ -92,41 +87,17 @@ impl TerminalManager {
         out
     }
 
-    /// Build the remote command string (single ssh remote argument).
-    /// `remote_root` and session name are shell-escaped / sanitized.
-    pub fn build_remote_tmux_cmd(remote_root: &str, tmux_session: &str) -> String {
-        let safe_session = Self::sanitize_session_name(tmux_session);
-        let safe_root = Self::posix_shell_single_quote(remote_root);
-        // Session is already restricted to [A-Za-z0-9_-]; still quote for defense in depth.
-        let safe_session_quoted = Self::posix_shell_single_quote(&safe_session);
-        // Wrap tmux with env to ensure TERM is properly inherited inside tmux.
-        // We export TERM=xterm-256color so the outer SSH pty matches xterm.js,
-        // then tmux propagates terminal modes (including cursor key mode) from
-        // the outer terminal to its panes.
+    /// The remote command that attaches to (or creates) the persistent session.
+    ///
+    /// `TERM` is exported inside the remote shell as well as on the local PTY:
+    /// tmux only propagates terminal modes (cursor keys in particular) to its
+    /// panes when the outer terminal already advertises `xterm-256color`.
+    pub fn remote_command(tmux_session: &str, remote_root: &str) -> String {
         format!(
             "env TERM=xterm-256color tmux new-session -A -s {session} -c {root}",
-            session = safe_session_quoted,
-            root = safe_root
+            session = Self::posix_shell_single_quote(&Self::sanitize_session_name(tmux_session)),
+            root = Self::posix_shell_single_quote(remote_root)
         )
-    }
-
-    /// Build the SSH command argv for connecting to a tmux session.
-    fn build_ssh_cmd(ssh_alias: &str, remote_root: &str, tmux_session: &str) -> CommandBuilder {
-        let remote_cmd = Self::build_remote_tmux_cmd(remote_root, tmux_session);
-
-        let mut cmd = CommandBuilder::new("ssh");
-        cmd.arg("-tt");
-        cmd.arg("-o");
-        cmd.arg("BatchMode=yes");
-        cmd.arg("-o");
-        cmd.arg("ServerAliveInterval=30");
-        cmd.arg("-o");
-        cmd.arg("ServerAliveCountMax=3");
-        cmd.arg(ssh_alias);
-        cmd.arg(remote_cmd);
-        // xterm.js emulates xterm-256color; SSH PTY must match.
-        cmd.env("TERM", "xterm-256color");
-        cmd
     }
 
     /// Start a new terminal session for a project.
@@ -227,6 +198,7 @@ impl TerminalManager {
         let session = TerminalSession {
             writer,
             master: Arc::new(Mutex::new(pty_pair.master)),
+            tmux_session: Self::sanitize_session_name(tmux_session),
             askpass,
         };
         self.sessions
@@ -267,6 +239,16 @@ impl TerminalManager {
             .map_err(|e| format!("无法调整终端大小：{e}"))
     }
 
+    /// The sanitised tmux session name of a running terminal.
+    pub fn tmux_session_of(&self, project_id: &str) -> Result<String, String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        Ok(sessions
+            .get(project_id)
+            .ok_or("终端未运行。")?
+            .tmux_session
+            .clone())
+    }
+
     /// Close a terminal session. Missing sessions are not an error: the UI calls
     /// this on unmount and on every reconnect.
     pub async fn close(&self, project_id: &str) -> Result<(), String> {
@@ -284,22 +266,21 @@ impl TerminalManager {
     }
 }
 
-impl Drop for TerminalManager {
-    fn drop(&mut self) {
-        // On app shutdown, kill all terminal sessions.
-        if let Ok(mut sessions) = self.sessions.lock() {
-            for (_, mut session) in sessions.drain() {
-                let _ = session.child.kill();
-                let _ = session.child.wait();
-            }
-        }
-    }
-}
-
 impl Default for TerminalManager {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The remote command that tears down one project's tmux session.
+///
+/// Scoped to this project's session on purpose: a global `pkill claude` would
+/// take out other projects sharing the same host.
+pub fn kill_session_command(tmux_session: &str) -> String {
+    let quoted = TerminalManager::posix_shell_single_quote(
+        &TerminalManager::sanitize_session_name(tmux_session),
+    );
+    format!("tmux kill-session -t {quoted} 2>/dev/null; echo done")
 }
 
 // --- Tauri commands ---
@@ -312,6 +293,21 @@ pub struct StartTerminalRequest {
     pub rows: u16,
 }
 
+/// Load the project and its stored password — every remote action needs both.
+async fn project_and_password(
+    project_id: &str,
+    auth: &crate::auth::AuthState,
+) -> Result<(ProjectConfig, Option<String>), String> {
+    let project = ProjectConfig::get(project_id)
+        .map_err(|e| format!("无法读取项目配置：{e}"))?
+        .ok_or("项目不存在。")?;
+    let password = auth
+        .secrets()
+        .ssh_password(project_id)
+        .map_err(|e| e.to_string())?;
+    Ok((project, password))
+}
+
 #[tauri::command]
 pub async fn start_terminal(
     request: StartTerminalRequest,
@@ -319,13 +315,7 @@ pub async fn start_terminal(
     state: tauri::State<'_, TerminalManager>,
     auth: tauri::State<'_, crate::auth::AuthState>,
 ) -> Result<(), String> {
-    let project = crate::project::ProjectConfig::get(&request.project_id)
-        .map_err(|e| format!("无法读取项目配置：{e}"))?
-        .ok_or("项目不存在。")?;
-    let password = auth
-        .secrets()
-        .ssh_password(&request.project_id)
-        .map_err(|e| e.to_string())?;
+    let (project, password) = project_and_password(&request.project_id, &auth).await?;
 
     state
         .start(
@@ -370,79 +360,60 @@ pub async fn close_terminal(
     state.close(&project_id).await
 }
 
-/// Create a new tmux window running `claude` in the session's tmux group.
-/// This sends the tmux key sequence to create a new window and launch Claude Code.
+/// Open a new tmux window and start Claude Code in it.
 #[tauri::command]
 pub fn new_claude_session(
     project_id: String,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
-    // tmux prefix: Ctrl-B, then 'c' creates a new window.
-    // After the new window opens, type 'claude' + Enter to start Claude Code.
-    let sequence = b"\x02cclaude\r";
-    state.write(&project_id, sequence)
+    // tmux prefix Ctrl-B, then `c` for a new window, then run `claude`.
+    state.write(&project_id, b"\x02cclaude\r")
 }
 
-/// Close the current tmux window (kills the pane). Use when a Claude session is done.
+/// Close the current tmux window (kills the pane) once a Claude session is done.
 #[tauri::command]
 pub fn close_tmux_window(
     project_id: String,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
-    // tmux prefix: Ctrl-B, then '&' to kill window, then 'y' to confirm.
-    let sequence = b"\x02&y";
-    state.write(&project_id, sequence)
+    // tmux prefix Ctrl-B, then `&` to kill the window, then `y` to confirm.
+    state.write(&project_id, b"\x02&y")
 }
 
-/// Kill all sessions: spawn a fresh SSH process to kill the entire tmux
-/// session (and all Claude processes within it) on the remote host.
-/// Then close the local PTY so the UI resets.
-#[tauri::command]
-pub fn kill_all_sessions(
-    project_id: String,
-    state: tauri::State<'_, TerminalManager>,
-    app: AppHandle,
-) -> Result<(), String> {
-    // Extract ssh_alias and tmux_session from the session, then close it.
-    let (ssh_alias, tmux_session) = {
-        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-        let session = sessions
-            .get(&project_id)
-            .ok_or("Terminal session not found")?;
-        (session.ssh_alias.clone(), session.tmux_session.clone())
-    };
-
-    // Kill only this project's tmux session — never global pkill claude
-    // (other projects on the same host must keep their Claude windows).
-    let safe_session = TerminalManager::sanitize_session_name(&tmux_session);
-    let quoted = TerminalManager::posix_shell_single_quote(&safe_session);
-    let kill_cmd = format!("tmux kill-session -t {quoted} 2>/dev/null; echo done");
-    let _ = std::process::Command::new("ssh")
-        .arg("-o")
-        .arg("BatchMode=yes")
-        .arg(&ssh_alias)
-        .arg(&kill_cmd)
-        .output();
-
-    // Now close the local terminal session (kills SSH child + PTY).
-    state.close(&project_id)?;
-
-    // Emit closed event so the frontend shows a clean state.
-    let closed_event = format!("terminal-closed-{project_id}");
-    let _ = app.emit(&closed_event, ());
-
-    Ok(())
-}
-
-/// List tmux windows in the current session (sends the tmux window list shortcut).
+/// Show tmux's own window list inside the terminal.
 #[tauri::command]
 pub fn list_tmux_windows(
     project_id: String,
     state: tauri::State<'_, TerminalManager>,
 ) -> Result<(), String> {
-    // tmux prefix: Ctrl-B, then 'w' to show window list.
-    let sequence = b"\x02w";
-    state.write(&project_id, sequence)
+    // tmux prefix Ctrl-B, then `w`.
+    state.write(&project_id, b"\x02w")
+}
+
+/// Kill this project's whole tmux session on the server (and with it every
+/// Claude process inside), then drop the local PTY so the UI resets.
+#[tauri::command]
+pub async fn kill_all_sessions(
+    project_id: String,
+    app: AppHandle,
+    state: tauri::State<'_, TerminalManager>,
+    auth: tauri::State<'_, crate::auth::AuthState>,
+) -> Result<(), String> {
+    let tmux_session = state.tmux_session_of(&project_id)?;
+    let (project, password) = project_and_password(&project_id, &auth).await?;
+
+    // Best effort: even if the host is unreachable the local terminal must go
+    // away, otherwise the UI is stuck on a dead session.
+    let _ = ssh::run_ssh(
+        &project.server,
+        password.as_deref(),
+        &kill_session_command(&tmux_session),
+    )
+    .await;
+
+    state.close(&project_id).await?;
+    let _ = app.emit(&format!("terminal-closed-{project_id}"), ());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -474,14 +445,73 @@ mod tests {
     }
 
     #[test]
+    fn posix_shell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(
+            TerminalManager::posix_shell_single_quote("it's"),
+            "'it'\\''s'"
+        );
+        assert_eq!(
+            TerminalManager::posix_shell_single_quote("plain"),
+            "'plain'"
+        );
+        assert_eq!(TerminalManager::posix_shell_single_quote("a;b"), "'a;b'");
+    }
+
+    #[test]
     fn the_remote_command_quotes_both_interpolations() {
         let command = TerminalManager::remote_command("cchaven-app", "/root/cchaven/app");
         assert_eq!(
             command,
-            "tmux new-session -A -s 'cchaven-app' -c '/root/cchaven/app'"
+            "env TERM=xterm-256color tmux new-session -A -s 'cchaven-app' -c '/root/cchaven/app'"
         );
 
         let hostile = TerminalManager::remote_command("s", "/root/'; id #");
         assert!(hostile.ends_with(r"-c '/root/'\''; id #'"));
+    }
+
+    #[test]
+    fn terminal_remote_root_is_shell_escaped() {
+        let injection = "/tmp/proj; touch /tmp/pwned; #";
+        let cmd = TerminalManager::remote_command("my-session", injection);
+
+        let expected_root = TerminalManager::posix_shell_single_quote(injection);
+        assert!(
+            cmd.contains(&format!("-c {expected_root}")),
+            "root must be a single quoted -c argument: {cmd}"
+        );
+        assert!(
+            !cmd.contains("-c /tmp/proj;"),
+            "unescaped remote_root must not appear: {cmd}"
+        );
+        assert!(cmd.contains("tmux new-session"));
+    }
+
+    #[test]
+    fn session_name_is_sanitized_and_quoted_in_remote_cmd() {
+        let session = "evil;rm -rf /";
+        let sanitized = TerminalManager::sanitize_session_name(session);
+        let cmd = TerminalManager::remote_command(session, "/home/u/p");
+        let quoted = TerminalManager::posix_shell_single_quote(&sanitized);
+        assert!(
+            cmd.contains(&quoted),
+            "expected quoted sanitized session {quoted:?} in {cmd}"
+        );
+        assert!(!cmd.contains("evil;rm"));
+        assert_eq!(sanitized, "evil-rm--rf--");
+    }
+
+    #[test]
+    fn kill_targets_only_this_projects_session() {
+        let command = kill_session_command("cchaven-app");
+        assert_eq!(
+            command,
+            "tmux kill-session -t 'cchaven-app' 2>/dev/null; echo done"
+        );
+        // Never a host-wide sweep: other projects share the machine.
+        assert!(!command.contains("pkill"));
+        assert!(!command.contains("kill-server"));
+
+        let hostile = kill_session_command("a'; rm -rf /; #");
+        assert!(!hostile.contains("rm -rf /"), "{hostile}");
     }
 }

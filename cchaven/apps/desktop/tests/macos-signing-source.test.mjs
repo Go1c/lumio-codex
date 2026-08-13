@@ -59,16 +59,26 @@ test("macOS builders isolate outputs and select one exact release DMG", () => {
     release,
     /CARGO_TARGET_DIR="\$repo_root\/target\/macos-arm64-release"/,
   );
+  // The bundle name comes from `productName`, so renaming the product cannot
+  // silently break packaging. It must still resolve to one exact path — a glob
+  // would happily verify some stale bundle left in the target directory.
+  for (const script of [acceptance, release]) {
+    assert.match(
+      script,
+      /product_name=\$\(node -p "require\('\$repo_root\/apps\/desktop\/src-tauri\/tauri\.conf\.json'\)\.productName"\)/,
+    );
+  }
   assert.match(
     acceptance,
-    /app="\$CARGO_TARGET_DIR\/\$target\/debug\/bundle\/macos\/FNS Workspace\.app"/,
+    /app="\$CARGO_TARGET_DIR\/\$target\/debug\/bundle\/macos\/\$product_name\.app"/,
   );
   assert.match(
     release,
-    /app="\$CARGO_TARGET_DIR\/\$target\/release\/bundle\/macos\/FNS Workspace\.app"/,
+    /app="\$CARGO_TARGET_DIR\/\$target\/release\/bundle\/macos\/\$product_name\.app"/,
   );
-  assert.match(release, /FNS Workspace_\$\{version\}_aarch64\.dmg/);
+  assert.match(release, /dmg="\$dmg_dir\/\$\{product_name\}_\$\{version\}_aarch64\.dmg"/);
   assert.doesNotMatch(release, /for dmg in/);
+  assert.doesNotMatch(release, /bundle\/macos\/\*\.app/);
 });
 
 test("macOS staging pins bundled Linux resources to release assets", () => {

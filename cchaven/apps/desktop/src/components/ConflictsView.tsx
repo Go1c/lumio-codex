@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import { toApiError } from "../lib/api";
 import { formatRelative } from "../lib/format";
 import { useApi } from "../state/ApiProvider";
 import { useToast } from "../state/ToastProvider";
-import type { Conflict, Resolution } from "../lib/types";
+import { ConflictRequestScope } from "./ConflictRequestScope";
+import type {
+  Conflict,
+  ConflictControlIdentity,
+  ConflictResolutionOperationView,
+  Resolution,
+} from "../lib/types";
 
 const RESOLUTIONS: Array<[Resolution, string]> = [
   ["keepLocal", t("workspace.keepLocal")],
@@ -26,6 +32,44 @@ export function ConflictsView({
   const { toast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(conflicts[0]?.id ?? null);
   const [busy, setBusy] = useState(false);
+  const [inFlight, setInFlight] = useState<ConflictControlIdentity | null>(null);
+  const [operations, setOperations] = useState<ConflictResolutionOperationView[]>([]);
+  const [failure, setFailure] = useState("");
+
+  // One scope per mount. It stamps every request with a generation so a reply
+  // that arrives after the user has left cannot be applied to a fresh page.
+  const scopeRef = useRef<ConflictRequestScope | null>(null);
+  if (scopeRef.current === null) scopeRef.current = new ConflictRequestScope();
+  const activeProjectRef = useRef(projectId);
+  activeProjectRef.current = projectId;
+
+  const loadOperations = useCallback(async () => {
+    try {
+      const next = await api.listConflictOperations(projectId);
+      if (activeProjectRef.current === projectId) setOperations(next);
+    } catch {
+      // The decision history is a convenience; its absence must not mask the
+      // conflicts themselves.
+    }
+  }, [api, projectId]);
+
+  useEffect(() => {
+    void loadOperations();
+  }, [loadOperations]);
+
+  // Abandon anything still in flight when the page goes away, so the engine
+  // does not hold a request nobody is waiting for.
+  useEffect(() => {
+    const scope = scopeRef.current;
+    return () => {
+      if (!scope) return;
+      const cleanup = scope.deactivate();
+      if (cleanup.activeRequestIds.length === 0) return;
+      void api
+        .cancelConflictGeneration(projectId, cleanup.projectGeneration)
+        .catch(() => undefined);
+    };
+  }, [api, projectId]);
 
   useEffect(() => {
     if (!conflicts.some((conflict) => conflict.id === selectedId)) {
@@ -39,10 +83,24 @@ export function ConflictsView({
   );
 
   async function resolve(conflict: Conflict, resolution: Resolution) {
+    const scope = scopeRef.current;
+    const identity = scope?.beginResolution(conflict.id) ?? null;
+    if (!identity) return;
+
     setBusy(true);
+    setFailure("");
+    setInFlight(identity);
     try {
-      const receipt = await api.resolveConflict(projectId, conflict.id, resolution);
+      const receipt = await api.resolveConflict(
+        projectId,
+        conflict.id,
+        resolution,
+        identity,
+      );
+      // A late reply for a page the user has already left must be dropped.
+      if (!scope?.acceptsResolution(identity)) return;
       await onChanged();
+      await loadOperations();
       toast(t("workspace.resolved", { path: receipt.path, how: receipt.label }), {
         action: {
           label: t("common.undo"),
@@ -57,9 +115,23 @@ export function ConflictsView({
         onExpire: () => void api.forgetConflictUndo(projectId, conflict.id),
       });
     } catch (caught) {
-      toast(toApiError(caught).message);
+      if (!scope?.acceptsResolution(identity)) return;
+      setFailure(t("conflicts.operationFailed", { detail: toApiError(caught).message }));
     } finally {
+      scope?.finishResolution(identity);
+      setInFlight(null);
       setBusy(false);
+    }
+  }
+
+  /** Withdraw a resolution the user no longer wants to wait for. */
+  async function cancelInFlight() {
+    if (!inFlight) return;
+    try {
+      await api.cancelConflictRequest(projectId, inFlight);
+      await loadOperations();
+    } catch (caught) {
+      setFailure(t("conflicts.cancelFailed", { detail: toApiError(caught).message }));
     }
   }
 
@@ -111,7 +183,7 @@ export function ConflictsView({
                 key={resolution}
                 type="button"
                 className={resolution === "keepBoth" ? "btn btn-ghost" : "btn btn-secondary"}
-                disabled={busy}
+                disabled={busy || current.canResolve === false}
                 onClick={() => void resolve(current, resolution)}
               >
                 {label}
@@ -134,6 +206,54 @@ export function ConflictsView({
               ))}
             </select>
           </div>
+
+          {(current.pendingResolution ||
+            current.canResolve === false ||
+            inFlight ||
+            failure) && (
+            <div className="conf-state" role="status">
+              {current.pendingResolution && (
+                <span>
+                  {t("conflicts.queuedAs", { how: current.pendingResolution })}
+                </span>
+              )}
+              {current.canResolve === false && !current.pendingResolution && (
+                <span>{t("conflicts.blocked")}</span>
+              )}
+              {inFlight && (
+                <>
+                  <span>{t("conflicts.inFlight")}</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void cancelInFlight()}
+                  >
+                    {t("conflicts.cancelRequest")}
+                  </button>
+                </>
+              )}
+              {failure && <span className="conf-failure">{failure}</span>}
+            </div>
+          )}
+
+          {operations.length > 0 && (
+            <details className="conf-history">
+              <summary>{t("conflicts.recentDecisions")}</summary>
+              <ul>
+                {operations.map((operation) => (
+                  <li key={operation.requestId}>
+                    {t(`conflicts.phase.${operation.phase}`)}
+                    {" · "}
+                    {operation.choice}
+                    {operation.receipt?.operationId
+                      ? ` · ${operation.receipt.operationId}`
+                      : ""}
+                    {operation.error ? ` · ${operation.error}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           <div className="diff">
             <DiffPane

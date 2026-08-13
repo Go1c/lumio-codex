@@ -31,15 +31,6 @@ const FALLBACK_LINKS: ExternalLinks = {
 
 type Phase = "restoring" | "signedOut" | "signedIn";
 
-function errorSummary(error: unknown): string {
-  if (typeof error === "string") return error;
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "primary" in error) {
-    return String(error.primary);
-  }
-  return "Unknown error";
-}
-
 export default function App() {
   const api = useApi();
   const { toast } = useToast();
@@ -69,19 +60,22 @@ export default function App() {
   const refreshProjects = useCallback(async () => {
     const list = await api.listProjects();
     setProjects(list);
-    const entries = await Promise.all(
-      list.map(async (project) => {
-        try {
-          return [project.id, await api.syncStatus(project.id)] as const;
-        } catch {
-          return [
-            project.id,
-            { state: "offline", conflicts: 0, pending: 0 } as SyncStatus,
-          ] as const;
-        }
-      }),
-    );
-    setStatuses(Object.fromEntries(entries));
+
+    // Bring every configured project's sync engine up, but never make the
+    // project list wait on a server round trip: a single unreachable host must
+    // not blank the sidebar.
+    list.forEach((project) => {
+      void api.startSync(project.id).catch(() => undefined);
+    });
+
+    for (const project of list) {
+      void api
+        .syncStatus(project.id)
+        .catch(() => ({ state: "offline", conflicts: 0, pending: 0 }) as SyncStatus)
+        .then((status) =>
+          setStatuses((current) => ({ ...current, [project.id]: status })),
+        );
+    }
     return list;
   }, [api]);
 

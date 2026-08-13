@@ -708,7 +708,7 @@ impl SyncState {
         }
     }
 
-    async fn stop(&self, project_id: &str) -> LifecycleResult {
+    pub(crate) async fn stop(&self, project_id: &str) -> LifecycleResult {
         let stop = {
             let mut registry = self.registry.lock().await;
             let Some(session) = registry.sessions.get_mut(project_id) else {
@@ -752,7 +752,7 @@ impl SyncState {
         }
     }
 
-    async fn list_conflicts(
+    pub(crate) async fn list_conflicts(
         &self,
         project_id: &str,
     ) -> Result<Vec<fns_agent::ConflictView>, SyncFailure> {
@@ -778,7 +778,7 @@ impl SyncState {
         .map_err(SyncFailure::primary)
     }
 
-    async fn resolve_conflict(
+    pub(crate) async fn resolve_conflict(
         &self,
         project_id: &str,
         identity: ConflictControlIdentity,
@@ -942,7 +942,7 @@ impl SyncState {
         operations.into_iter().map(|(_, view)| view).collect()
     }
 
-    async fn status(&self, project_id: &str) -> SyncStatus {
+    pub(crate) async fn status(&self, project_id: &str) -> SyncStatus {
         let registry = self.registry.lock().await;
         if let Some(session) = registry.sessions.get(project_id) {
             return SyncStatus {
@@ -2220,11 +2220,21 @@ async fn wait_for_signal(
     }
 }
 
-fn project_state_dir(project_id: &str) -> PathBuf {
+pub(crate) fn project_state_dir(project_id: &str) -> PathBuf {
     let base = directories::BaseDirs::new()
         .map(|directories| directories.config_dir().join("fns-workspace"))
         .unwrap_or_else(|| PathBuf::from(".config/fns-workspace"));
     base.join(format!("projects-{project_id}")).join("state")
+}
+
+/// The agent's own view of how much work is outstanding.
+///
+/// `fns-agent` rewrites `runtime-status.json` atomically on every state change;
+/// it is the only place that knows the queue depth, and reading the file keeps
+/// the aggregate status card off the control channel's request budget.
+pub(crate) fn agent_runtime_status(project_id: &str) -> Option<fns_agent::AgentStatus> {
+    let bytes = std::fs::read(project_state_dir(project_id).join("runtime-status.json")).ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn resolve_project_client_id(
@@ -2316,6 +2326,7 @@ pub async fn start_sync(
         .map_err(|_| SyncFailure::primary(AgentErrorCode::InvalidConfiguration))?;
     let client_id = resolve_project_client_id(&state_dir, &project_id, workspace_id)
         .map_err(SyncFailure::primary)?;
+    let ssh_host = project.ssh_host_alias();
     let config = AgentConfig {
         schema_version: "fns-agent-config/1".into(),
         endpoint: String::new(),
@@ -2343,7 +2354,7 @@ pub async fn start_sync(
                 tunnels: tunnel_state.inner().clone(),
                 tasks: sync_state.tasks.clone(),
             }),
-            ssh_host: project.ssh_host_alias.clone(),
+            ssh_host,
             remote_port: REMOTE_WORKSPACE_PORT,
             restart_policy: RestartPolicy::default(),
             #[cfg(test)]
@@ -2363,7 +2374,7 @@ pub async fn stop_sync(
 }
 
 #[tauri::command]
-pub async fn sync_status(
+pub async fn sync_engine_status(
     project_id: String,
     sync_state: tauri::State<'_, SyncState>,
 ) -> Result<SyncStatus, String> {

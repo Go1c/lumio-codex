@@ -752,7 +752,7 @@ pub fn list_claude_sessions(project_id: String) -> ClaudeSessionsSnapshot {
         Err(_) => {
             return sessions_error(
                 &project_id,
-                &project.ssh_host_alias,
+                &project.ssh_host_alias(),
                 &project.tmux_session,
                 &captured_at,
                 false,
@@ -767,13 +767,13 @@ pub fn list_claude_sessions(project_id: String) -> ClaudeSessionsSnapshot {
         "tmux list-windows -t {quoted} -F '#{{window_index}}\t#{{window_name}}\t#{{window_active}}\t#{{window_panes}}\t#{{window_id}}'"
     );
 
-    match run_ssh_capture(&project.ssh_host_alias, &cmd) {
+    match run_ssh_capture(&project.ssh_host_alias(), &cmd) {
         Ok(capture) => {
             if capture.exit_code != 0 {
                 // tmux returns non-zero when session is missing
                 return sessions_error(
                     &project_id,
-                    &project.ssh_host_alias,
+                    &project.ssh_host_alias(),
                     &session,
                     &captured_at,
                     false,
@@ -784,14 +784,14 @@ pub fn list_claude_sessions(project_id: String) -> ClaudeSessionsSnapshot {
             parse_tmux_list_windows(
                 &capture.stdout,
                 &project_id,
-                &project.ssh_host_alias,
+                &project.ssh_host_alias(),
                 &session,
                 &captured_at,
             )
         }
         Err(e) => sessions_error(
             &project_id,
-            &project.ssh_host_alias,
+            &project.ssh_host_alias(),
             &session,
             &captured_at,
             false,
@@ -807,7 +807,7 @@ pub fn switch_claude_session(project_id: String, window_index: u32) -> Result<()
     let project = load_project(&project_id).map_err(|e| e.message)?;
     let target = tmux_target(&project.tmux_session, window_index)?;
     let cmd = format!("tmux select-window -t {target}");
-    let capture = run_ssh_capture(&project.ssh_host_alias, &cmd).map_err(|e| e.message)?;
+    let capture = run_ssh_capture(&project.ssh_host_alias(), &cmd).map_err(|e| e.message)?;
     if capture.exit_code != 0 {
         return Err("window_not_found".into());
     }
@@ -820,7 +820,7 @@ pub fn kill_claude_session(project_id: String, window_index: u32) -> Result<(), 
     let project = load_project(&project_id).map_err(|e| e.message)?;
     let target = tmux_target(&project.tmux_session, window_index)?;
     let cmd = format!("tmux kill-window -t {target}");
-    let capture = run_ssh_capture(&project.ssh_host_alias, &cmd).map_err(|e| e.message)?;
+    let capture = run_ssh_capture(&project.ssh_host_alias(), &cmd).map_err(|e| e.message)?;
     if capture.exit_code != 0 {
         return Err("window_not_found".into());
     }
@@ -845,12 +845,12 @@ pub fn get_server_status(project_id: String) -> ServerStatusSnapshot {
     };
 
     let script = build_host_probe_script(&project.remote_root);
-    match run_ssh_capture(&project.ssh_host_alias, &script) {
+    match run_ssh_capture(&project.ssh_host_alias(), &script) {
         Ok(capture) => {
             if capture.exit_code != 0 && capture.stdout.trim().is_empty() {
                 return server_status_error(
                     &project_id,
-                    &project.ssh_host_alias,
+                    &project.ssh_host_alias(),
                     &captured_at,
                     "remote_cmd_failed",
                     "Remote probe failed",
@@ -859,13 +859,13 @@ pub fn get_server_status(project_id: String) -> ServerStatusSnapshot {
             parse_server_status_payload(
                 &capture.stdout,
                 &project_id,
-                &project.ssh_host_alias,
+                &project.ssh_host_alias(),
                 &captured_at,
             )
         }
         Err(e) => server_status_error(
             &project_id,
-            &project.ssh_host_alias,
+            &project.ssh_host_alias(),
             &captured_at,
             &e.code,
             &e.message,
@@ -923,13 +923,8 @@ mod tests {
     #[test]
     fn parse_tmux_list_windows_tsv() {
         let raw = "0\tmain\t1\t1\t@1\n1\tfix auth\t0\t1\t@2\n";
-        let snap = parse_tmux_list_windows(
-            raw,
-            "proj-1",
-            "myhost",
-            "fns-demo",
-            "2026-08-11T00:00:00Z",
-        );
+        let snap =
+            parse_tmux_list_windows(raw, "proj-1", "myhost", "fns-demo", "2026-08-11T00:00:00Z");
         assert!(snap.ok);
         assert!(snap.session_exists);
         assert_eq!(snap.windows.len(), 2);
@@ -947,7 +942,13 @@ mod tests {
 
     #[test]
     fn snapshot_error_helper_sets_ok_false() {
-        let s = server_status_error("p", "h", "2026-08-11T00:00:00Z", "timeout", "probe timed out");
+        let s = server_status_error(
+            "p",
+            "h",
+            "2026-08-11T00:00:00Z",
+            "timeout",
+            "probe timed out",
+        );
         assert!(!s.ok);
         assert_eq!(s.error.unwrap().code, "timeout");
     }
@@ -971,13 +972,7 @@ mod tests {
 
     #[test]
     fn parse_tmux_empty_stdout_is_existing_session_zero_windows() {
-        let snap = parse_tmux_list_windows(
-            "",
-            "proj-1",
-            "host",
-            "sess",
-            "2026-08-11T00:00:00Z",
-        );
+        let snap = parse_tmux_list_windows("", "proj-1", "host", "sess", "2026-08-11T00:00:00Z");
         assert!(snap.ok);
         assert!(snap.session_exists);
         assert!(snap.windows.is_empty());

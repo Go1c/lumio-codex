@@ -4,11 +4,16 @@
 //! confined to it: paths are relative, `..` is rejected, and the resolved target
 //! must still live under the root after symlinks are followed. What lands in the
 //! folder is picked up by `fns-sync-core` and mirrored to the server.
+//!
+//! Commands take a `projectId`, never an absolute root: the root is loaded from
+//! the persisted [`ProjectConfig`] so the frontend cannot point the app at an
+//! arbitrary directory.
 
-use crate::project::ProjectConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::project::ProjectConfig;
 
 /// Largest file we will render in the built-in viewer (5.5 五态).
 pub const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
@@ -66,43 +71,116 @@ pub enum EntryKind {
     Directory,
 }
 
-/// Resolve a root-relative path, refusing anything that escapes the root.
-pub fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, String> {
-    let relative = relative.trim_start_matches('/');
+// --- Path confinement ---
+
+/// Resolve `relative` under `project_root`, rejecting absolute paths, `..`
+/// components, and symlink escapes that would leave the project root.
+///
+/// For paths that do not yet exist, the nearest existing ancestor is
+/// canonicalized and the remaining suffix is re-joined under a prefix check —
+/// creating a file must not become a way out of the sync folder.
+pub fn resolve_project_path(project_root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.is_empty() {
-        return Ok(root.to_path_buf());
-    }
-    let candidate = Path::new(relative);
-    if candidate.is_absolute() {
         return Err("路径必须位于项目文件夹内。".into());
     }
-    for component in candidate.components() {
+    if relative.contains('\0') {
+        return Err("路径必须位于项目文件夹内。".into());
+    }
+
+    let rel = Path::new(relative);
+    if rel.is_absolute() {
+        return Err("路径必须位于项目文件夹内。".into());
+    }
+
+    for component in rel.components() {
         match component {
             Component::Normal(_) | Component::CurDir => {}
-            _ => return Err("路径必须位于项目文件夹内。".into()),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err("路径必须位于项目文件夹内。".into());
+            }
         }
     }
 
-    let joined = root.join(candidate);
-    // Follow symlinks where the target already exists; new files are checked by
-    // their (existing) parent instead.
-    let checked = match joined.canonicalize() {
-        Ok(resolved) => resolved,
-        Err(_) => {
-            let parent = joined.parent().unwrap_or(root);
-            let resolved_parent = parent
-                .canonicalize()
-                .map_err(|_| "目标文件夹不存在。".to_string())?;
-            resolved_parent.join(joined.file_name().unwrap_or_default())
-        }
-    };
-    let root_real = root
+    let root = project_root
         .canonicalize()
         .map_err(|_| "项目文件夹不存在，可能已被移动或删除。".to_string())?;
-    if !checked.starts_with(&root_real) {
+    if !root.is_dir() {
+        return Err("项目文件夹不存在，可能已被移动或删除。".into());
+    }
+
+    let candidate = root.join(rel);
+    ensure_under_root(&root, &candidate)
+}
+
+fn ensure_under_root(root: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    // If the leaf exists, canonicalize it (follows the final symlink) and
+    // require the result to stay under root.
+    if candidate.exists() {
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|_| "路径必须位于项目文件夹内。".to_string())?;
+        if !path_is_within(root, &canonical) {
+            return Err("路径必须位于项目文件夹内。".into());
+        }
+        return Ok(canonical);
+    }
+
+    // Walk up to the nearest existing ancestor, canonicalize it, then re-apply
+    // the non-existing suffix under a strict prefix check.
+    let mut ancestor = candidate.to_path_buf();
+    let mut missing_rev: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if ancestor.exists() {
+            break;
+        }
+        let name = ancestor
+            .file_name()
+            .ok_or_else(|| "路径必须位于项目文件夹内。".to_string())?
+            .to_os_string();
+        missing_rev.push(name);
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| "路径必须位于项目文件夹内。".to_string())?
+            .to_path_buf();
+    }
+
+    let mut resolved = ancestor
+        .canonicalize()
+        .map_err(|_| "目标文件夹不存在。".to_string())?;
+    if !path_is_within(root, &resolved) {
         return Err("路径必须位于项目文件夹内。".into());
     }
-    Ok(checked)
+
+    for component in missing_rev.into_iter().rev() {
+        resolved.push(component);
+        if resolved.exists() {
+            resolved = resolved
+                .canonicalize()
+                .map_err(|_| "路径必须位于项目文件夹内。".to_string())?;
+        }
+        if !path_is_within(root, &resolved) {
+            return Err("路径必须位于项目文件夹内。".into());
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn path_is_within(root: &Path, path: &Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+/// Resolve a root-relative path, refusing anything that escapes the root.
+///
+/// An empty path is the root itself — the explorer addresses the sync folder
+/// that way. An absolute path is rejected rather than reinterpreted: silently
+/// turning `/etc/passwd` into `<root>/etc/passwd` would answer a question the
+/// caller did not ask.
+pub fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    if relative.is_empty() {
+        return Ok(root.to_path_buf());
+    }
+    resolve_project_path(root, relative)
 }
 
 /// Resolve a path that is about to be written, creating missing parents.
@@ -111,7 +189,6 @@ pub fn resolve_within(root: &Path, relative: &str) -> Result<PathBuf, String> {
 /// target a file whose folder has not been synced down yet. The parent is
 /// canonicalised after creation so a symlinked ancestor still cannot escape.
 pub fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String> {
-    let relative = relative.trim_start_matches('/');
     let candidate = Path::new(relative);
     if relative.is_empty() || candidate.is_absolute() {
         return Err("路径必须位于项目文件夹内。".into());
@@ -134,7 +211,7 @@ pub fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String>
     let parent_real = parent
         .canonicalize()
         .map_err(|e| format!("无法创建目录：{e}"))?;
-    if !parent_real.starts_with(&root_real) {
+    if !path_is_within(&root_real, &parent_real) {
         return Err("路径必须位于项目文件夹内。".into());
     }
     Ok(parent_real.join(target.file_name().unwrap_or_default()))
@@ -154,6 +231,37 @@ pub fn validate_entry_name(name: &str) -> Result<&str, String> {
     }
     Ok(trimmed)
 }
+
+// --- Project root resolution ---
+
+/// Resolve the configured `local_root` for a project id from persisted config.
+/// Frontend callers must never supply absolute roots directly.
+pub fn local_root_for_project_id(id: &str) -> Result<PathBuf, String> {
+    let project = ProjectConfig::find_by_id(id).map_err(|e| format!("无法读取项目配置：{e}"))?;
+    project_local_root_for(&project)
+}
+
+/// Expose `local_root` from an already-loaded project (unit-test helper).
+pub fn project_local_root_for(project: &ProjectConfig) -> Result<PathBuf, String> {
+    let trimmed = project.local_root.trim();
+    if trimmed.is_empty() {
+        return Err("项目没有配置本机同步文件夹。".into());
+    }
+    Ok(PathBuf::from(trimmed))
+}
+
+/// Canonicalize a project root, failing loudly when it has been moved away.
+pub fn canonicalize_project_root(local_root: &Path) -> Result<PathBuf, String> {
+    let root = local_root
+        .canonicalize()
+        .map_err(|_| "项目文件夹不存在，可能已被移动或删除。".to_string())?;
+    if !root.is_dir() {
+        return Err("项目文件夹不存在，可能已被移动或删除。".into());
+    }
+    Ok(root)
+}
+
+// --- Tree reading ---
 
 fn modified_ms(meta: &std::fs::Metadata) -> Option<i64> {
     meta.modified()
@@ -311,6 +419,8 @@ pub fn read_preview(root: &Path, relative: &str) -> Result<FilePreview, String> 
         }),
     }
 }
+
+// --- Write operations (5.5 新建 / 重命名 / 删除 + 撤销) ---
 
 /// Create a file or folder; returns its root-relative path.
 pub fn create_entry(
@@ -569,6 +679,37 @@ mod tests {
         assert!(resolve_within(root.path(), "link").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_new_file_placed_through_an_escaping_symlink_directory() {
+        // The wizard's 新建文件 path resolves a leaf that does not exist yet;
+        // the escape has to be caught on the existing ancestor.
+        let root = temp_root();
+        let outside = temp_root();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("leak")).expect("symlink");
+
+        assert!(resolve_within(root.path(), "leak/planted.txt").is_err());
+        assert!(create_entry(root.path(), "leak", "planted.txt", EntryKind::File).is_err());
+    }
+
+    #[test]
+    fn rejects_absolute_and_nul_relative_paths() {
+        let root = temp_root();
+        assert!(resolve_project_path(root.path(), "/tmp/x").is_err());
+        assert!(resolve_project_path(root.path(), "a\0b").is_err());
+        assert!(resolve_project_path(root.path(), "").is_err());
+    }
+
+    #[test]
+    fn an_absolute_path_is_refused_rather_than_reinterpreted_under_the_root() {
+        // Stripping the leading slash would turn a system path into a valid
+        // in-project path and quietly create it there.
+        let root = temp_root();
+        assert!(resolve_within(root.path(), "/etc/passwd").is_err());
+        assert!(resolve_for_write(root.path(), "/etc/passwd").is_err());
+        assert!(!root.path().join("etc").exists());
+    }
+
     #[test]
     fn entry_names_must_be_single_segments() {
         assert!(validate_entry_name("main.rs").is_ok());
@@ -694,126 +835,10 @@ mod tests {
     }
 }
 
-/// Open a project-relative path in the system file manager (Finder on macOS).
-/// When `relative_path` is `None` or empty, opens the project root.
-#[tauri::command]
-pub fn open_in_finder(project_id: String, relative_path: Option<String>) -> Result<(), String> {
-    let local_root = local_root_for_project_id(&project_id)?;
-    let root = canonicalize_project_root(&local_root)?;
-    let full = match relative_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-    {
-        None => root,
-        Some(rel) => resolve_project_path(&root, rel)?,
-    };
-
-    if !full.exists() {
-        return Err(format!("Path does not exist: {}", full.display()));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&full)
-            .spawn()
-            .map_err(|e| format!("Failed to open in Finder: {e}"))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&full)
-            .spawn()
-            .map_err(|e| format!("Failed to open file manager: {e}"))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&full)
-            .spawn()
-            .map_err(|e| format!("Failed to open Explorer: {e}"))?;
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod security_path_tests {
-    use super::resolve_project_path;
-    use std::fs;
-
-    #[test]
-    fn rejects_path_escape_with_dotdot() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::write(root.join("safe.txt"), "ok").unwrap();
-
-        assert!(resolve_project_path(root, "../etc/passwd").is_err());
-        assert!(resolve_project_path(root, "a/../../etc/passwd").is_err());
-        assert!(resolve_project_path(root, "..").is_err());
-        assert!(resolve_project_path(root, "/etc/passwd").is_err());
-        assert!(resolve_project_path(root, "").is_err());
-    }
-
-    #[test]
-    fn resolves_safe_relative_paths() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-
-        let resolved = resolve_project_path(root, "src/main.rs").unwrap();
-        assert_eq!(resolved, root.join("src/main.rs").canonicalize().unwrap());
-
-        // Non-existing file under an existing parent is allowed (for create-like UX).
-        let missing = resolve_project_path(root, "src/new.rs").unwrap();
-        assert!(missing.starts_with(root.canonicalize().unwrap()));
-        assert!(missing.ends_with("new.rs"));
-    }
-
-    #[test]
-    fn rejects_symlink_escape_outside_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("project");
-        let outside = dir.path().join("outside");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        fs::write(outside.join("secret.txt"), "classified").unwrap();
-
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&outside, root.join("leak")).unwrap();
-            let result = resolve_project_path(&root, "leak/secret.txt");
-            assert!(
-                result.is_err(),
-                "symlink escape should be rejected, got {result:?}"
-            );
-        }
-
-        #[cfg(not(unix))]
-        {
-            // Symlink escape coverage is Unix-oriented; still assert base rejection.
-            assert!(resolve_project_path(&root, "../outside/secret.txt").is_err());
-        }
-    }
-
-    #[test]
-    fn rejects_absolute_and_nul_relative() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(resolve_project_path(dir.path(), "/tmp/x").is_err());
-        assert!(resolve_project_path(dir.path(), "a\0b").is_err());
-    }
-}
-
 #[cfg(test)]
 mod project_id_path_tests {
-    use super::{
-        canonicalize_project_root, project_local_root_for, read_file_tree, resolve_project_path,
-    };
-    use crate::project::{ProjectConfig, SyncConfig, SyncMode};
+    use super::{canonicalize_project_root, project_local_root_for, read_tree, resolve_within};
+    use crate::project::{AuthMethod, ProjectConfig, ServerConfig, SyncConfig};
     use std::collections::HashMap;
     use std::fs;
 
@@ -821,17 +846,20 @@ mod project_id_path_tests {
         ProjectConfig {
             id,
             name: "demo".into(),
-            ssh_host_alias: "devbox".into(),
+            server: ServerConfig {
+                host: "43.156.20.8".into(),
+                user: "dev".into(),
+                port: 22,
+                auth: AuthMethod::Password,
+                key_path: None,
+                config_alias: None,
+            },
             remote_root: "/home/dev/code/my-app".into(),
             local_root: local_root.into(),
             workspace_id: uuid::Uuid::new_v4(),
             tmux_session: "demo".into(),
-            sync: SyncConfig {
-                mode: SyncMode::TwoWaySafe,
-                includes: vec!["**/*".into()],
-                excludes: vec![],
-                protect_secrets: true,
-            },
+            sync: SyncConfig::default(),
+            created_at: "0".into(),
         }
     }
 
@@ -845,6 +873,7 @@ mod project_id_path_tests {
         let found = ProjectConfig::find_in_map(&map, &id.to_string()).unwrap();
         assert_eq!(found.id, id);
         assert_eq!(found.local_root, project.local_root);
+        assert_eq!(found.ssh_host_alias(), "dev@43.156.20.8");
 
         let missing = ProjectConfig::find_in_map(&map, "not-a-real-id");
         assert_eq!(missing.unwrap_err().kind(), std::io::ErrorKind::NotFound);
@@ -864,25 +893,16 @@ mod project_id_path_tests {
         let root_path = project_local_root_for(&project).unwrap();
         let root = canonicalize_project_root(&root_path).unwrap();
 
-        let tree = read_file_tree(&root, 5).unwrap();
-        match tree {
-            super::FileTreeNode::Directory { children, .. } => {
-                assert!(
-                    children.iter().any(|child| matches!(
-                        child,
-                        super::FileTreeNode::Directory { name, .. } if name == "src"
-                    )),
-                    "expected src directory in tree: {children:?}"
-                );
-            }
-            other => panic!("expected root directory, got {other:?}"),
-        }
+        let tree = read_tree(&root, 5).unwrap();
+        assert!(
+            tree.iter().any(|node| node.name == "src"),
+            "expected src directory in tree: {tree:?}"
+        );
 
-        let resolved = resolve_project_path(&root, "src/hello.txt").unwrap();
-        let content = fs::read_to_string(resolved).unwrap();
-        assert_eq!(content, "hello-from-project");
+        let resolved = resolve_within(&root, "src/hello.txt").unwrap();
+        assert_eq!(fs::read_to_string(resolved).unwrap(), "hello-from-project");
 
         // Escapes still rejected under the project root.
-        assert!(resolve_project_path(&root, "../outside.txt").is_err());
+        assert!(resolve_within(&root, "../outside.txt").is_err());
     }
 }

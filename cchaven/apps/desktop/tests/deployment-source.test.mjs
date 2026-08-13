@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const source = await readFile(
-  new URL("../src/components/OnboardingWizard.tsx", import.meta.url),
+  new URL("../src/components/ProjectWizard.tsx", import.meta.url),
   "utf8",
 );
 const deploySource = await readFile(
@@ -15,12 +15,12 @@ const tauriConfig = await readFile(
   "utf8",
 );
 
-test("onboarding previews before executing the managed remote deployment", () => {
-  const preview = source.indexOf('"preview_remote_deployment"');
-  const provision = source.indexOf('invoke("provision_workspace_credential"');
-  const probe = source.indexOf('invoke("probe_workspace_access"');
-  const save = source.indexOf('invoke("save_project"');
-  const execute = source.indexOf('invoke("execute_remote_deployment"');
+test("the wizard previews before executing the managed remote deployment", () => {
+  const preview = source.indexOf("api.previewDeployment(");
+  const provision = source.indexOf("api.provisionCredential(");
+  const save = source.indexOf("api.saveProject(buildConfig(), password || undefined)", provision);
+  const execute = source.indexOf("api.executeDeployment(");
+  const probe = source.indexOf("api.probeWorkspaceAccess(");
 
   assert.ok(preview >= 0, "read-only deployment preview is missing");
   assert.ok(provision > preview, "credential provisioning must follow preview");
@@ -30,8 +30,10 @@ test("onboarding previews before executing the managed remote deployment", () =>
     probe > execute,
     "workspace access must be verified after deployment registers the root",
   );
-  assert.match(source, /listen<DeployProgress>\(\s*"deploy:\/\/progress"/);
-  assert.match(source, /invoke\("cancel_remote_deployment"/);
+  // A preview carrying blocking warnings must never be executable.
+  assert.match(source, /preview\.warnings\.length > 0/);
+  assert.match(source, /EVENTS\.deployProgress/);
+  assert.match(source, /api\.cancelDeployment\(/);
 });
 
 test("users never provide deployment artifact paths", () => {

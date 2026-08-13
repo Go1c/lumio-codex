@@ -1,21 +1,40 @@
 //! CC避风港（CCHaven）desktop backend — Tauri 2.
 //!
-//! Command surface for the macOS app: browser-based account access, project
-//! configuration and deployment, the local sync folder explorer, conflict
-//! resolution, and the embedded terminal.
+//! One command surface covering both halves of the product:
+//!
+//! * the consumer shell — browser account access, the three-step project
+//!   wizard, the local sync folder with undo, and the conflict page;
+//! * the engineering surface — remote deployment, Claude session control,
+//!   server monitoring, diagnostics, SSH tunnels and the sync engine's own
+//!   conflict state machine.
+//!
+//! The sync engine runs as a local `fns-agent` sidecar reached over an SSH
+//! tunnel; `sync.rs` owns its lifecycle and `conflict_bridge.rs` translates its
+//! conflict control surface into the one the conflict page renders.
 
 pub mod askpass;
 pub mod auth;
+pub mod conflict_bridge;
 pub mod conflicts;
 pub mod control;
-pub mod deploy;
 pub mod files;
 pub mod project;
 pub mod ssh;
-pub mod sync;
 pub mod terminal;
 
+// The engineering surface stays crate-private: its error types are `pub(crate)`
+// and nothing outside this crate drives deployment, tunnels or the agent.
+mod credentials;
+mod deploy;
+mod diagnostics;
+mod remote_monitor;
+mod ssh_tunnel;
+mod sync;
+
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -23,7 +42,10 @@ use tauri::Manager;
 use conflicts::{Conflict, ConflictStore, Resolution, ResolutionReceipt};
 use files::{EntryKind, FileNode, FilePreview, TrashTicket};
 use project::ProjectConfig;
-use sync::{SyncManager, SyncStatus};
+
+const FINAL_EXIT_GRACEFUL_TIMEOUT: Duration = Duration::from_secs(120);
+
+// --- App info ---
 
 /// Startup facts the frontend needs before it renders anything.
 #[derive(Debug, Clone, Serialize)]
@@ -35,7 +57,7 @@ pub struct AppInfo {
     pub links: ExternalLinks,
 }
 
-/// The four ↗ destinations of the account menu (5.6). All open in the browser.
+/// The ↗ destinations of the account menu (5.6). All open in the browser.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalLinks {
@@ -99,7 +121,6 @@ fn get_project(project_id: String) -> Result<Option<ProjectConfig>, String> {
 async fn save_project(
     request: SaveProjectRequest,
     auth: tauri::State<'_, auth::AuthState>,
-    sync: tauri::State<'_, SyncManager>,
 ) -> Result<ProjectConfig, String> {
     let mut config = request.config;
     config.sync = project::normalise_sync(config.sync);
@@ -118,8 +139,6 @@ async fn save_project(
     config
         .save_to_default()
         .map_err(|e| format!("无法保存项目：{e}"))?;
-    // Best-effort: local engine + watcher come up even when no agent endpoint yet.
-    let _ = sync.ensure_open(&config).await;
     Ok(config)
 }
 
@@ -128,9 +147,9 @@ async fn save_project(
 async fn delete_project(
     project_id: String,
     auth: tauri::State<'_, auth::AuthState>,
-    sync: tauri::State<'_, SyncManager>,
+    sync_state: tauri::State<'_, sync::SyncState>,
 ) -> Result<(), String> {
-    let _ = sync.close(&project_id).await;
+    let _ = sync_state.stop(&project_id).await;
     let _ = auth.secrets().clear_ssh_password(&project_id);
     let _ = auth.secrets().clear_sync_agent_token(&project_id);
     ProjectConfig::delete(&project_id).map_err(|e| format!("无法删除项目：{e}"))
@@ -138,12 +157,9 @@ async fn delete_project(
 
 #[tauri::command]
 fn project_presets(name: String, user: String) -> ProjectPresets {
-    let home = directories::BaseDirs::new()
-        .map(|dirs| dirs.home_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("~"));
     ProjectPresets {
         remote_root: project::default_remote_root(&user, &name),
-        local_root: project::default_local_root(&home, &name),
+        local_root: project::default_local_root(&home_dir(), &name),
         tmux_session: project::default_tmux_session(&name),
     }
 }
@@ -167,35 +183,6 @@ async fn test_connection(
     password: Option<String>,
 ) -> ssh::ProbeResult {
     ssh::probe_server(&server, password.as_deref()).await
-}
-
-// --- Deployment ---
-
-#[tauri::command]
-async fn deploy_project(
-    app: tauri::AppHandle,
-    project_id: String,
-    from_stage: Option<usize>,
-    auth: tauri::State<'_, auth::AuthState>,
-) -> Result<(), deploy::DeployError> {
-    let config = ProjectConfig::get(&project_id)
-        .map_err(|e| deploy::DeployError {
-            stage: deploy::Stage::Connect,
-            message: format!("无法读取项目配置：{e}"),
-        })?
-        .ok_or(deploy::DeployError {
-            stage: deploy::Stage::Connect,
-            message: "项目不存在。".into(),
-        })?;
-    let password = auth.secrets().ssh_password(&project_id).ok().flatten();
-
-    deploy::run(
-        &app,
-        &config,
-        password.as_deref(),
-        deploy::Stage::from_index(from_stage.unwrap_or(0)),
-    )
-    .await
 }
 
 // --- Files ---
@@ -245,59 +232,32 @@ fn read_file(project_id: String, path: String) -> Result<FilePreview, String> {
     files::read_preview(&local_root_of(&project_id)?, &path)
 }
 
+// The agent watches the project's local root, so a write made here is picked up
+// by the same watcher that sees the user's editor. Nothing has to be recorded.
+
 #[tauri::command]
-async fn create_entry(
+fn create_entry(
     project_id: String,
     parent: String,
     name: String,
     kind: EntryKind,
-    sync: tauri::State<'_, SyncManager>,
 ) -> Result<String, String> {
-    let path = files::create_entry(&local_root_of(&project_id)?, &parent, &name, kind)?;
-    if let Ok(changes) = sync::changes_for_create(&path) {
-        let _ = sync.record_paths(&project_id, changes).await;
-    }
-    Ok(path)
+    files::create_entry(&local_root_of(&project_id)?, &parent, &name, kind)
 }
 
 #[tauri::command]
-async fn rename_entry(
-    project_id: String,
-    path: String,
-    new_name: String,
-    sync: tauri::State<'_, SyncManager>,
-) -> Result<String, String> {
-    let new_path = files::rename_entry(&local_root_of(&project_id)?, &path, &new_name)?;
-    if let Ok(changes) = sync::changes_for_rename(&path, &new_path) {
-        let _ = sync.record_paths(&project_id, changes).await;
-    }
-    Ok(new_path)
+fn rename_entry(project_id: String, path: String, new_name: String) -> Result<String, String> {
+    files::rename_entry(&local_root_of(&project_id)?, &path, &new_name)
 }
 
 #[tauri::command]
-async fn delete_entry(
-    project_id: String,
-    path: String,
-    sync: tauri::State<'_, SyncManager>,
-) -> Result<TrashTicket, String> {
-    let ticket = files::delete_entry(&local_root_of(&project_id)?, &path, &staging_dir()?)?;
-    if let Ok(changes) = sync::changes_for_delete(&path) {
-        let _ = sync.record_paths(&project_id, changes).await;
-    }
-    Ok(ticket)
+fn delete_entry(project_id: String, path: String) -> Result<TrashTicket, String> {
+    files::delete_entry(&local_root_of(&project_id)?, &path, &staging_dir()?)
 }
 
 #[tauri::command]
-async fn undo_delete(
-    project_id: String,
-    token: String,
-    sync: tauri::State<'_, SyncManager>,
-) -> Result<String, String> {
-    let path = files::restore_entry(&local_root_of(&project_id)?, &staging_dir()?, &token)?;
-    if let Ok(changes) = sync::changes_for_create(&path) {
-        let _ = sync.record_paths(&project_id, changes).await;
-    }
-    Ok(path)
+fn undo_delete(project_id: String, token: String) -> Result<String, String> {
+    files::restore_entry(&local_root_of(&project_id)?, &staging_dir()?, &token)
 }
 
 #[tauri::command]
@@ -332,26 +292,35 @@ fn open_local_folder(project_id: String) -> Result<(), String> {
     files::open_default(&root)
 }
 
-// --- Conflicts ---
+// --- Conflicts (product level) ---
 
 fn conflict_store(project_id: &str) -> Result<ConflictStore, String> {
     ConflictStore::new(&conflicts_dir()?, project_id)
+}
+
+fn seeded_marker(project_id: &str) -> Result<PathBuf, String> {
+    Ok(conflicts_dir()?.join(format!("{project_id}.seeded")))
 }
 
 #[tauri::command]
 async fn list_conflicts(
     project_id: String,
     auth: tauri::State<'_, auth::AuthState>,
-    sync: tauri::State<'_, SyncManager>,
+    sync_state: tauri::State<'_, sync::SyncState>,
 ) -> Result<Vec<Conflict>, String> {
     let store = conflict_store(&project_id)?;
-    // Engine rows win when present. An empty engine list falls through so mock
-    // mode can still seed UI samples before any real conflict exists.
-    if let Some(engine_conflicts) = sync.list_engine_conflicts(&project_id).await?
-        && !engine_conflicts.is_empty()
+    // Engine rows win when a session is up. Without one — offline, or before
+    // the first deployment — the last projection is what the page shows.
+    if let Ok(views) = sync_state.list_conflicts(&project_id).await
+        && !views.is_empty()
     {
-        store.replace(engine_conflicts.clone())?;
-        return Ok(engine_conflicts);
+        let state_dir = sync::project_state_dir(&project_id);
+        let conflicts: Vec<_> = views
+            .iter()
+            .map(|view| conflict_bridge::conflict_from_view(&state_dir, view))
+            .collect();
+        store.replace(conflicts.clone())?;
+        return Ok(conflicts);
     }
     let conflicts = store.list();
     // Mock mode seeds a sample pair once so the page is reachable without a
@@ -365,23 +334,34 @@ async fn list_conflicts(
     Ok(conflicts)
 }
 
-fn seeded_marker(project_id: &str) -> Result<PathBuf, String> {
-    Ok(conflicts_dir()?.join(format!("{project_id}.seeded")))
-}
-
 #[tauri::command]
 async fn resolve_conflict(
     project_id: String,
     conflict_id: String,
     resolution: Resolution,
-    sync: tauri::State<'_, SyncManager>,
+    identity: Option<sync::ConflictControlIdentity>,
+    sync_state: tauri::State<'_, sync::SyncState>,
 ) -> Result<ResolutionReceipt, String> {
     let root = local_root_of(&project_id)?;
-    let receipt = conflict_store(&project_id)?.resolve(&root, &conflict_id, resolution)?;
-    let _ = sync
-        .resolve_engine_conflict(&project_id, &conflict_id, resolution)
-        .await;
-    Ok(receipt)
+
+    // Ask the engine first when a session is up: if it refuses (stale revision,
+    // a competing request) the local folder must not be touched at all.
+    if let Some(identity) = identity
+        && let Ok(views) = sync_state.list_conflicts(&project_id).await
+        && let Some(view) = conflict_bridge::find_view(&views, &conflict_id)
+    {
+        let input = fns_agent::ConflictResolutionInput {
+            conflict_id: view.conflict_id,
+            conflict_revision: view.conflict_revision,
+            choice: conflict_bridge::engine_choice(resolution, view.incoming.tombstone),
+        };
+        sync_state
+            .resolve_conflict(&project_id, identity, input)
+            .await
+            .map_err(|failure| sync::stable_error_code(&failure))?;
+    }
+
+    conflict_store(&project_id)?.resolve(&root, &conflict_id, resolution)
 }
 
 #[tauri::command]
@@ -409,15 +389,90 @@ fn conflict_diff(project_id: String, conflict_id: String) -> Result<files::DiffR
     ))
 }
 
-// --- Sync status ---
+// --- Aggregate sync status (交互设计 6.3) ---
 
-/// Derive the 6.3 status for a project from the in-process sync session.
+/// 6.3 全局唯一语义. Nothing in the app may invent a fifth state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncStateLabel {
+    Synced,
+    Syncing,
+    Conflicts,
+    Offline,
+}
+
+/// The shape the frontend consumes (`SyncStatus` in `lib/types.ts`).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncStatus {
+    pub state: SyncStateLabel,
+    pub conflicts: usize,
+    pub pending: usize,
+    /// Why the session is down, for the activity panel and for support.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Reduce what the session registry and the agent's own status file know onto
+/// the four states, worst case first.
+pub fn reduce_sync_status(
+    connected: bool,
+    conflicts: usize,
+    pending: usize,
+    detail: Option<String>,
+) -> SyncStatus {
+    let state = if conflicts > 0 {
+        SyncStateLabel::Conflicts
+    } else if !connected {
+        SyncStateLabel::Offline
+    } else if pending > 0 {
+        SyncStateLabel::Syncing
+    } else {
+        SyncStateLabel::Synced
+    };
+    SyncStatus {
+        state,
+        conflicts,
+        pending,
+        detail: (!connected).then_some(detail).flatten(),
+    }
+}
+
+/// Derive the 6.3 status for a project.
+///
+/// The counts come from the agent's `runtime-status.json`: it is the only place
+/// that knows how much work is still queued, and the agent rewrites it
+/// atomically on every state change.
 #[tauri::command]
 async fn sync_status(
     project_id: String,
-    sync: tauri::State<'_, SyncManager>,
+    sync_state: tauri::State<'_, sync::SyncState>,
 ) -> Result<SyncStatus, String> {
-    sync.status(&project_id).await
+    let session = sync_state.status(&project_id).await;
+    let agent = sync::agent_runtime_status(&project_id);
+
+    let conflicts = match sync_state.list_conflicts(&project_id).await {
+        Ok(views) => views.len(),
+        Err(_) => conflict_store(&project_id)
+            .map(|store| store.list().len())
+            .unwrap_or(0),
+    };
+    let (connected, pending) = match agent {
+        Some(agent) => (
+            session.running && agent.connected,
+            usize::try_from(agent.pending_commands).unwrap_or(usize::MAX)
+                + agent.queued_watcher_batches
+                + agent.active_transfers,
+        ),
+        None => (false, 0),
+    };
+    let detail = session
+        .error
+        .as_ref()
+        .map(sync::stable_error_code)
+        .or_else(|| (!session.message.is_empty()).then(|| session.message.clone()));
+
+    Ok(reduce_sync_status(connected, conflicts, pending, detail))
 }
 
 /// Directory presets need a home dir; exposed for tests of the command layer.
@@ -432,6 +487,216 @@ pub fn is_under_home(path: &Path) -> bool {
     path.starts_with(home_dir())
 }
 
+// --- Exit lifecycle ---
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExitDecision {
+    StartCleanup(i32),
+    Prevent,
+    Allow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExitPhase {
+    Idle,
+    Cleaning(i32),
+    Failed,
+    Authorized(i32),
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExitCleanupOutcome {
+    Skipped,
+    Succeeded,
+    Failed,
+    TimedOut,
+}
+
+struct ExitLifecycle {
+    phase: Mutex<ExitPhase>,
+    tasks: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
+}
+
+impl ExitLifecycle {
+    fn request(&self, code: Option<i32>) -> ExitDecision {
+        let mut phase = self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match *phase {
+            ExitPhase::Idle | ExitPhase::Failed => {
+                let code = code.unwrap_or(0);
+                *phase = ExitPhase::Cleaning(code);
+                ExitDecision::StartCleanup(code)
+            }
+            ExitPhase::Cleaning(_) => ExitDecision::Prevent,
+            ExitPhase::Authorized(expected) if code == Some(expected) => {
+                *phase = ExitPhase::Exiting;
+                ExitDecision::Allow
+            }
+            ExitPhase::Authorized(_) => ExitDecision::Prevent,
+            ExitPhase::Exiting => ExitDecision::Allow,
+        }
+    }
+
+    fn finish_cleanup(&self, succeeded: bool) -> Option<i32> {
+        let mut phase = self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ExitPhase::Cleaning(code) = *phase else {
+            return None;
+        };
+        if succeeded {
+            *phase = ExitPhase::Authorized(code);
+            Some(code)
+        } else {
+            *phase = ExitPhase::Failed;
+            None
+        }
+    }
+
+    fn begin_final_cleanup(&self) -> bool {
+        let mut phase = self
+            .phase
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match *phase {
+            ExitPhase::Authorized(_) | ExitPhase::Exiting => false,
+            ExitPhase::Idle | ExitPhase::Cleaning(_) | ExitPhase::Failed => {
+                *phase = ExitPhase::Exiting;
+                true
+            }
+        }
+    }
+
+    fn own(&self, task: tauri::async_runtime::JoinHandle<()>) {
+        self.tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(task);
+    }
+}
+
+impl Default for ExitLifecycle {
+    fn default() -> Self {
+        Self {
+            phase: Mutex::new(ExitPhase::Idle),
+            tasks: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+async fn shutdown_graceful_for_exit(
+    credential_state: &credentials::CredentialState,
+    sync_state: &sync::SyncState,
+    tunnel_state: &ssh_tunnel::TunnelState,
+) -> bool {
+    let (credential_result, sync_result) = tokio::join!(
+        credential_state.shutdown_all(tunnel_state.clone()),
+        sync_state.shutdown_all(),
+    );
+    if let Err(failure) = credential_result.as_ref() {
+        eprintln!("fns_credential_shutdown_failed:{failure}");
+    }
+    if let Err(failure) = sync_result.as_ref() {
+        eprintln!(
+            "fns_sync_shutdown_failed:{}",
+            sync::stable_error_code(failure)
+        );
+    }
+    credential_result.is_ok() && sync_result.is_ok()
+}
+
+async fn shutdown_for_exit(
+    credential_state: &credentials::CredentialState,
+    sync_state: &sync::SyncState,
+    tunnel_state: &ssh_tunnel::TunnelState,
+) -> bool {
+    let graceful_succeeded =
+        shutdown_graceful_for_exit(credential_state, sync_state, tunnel_state).await;
+    let tunnel_result = if credential_state.has_active_operations() {
+        None
+    } else {
+        Some(tunnel_state.close_all().await)
+    };
+    if let Some(Err(failure)) = tunnel_result.as_ref() {
+        eprintln!("fns_ssh_shutdown_failed:{failure}");
+    }
+    graceful_succeeded && tunnel_result.is_some_and(|result| result.is_ok())
+}
+
+async fn cleanup_final_resources<F>(
+    tunnel_state: &ssh_tunnel::TunnelState,
+    graceful_timeout: Duration,
+    graceful_shutdown: F,
+) -> ExitCleanupOutcome
+where
+    F: Future<Output = bool>,
+{
+    let graceful_outcome = match tokio::time::timeout(graceful_timeout, graceful_shutdown).await {
+        Ok(true) => {
+            eprintln!("fns_final_exit_graceful_complete");
+            ExitCleanupOutcome::Succeeded
+        }
+        Ok(false) => {
+            eprintln!("fns_final_exit_graceful_failed");
+            ExitCleanupOutcome::Failed
+        }
+        Err(_) => {
+            eprintln!("fns_final_exit_graceful_timeout");
+            ExitCleanupOutcome::TimedOut
+        }
+    };
+
+    match tunnel_state.close_all().await {
+        Ok(()) => {
+            eprintln!("fns_final_exit_tunnel_complete");
+            graceful_outcome
+        }
+        Err(failure) => {
+            eprintln!("fns_final_exit_tunnel_failed:{failure}");
+            ExitCleanupOutcome::Failed
+        }
+    }
+}
+
+fn cleanup_after_final_event(
+    lifecycle: &ExitLifecycle,
+    credential_state: &credentials::CredentialState,
+    sync_state: &sync::SyncState,
+    tunnel_state: &ssh_tunnel::TunnelState,
+    graceful_timeout: Duration,
+) -> ExitCleanupOutcome {
+    if !lifecycle.begin_final_cleanup() {
+        return ExitCleanupOutcome::Skipped;
+    }
+
+    match tauri::async_runtime::block_on(async {
+        cleanup_final_resources(
+            tunnel_state,
+            graceful_timeout,
+            shutdown_graceful_for_exit(credential_state, sync_state, tunnel_state),
+        )
+        .await
+    }) {
+        ExitCleanupOutcome::Succeeded => {
+            eprintln!("fns_final_exit_cleanup_complete");
+            ExitCleanupOutcome::Succeeded
+        }
+        ExitCleanupOutcome::Failed => {
+            eprintln!("fns_final_exit_cleanup_failed");
+            ExitCleanupOutcome::Failed
+        }
+        ExitCleanupOutcome::TimedOut => {
+            eprintln!("fns_final_exit_cleanup_timeout");
+            ExitCleanupOutcome::TimedOut
+        }
+        ExitCleanupOutcome::Skipped => ExitCleanupOutcome::Skipped,
+    }
+}
+
 #[cfg_attr(target_os = "ios", tauri::mobile_entry_point)]
 #[cfg_attr(target_os = "android", tauri::mobile_entry_point)]
 pub fn run() {
@@ -439,12 +704,13 @@ pub fn run() {
     let sync_state = sync::SyncState::with_credentials(Arc::new(credential_state.clone()));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            app.manage(auth::AuthState::from_env());
-            app.manage(terminal::TerminalManager::new());
-            app.manage(SyncManager::from_env().map_err(std::io::Error::other)?);
-            Ok(())
-        })
+        .manage(auth::AuthState::from_env())
+        .manage(terminal::TerminalManager::new())
+        .manage(ssh_tunnel::TunnelState::new())
+        .manage(deploy::DeployState::production())
+        .manage(credential_state)
+        .manage(sync_state)
+        .manage(diagnostics::DiagnosticsState::default())
         .invoke_handler(tauri::generate_handler![
             app_info,
             // account
@@ -466,7 +732,10 @@ pub fn run() {
             parse_ssh_hosts,
             parse_pasted_target,
             test_connection,
-            deploy_project,
+            // deployment
+            deploy::preview_remote_deployment,
+            deploy::execute_remote_deployment,
+            deploy::cancel_remote_deployment,
             // files
             list_files,
             recent_files,
@@ -479,18 +748,56 @@ pub fn run() {
             reveal_entry,
             open_entry,
             open_local_folder,
-            // conflicts
+            // conflicts (product level)
             list_conflicts,
             resolve_conflict,
             undo_conflict,
             forget_conflict_undo,
             conflict_diff,
             sync_status,
+            // sync engine
+            sync::start_sync,
+            sync::stop_sync,
+            sync::sync_engine_status,
+            sync::list_sync_conflicts,
+            sync::resolve_sync_conflict,
+            sync::cancel_sync_conflict_request,
+            sync::cancel_sync_conflict_generation,
+            sync::list_sync_conflict_operations,
             // terminal
             terminal::start_terminal,
             terminal::write_terminal,
             terminal::resize_terminal,
             terminal::close_terminal,
+            terminal::new_claude_session,
+            terminal::close_tmux_window,
+            terminal::list_tmux_windows,
+            terminal::kill_all_sessions,
+            // remote monitoring
+            remote_monitor::get_server_status,
+            remote_monitor::list_claude_sessions,
+            remote_monitor::switch_claude_session,
+            remote_monitor::kill_claude_session,
+            // diagnostics
+            diagnostics::diagnostics_list_events,
+            diagnostics::diagnostics_get_health,
+            diagnostics::diagnostics_preview_support_bundle,
+            diagnostics::diagnostics_export_support_bundle,
+            diagnostics::diagnostics_run_self_test,
+            diagnostics::diagnostics_cancel_self_test,
+            // ssh tunnels
+            ssh_tunnel::create_tunnel,
+            ssh_tunnel::tunnel_endpoint,
+            ssh_tunnel::close_tunnel,
+            // workspace credentials
+            credentials::provision_workspace_credential,
+            credentials::reprovision_workspace_credential,
+            credentials::workspace_credential_status,
+            credentials::probe_workspace_access,
+            credentials::delete_workspace_credential,
+            credentials::cancel_workspace_provisioning,
+            credentials::retry_workspace_credential_cleanup,
+            credentials::workspace_credential_cleanup_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -551,6 +858,48 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    #[test]
+    fn a_connected_idle_session_is_fully_synced() {
+        let status = reduce_sync_status(true, 0, 0, None);
+        assert_eq!(status.state, SyncStateLabel::Synced);
+        assert_eq!(status.detail, None);
+    }
+
+    #[test]
+    fn outstanding_work_counts_what_the_agent_still_owes() {
+        let status = reduce_sync_status(true, 0, 3, None);
+        assert_eq!(status.state, SyncStateLabel::Syncing);
+        assert_eq!(status.pending, 3);
+    }
+
+    #[test]
+    fn conflicts_outrank_everything_including_being_offline() {
+        let status = reduce_sync_status(false, 2, 5, Some("transport".into()));
+        assert_eq!(status.state, SyncStateLabel::Conflicts);
+        assert_eq!(status.conflicts, 2);
+    }
+
+    #[test]
+    fn being_offline_outranks_having_transfers_queued() {
+        let status = reduce_sync_status(false, 0, 4, Some("transport".into()));
+        assert_eq!(status.state, SyncStateLabel::Offline);
+        // The queue is still reported: it is what will move once we reconnect.
+        assert_eq!(status.pending, 4);
+        assert_eq!(status.detail.as_deref(), Some("transport"));
+    }
+
+    #[test]
+    fn a_connected_session_stops_advertising_a_failure_reason() {
+        let status = reduce_sync_status(true, 0, 0, Some("stale".into()));
+        assert_eq!(status.state, SyncStateLabel::Synced);
+        assert_eq!(status.detail, None);
+    }
 }
 
 #[cfg(test)]

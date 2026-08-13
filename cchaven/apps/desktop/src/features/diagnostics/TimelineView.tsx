@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { t } from "../../i18n";
 import { filterEvents } from "./filter";
 import type { DiagnosticEvent, DiagnosticLevel, TimelineFilter } from "./types";
 
@@ -32,22 +33,22 @@ export default function TimelineView({
   );
   const hasActiveFilter = Boolean(level || component || eventName || runId);
 
-  let emptyMessage = "No diagnostic events match the current filters.";
+  let emptyMessage = t("logs.noMatches");
   if (loading && !hasLoaded) {
-    emptyMessage = "Loading diagnostic events...";
+    emptyMessage = t("logs.loading");
   } else if (!hasLoaded) {
-    emptyMessage = "Diagnostic events unavailable.";
+    emptyMessage = t("logs.unavailable");
   } else if (events.length === 0) {
-    emptyMessage = "No diagnostic events recorded.";
+    emptyMessage = t("logs.empty");
   } else if (!hasActiveFilter) {
-    emptyMessage = "No diagnostic events recorded.";
+    emptyMessage = t("logs.empty");
   }
 
   return (
-    <section className="diagnostics-timeline" aria-label="Diagnostics timeline">
+    <section className="diagnostics-timeline" aria-label={t("logs.tabTimeline")}>
       <div className="diagnostics-toolbar">
         <div className="diagnostics-field">
-          <label htmlFor="diagnostics-level">Level</label>
+          <label htmlFor="diagnostics-level">{t("logs.level")}</label>
           <select
             id="diagnostics-level"
             value={level}
@@ -55,13 +56,13 @@ export default function TimelineView({
           >
             {LEVELS.map((value) => (
               <option key={value || "all"} value={value}>
-                {value || "All levels"}
+                {value || t("logs.allLevels")}
               </option>
             ))}
           </select>
         </div>
         <div className="diagnostics-field">
-          <label htmlFor="diagnostics-component">Component</label>
+          <label htmlFor="diagnostics-component">{t("logs.component")}</label>
           <input
             id="diagnostics-component"
             value={component}
@@ -70,7 +71,7 @@ export default function TimelineView({
           />
         </div>
         <div className="diagnostics-field">
-          <label htmlFor="diagnostics-event-name">Event name</label>
+          <label htmlFor="diagnostics-event-name">{t("logs.eventName")}</label>
           <input
             id="diagnostics-event-name"
             value={eventName}
@@ -79,7 +80,7 @@ export default function TimelineView({
           />
         </div>
         <div className="diagnostics-field">
-          <label htmlFor="diagnostics-run-id">Run ID</label>
+          <label htmlFor="diagnostics-run-id">{t("logs.runId")}</label>
           <input
             id="diagnostics-run-id"
             value={runId}
@@ -114,7 +115,7 @@ export default function TimelineView({
               <p className="diagnostics-event-message">{event.message}</p>
               {Object.keys(event.fields).length > 0 && (
                 <details className="diagnostics-event-fields">
-                  <summary>Fields ({Object.keys(event.fields).length})</summary>
+                  <summary>{t("logs.fields", { n: Object.keys(event.fields).length })}</summary>
                   <dl>
                     {Object.entries(event.fields).map(([key, value]) => (
                       <div key={key}>

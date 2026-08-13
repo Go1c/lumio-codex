@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 
 const desktopDirectory = dirname(dirname(fileURLToPath(import.meta.url)));
 const terminalSource = await readFile(
-  new URL("../src/components/Terminal.tsx", import.meta.url),
+  new URL("../src/components/TerminalPane.tsx", import.meta.url),
   "utf8",
 );
 const clipboardSource = await readFile(
@@ -24,7 +24,8 @@ test("Terminal enables Option-drag local selection under remote mouse mode", () 
 });
 
 test("Terminal handles Cmd/Ctrl copy and paste shortcuts", () => {
-  assert.match(terminalSource, /metaKey.*key\.toLowerCase\(\) === "c"|key\.toLowerCase\(\) === "c".*metaKey/s);
+  assert.match(terminalSource, /const key = event\.key\.toLowerCase\(\)/);
+  assert.match(terminalSource, /event\.metaKey[^\n]*key === "c"/);
   assert.match(terminalSource, /writeLocalClipboard/);
   assert.match(terminalSource, /readLocalClipboard/);
   assert.match(terminalSource, /pasteFromLocal|Cmd\+V/);
@@ -37,7 +38,8 @@ test("Terminal strips OSC 52 from PTY output via Osc52Filter", () => {
 });
 
 test("Terminal exposes a Copy toolbar action", () => {
-  assert.match(terminalSource, />\s*Copy\s*</);
+  // The toolbar copy action is Chinese like the rest of the shell.
+  assert.match(terminalSource, /t\("terminal\.copySelection"\)/);
   assert.match(terminalSource, /copySelectionClick|getSelection\(\)/);
 });
 

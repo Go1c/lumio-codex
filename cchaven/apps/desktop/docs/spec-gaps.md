@@ -73,30 +73,32 @@
 
 ## B. 尚未接通的能力（需要其他里程碑配合）
 
-### B1. 进程内 sync 已接通；跨主机 agent 尚未分发
+### B1. 同步引擎改为本机 sidecar，已接通（原「进程内 sync」条目作废）
 
-桌面进程内已托管 `fns-sync-core` + 本地 watcher + `fns-transport` 会话监督器
-（`src-tauri/src/sync/`）：
+同步引擎不再跑在 App 进程内。它以 `fns-agent` sidecar 进程运行在本机，经 SSH 隧道连
+服务器；生命周期、隧道租约与重启策略由 `src-tauri/src/sync.rs` 托管，凭据由
+`credentials.rs` 从钥匙串取。见 ADR-0004。
 
 | 已接通 | 仍缺 |
 | --- | --- |
-| 打开项目时拉起引擎 / watcher / 重连循环 | Linux `fns-agent` 交叉编译、打进 DMG、部署上传（见 B2） |
-| 6.3 四态 + 真实退避 `retryInSeconds` | 没有 loopback 端点/令牌时只能诚实离线（`detail=no_endpoint`） |
-| 资源管理器 create/rename/delete 写入引擎 outbox | — |
+| `start_sync` / `stop_sync` 拉起与停止 agent，含隧道租约与崩溃重启 | — |
+| 6.3 四态由 `reduce_sync_status` 从 agent 的 `runtime-status.json` 归约 | `retryInSeconds` 倒计时：agent 只发布重连次数，不发布截止时间，界面退化为不带倒计时的「离线」+ 原因码 |
+| 资源管理器 create/rename/delete 由 agent 自己的 watcher 捕获，无需 App 上报 | — |
 | `protect_secrets` 在引擎层强制开启，项目配置无法关闭 | — |
-| 引擎冲突非空时投影进 `ConflictStore`；解决会调用 `resolve_conflict` | 无会话时仍用投影文件；mock 仍可种样例冲突 |
-| 端点：`CCHAVEN_SYNC_ENDPOINT` 或 `{sync-state}/{id}/endpoint`；令牌：钥匙串 / `CCHAVEN_SYNC_TOKEN` | 向导不会自动写入这些凭据（依赖 B2 部署） |
+| 引擎冲突经 `conflict_bridge.rs` 投影为产品级三选一；「两者都保留」读本机内容缓存 `<state_dir>/blobs/` 取服务器那一侧的字节 | 无会话时回退到上次投影；mock 仍可种样例冲突 |
+| 冲突状态机：等待确认 / 引擎占用中 / 取消本次提交 / 决策历史 | — |
 
-### B2. 「安装CC避风港同步组件」阶段没有可上传的 agent 产物
+### B2. 部署产物已有构建与打包链路，但产物本身不入库
 
-附录 A 要求「agent 部署过程的阶段事件上报」，但仓库里没有为 Linux 目标构建的
-`fns-agent` 产物，也没有既有的部署脚本可复用。
+原条目「没有可上传的 agent 产物」已作废。十步受管部署（`deploy.rs`，可预览、可取消、
+失败回滚）从 App bundle 的 `Contents/Resources/remote/linux-x86_64/` 读取
+`fns-server` / `fns-agent` / `release-provenance.json` 并上传、校验、安装为托管服务。
 
-**当前实现**：该阶段做真实的远端环境体检——检查可用磁盘（<200MB 直接给出人话错误）、
-检查持久会话组件是否可用、创建组件目录，并按 5.3 的措辞报告。上传与拉起 agent、
-回写 loopback `endpoint` + agent token 留给后续里程碑，接入点在
-`deploy.rs::stage_install`。没有这些凭据时，B1 的会话监督器会按 2/5/10/30s 重试并
-保持离线，而不会假装已同步。
+**仍需注意**：这些是构建产物，不入库。发版前必须先跑
+`scripts/prepare-remote-linux-x86_64-release.sh`（交叉编译 Linux x86_64）与
+`scripts/stage-remote-linux-x86_64-artifacts.sh` 把产物放进 bundle；
+`scripts/build-macos-arm64-release.sh` 已把这两步串进去。因此**在没有 Linux x86_64
+交叉编译工具链的机器上出不了可发布的包**。
 
 ### B3. 控制面无法本机联调
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "../../i18n";
 import type { DiagnosticsClient } from "../../lib/diagnosticsApi";
 import type { DiagnosticEvent, HealthSnapshot } from "./types";
 import TimelineView from "./TimelineView";
@@ -9,12 +10,15 @@ import "./diagnostics.css";
 
 type DiagnosticsTab = "timeline" | "health" | "self-test" | "support-bundle";
 
-const TABS: Array<{ key: DiagnosticsTab; label: string }> = [
-  { key: "timeline", label: "Timeline" },
-  { key: "health", label: "Health" },
-  { key: "self-test", label: "Self Test" },
-  { key: "support-bundle", label: "Support Bundle" },
-];
+/** Built per render so a locale switch retitles the tabs. */
+function tabs(): Array<{ key: DiagnosticsTab; label: string }> {
+  return [
+    { key: "timeline", label: t("logs.tabTimeline") },
+    { key: "health", label: t("logs.tabHealth") },
+    { key: "self-test", label: t("logs.tabSelfTest") },
+    { key: "support-bundle", label: t("logs.tabSupportBundle") },
+  ];
+}
 
 const DIAGNOSTICS_REFRESH_INTERVAL_MS = 5_000;
 
@@ -103,9 +107,9 @@ export default function DiagnosticsPane({
   }, [projectId, refresh]);
 
   return (
-    <section className="diagnostics-pane" aria-label="Logs and diagnostics">
-      <div className="diagnostics-tabs" role="tablist" aria-label="Diagnostics views">
-        {TABS.map((item) => (
+    <section className="diagnostics-pane" aria-label={t("logs.title")}>
+      <div className="diagnostics-tabs" role="tablist" aria-label={t("logs.views")}>
+        {tabs().map((item) => (
           <button
             key={item.key}
             type="button"
@@ -125,7 +129,7 @@ export default function DiagnosticsPane({
           disabled={loading}
           aria-busy={loading}
         >
-          {loading ? "Refreshing..." : "Refresh"}
+          {loading ? t("logs.refreshing") : t("logs.refresh")}
         </button>
       </div>
 

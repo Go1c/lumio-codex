@@ -63,12 +63,12 @@ function event(fields = {}) {
 
 test("timeline distinguishes initial loading from a verified empty result", () => {
   const loading = renderTimeline({ events: [], loading: true, hasLoaded: false });
-  assert.match(loading, /Loading diagnostic events/);
-  assert.doesNotMatch(loading, /No diagnostic events recorded/);
+  assert.match(loading, /正在读取诊断事件/);
+  assert.doesNotMatch(loading, /还没有记录到诊断事件/);
 
   const empty = renderTimeline({ events: [], loading: false, hasLoaded: true });
-  assert.match(empty, /No diagnostic events recorded/);
-  assert.doesNotMatch(empty, /Loading diagnostic events/);
+  assert.match(empty, /还没有记录到诊断事件/);
+  assert.doesNotMatch(empty, /正在读取诊断事件/);
 });
 
 test("timeline exposes structured event fields without expanding them by default", () => {
@@ -85,7 +85,7 @@ test("timeline exposes structured event fields without expanding them by default
   });
 
   assert.match(html, /<details class="diagnostics-event-fields">/);
-  assert.match(html, /<summary>Fields \(3\)<\/summary>/);
+  assert.match(html, /<summary>字段（3）<\/summary>/);
   assert.match(html, /<dt>pendingCommands<\/dt>/);
   assert.match(html, /<code>3<\/code>/);
   assert.match(html, /<dt>lastAck<\/dt>/);

@@ -669,7 +669,10 @@ mod tests {
     fn env_or_trims_trailing_slash_and_ignores_empty_values() {
         // 覆盖能力是本地联调的唯一入口，同时末尾斜杠必须去掉，
         // 否则拼出来的地址会变成 //authorize。
-        assert_eq!(env_or("CCHAVEN_UNSET_FOR_TEST", "https://x.test/"), "https://x.test");
+        assert_eq!(
+            env_or("CCHAVEN_UNSET_FOR_TEST", "https://x.test/"),
+            "https://x.test"
+        );
     }
 
     #[tokio::test]
