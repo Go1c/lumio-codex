@@ -111,6 +111,26 @@ curl -sS -H 'Authorization: Bearer <一个有效 access token>' \
 - `POST /api/v1/billing/checkout` 返回 **303**，`Location` 是 Sub2API 充值页。
 - Sub2API 不可达时返回 **503 `identity_unavailable`**，不静默放行、也不伪装成 401。
 
+### 5.1 门户 `/authorize` 的跨源要求（CC 桌面端登录链路）
+
+CC 桌面端的浏览器登录页开在门户（`https://lumiogame.com/authorize`），授权端点仍在控制面，
+所以确认页是**跨源**调控制面的，浏览器会先发 `OPTIONS` 预检：
+
+| 页面 | 调用的端点 | 方法 |
+| --- | --- | --- |
+| `https://lumiogame.com/authorize` | `https://api.cc.lumiogame.com/api/v1/oauth/authorize/context` | GET |
+| `https://lumiogame.com/authorize` | `https://api.cc.lumiogame.com/api/v1/oauth/authorize` | POST，带 `Authorization: Bearer <Sub2API access token>` |
+
+- [ ] `CCHAVEN_PORTAL_URL=https://lumiogame.com`（可信来源的唯一出处是
+      `config.Config.TrustedOrigins`，CORS 与同源校验共用），否则预检拿不到
+      `Access-Control-Allow-Origin`，**CC 桌面端在生产完全无法登录**。dev 放行 localhost
+      任意端口，本地联调看不出这个问题。
+- [ ] 允许请求头 `Authorization`、`Content-Type`（控制面 `cors` 中间件已下发）。
+- [ ] 本地联调门户（`http://localhost:5280`）时控制面须跑在 `CCHAVEN_ENV=dev`，
+      或把门户地址配进 `CCHAVEN_PORTAL_URL`。
+- [ ] 控制面地址若不是默认的 `https://api.cc.lumiogame.com`，需给门户配
+      `VITE_CC_CONTROL_URL`（见 [`web/README.md`](../../web/README.md) 的环境变量表）。
+
 ## 6. 一次性、高风险的存量用户迁移
 
 迁移前在 CC 侧注册的账号在 Sub2API 没有对应身份，需要 `cmd/migrate-identities` 补映射。

@@ -7,11 +7,15 @@
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | `lumiogame.com` | 品牌总站 + **唯一**的注册 / 登录 / 2FA / 账户中心 |
+| `apps/portal` | `lumiogame.com` | 品牌总站 + **唯一**的注册 / 登录 / 2FA / 账户中心 + CC 桌面端授权页 `/authorize` |
 | `apps/cc` | `cc.lumiogame.com` | CC避风港产品站（介绍 / 定价 / 下载） |
 | `apps/codex` | `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载） |
 
 - 账号数据全部在 **Sub2API**（`https://api.lumio.games`）；本目录不引用 `cchaven/` 与 `codex/` 的任何代码。
+- 门户的 `/authorize` 是 **CC 桌面端浏览器登录的确认页**：桌面端带 PKCE 参数打开它，用户在账号中心
+  会话下确认后，门户带 Sub2API 令牌调 **CC 控制面**（`https://api.cc.lumiogame.com`）的
+  `POST /api/v1/oauth/authorize` 换授权码，再按响应的 `redirect_to` 跳回本机回环端口。
+  控制面仍是桌面端的 OAuth token issuer，但已不是身份提供方；令牌交换（`/oauth/token`）在桌面端完成，门户不参与。
 - 产品站**不做自己的登录**：账号入口一律跳门户并带 `?next=` 回跳参数（`portalAccountLinks()`）。
 - **充值统一跳 `https://api.lumio.games/purchase`**（Codex 与 CC 都是），不经过 cchaven 控制面的 billing。
 
@@ -72,6 +76,7 @@ npm run lint    # eslint（可选，不在收口门槛内）
 | 变量 | 默认值 | 作用 | 使用方 |
 |------|--------|------|--------|
 | `VITE_API_BASE_URL` | `https://api.lumio.games` | Sub2API base，充值页地址也由它派生 | 三站 |
+| `VITE_CC_CONTROL_URL` | `https://api.cc.lumiogame.com` | CC 控制面 base，`/authorize` 的授权端点由它派生 | `apps/portal` |
 | `VITE_ROOT_DOMAIN` | `lumiogame.com` | 会话 Cookie 作用域与 `next` 回跳白名单的根域 | 三站 |
 | `VITE_PORTAL_URL` | `https://lumiogame.com` | 门户地址（账号入口跳转目标） | 三站 |
 | `VITE_CC_URL` | `https://cc.lumiogame.com` | CC 站地址 | 三站 |
@@ -102,17 +107,22 @@ GitHub Releases 页。同源指针在部署时由发布流水线的产物复制�
 
 ## 对服务端 / 运维的依赖
 
-以下三项**必须由服务端与运维配合**，前端无法单方面解决（操作细节见
+以下四项**必须由服务端与运维配合**，前端无法单方面解决（操作细节见
 [`docs/ops/03-service-prerequisites.md`](../docs/ops/03-service-prerequisites.md)）：
 
 1. **Sub2API CORS**：`https://api.lumio.games` 需允许来源 `https://lumiogame.com`、
    `https://cc.lumiogame.com`、`https://codex.lumiogame.com`（本地联调还需 `http://localhost:528x`），
    允许 `Authorization` 与 `Content-Type` 请求头。三站是纯静态站点，直连 Sub2API，没有同源反代。
-2. **会话 Cookie 域**：令牌写在父域 Cookie（`Domain=.lumiogame.com`、`Path=/`、`SameSite=Lax`、
+2. **CC 控制面 CORS**：`/authorize` 是跨源请求——页面在 `lumiogame.com`，授权端点在
+   `api.cc.lumiogame.com`。控制面须放行来源 `https://lumiogame.com`、允许 `Authorization` 与
+   `Content-Type` 请求头，并正确响应 `OPTIONS` 预检。可信来源来自 `CCHAVEN_PORTAL_URL`
+   （`config.Config.TrustedOrigins`），**漏配则 CC 桌面端在生产完全无法登录**，而 dev 放行
+   localhost 任意端口，本地联调看不出来。
+3. **会话 Cookie 域**：令牌写在父域 Cookie（`Domain=.lumiogame.com`、`Path=/`、`SameSite=Lax`、
    https 下带 `Secure`），子站据此判断登录态。父域 Cookie 需要前端可读，因此**不是 HttpOnly**；
    风险由「短 access token 有效期 + 收紧 CORS + 三站同属一个可信根域」共同兜住。
    若日后接入统一网关，应改为 HttpOnly + 服务端下发，届时 `packages/auth/src/session.ts` 是唯一改动点。
-3. **DNS 与证书**：三个子域各自指向对应的静态产物，全站 https。
+4. **DNS 与证书**：三个子域各自指向对应的静态产物，全站 https。
 
 ## 与其他目录的边界
 

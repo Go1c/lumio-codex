@@ -9,6 +9,7 @@ export type SiteId = "portal" | "cc" | "codex";
 
 const DEFAULT_ROOT_DOMAIN = "lumiogame.com";
 const DEFAULT_API_BASE_URL = "https://api.lumio.games";
+const DEFAULT_CC_CONTROL_BASE_URL = "https://api.cc.lumiogame.com";
 
 function env(key: string): string | undefined {
   const value = (import.meta.env as Record<string, string | undefined>)[key];
@@ -39,6 +40,14 @@ export function siteUrl(site: SiteId): string {
 
 export function apiBaseUrl(): string {
   return trimSlash(env("VITE_API_BASE_URL") ?? DEFAULT_API_BASE_URL);
+}
+
+/**
+ * CCHaven 控制面。它不是身份提供方（账号在 Sub2API），但仍是 CC 桌面端的
+ * OAuth token issuer，门户的 `/authorize` 确认页要跨源调它的授权端点。
+ */
+export function ccControlBaseUrl(): string {
+  return trimSlash(env("VITE_CC_CONTROL_URL") ?? DEFAULT_CC_CONTROL_BASE_URL);
 }
 
 /** 充值走 Sub2API 托管的收银台页面，不是接口调用：浏览器直接打开。 */

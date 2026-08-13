@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   apiBaseUrl,
+  ccControlBaseUrl,
   cookieDomainFor,
   isAllowedNext,
   portalAccountLinks,
@@ -30,6 +31,13 @@ describe("站点地址", () => {
   it("充值地址跟随 API base，默认是生产 Sub2API", () => {
     expect(apiBaseUrl()).toBe("https://api.lumio.games");
     expect(purchaseUrl()).toBe("https://api.lumio.games/purchase");
+  });
+
+  it("CC 控制面地址独立于 Sub2API，可用环境变量覆盖", () => {
+    expect(ccControlBaseUrl()).toBe("https://api.cc.lumiogame.com");
+
+    vi.stubEnv("VITE_CC_CONTROL_URL", "http://localhost:8080/");
+    expect(ccControlBaseUrl()).toBe("http://localhost:8080");
   });
 });
 
