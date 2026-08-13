@@ -1,0 +1,164 @@
+.remote-monitor-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px 20px;
+  height: 100%;
+  overflow: auto;
+}
+
+.remote-monitor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.remote-monitor-toolbar .muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.remote-monitor-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.remote-monitor-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.remote-monitor-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.remote-monitor-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.remote-monitor-metric strong {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.remote-monitor-metric span {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.remote-monitor-bar {
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.remote-monitor-bar > i {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+  border-radius: 999px;
+}
+
+.remote-monitor-bar.warn > i {
+  background: #d97706;
+}
+
+.remote-monitor-bar.danger > i {
+  background: #dc2626;
+}
+
+.remote-monitor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.remote-monitor-table th,
+.remote-monitor-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.remote-monitor-table th {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.remote-monitor-highlight {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.remote-monitor-badge {
+  display: inline-block;
+  background: #eef2ff;
+  color: #3730a3;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.remote-monitor-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.remote-monitor-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+}
+
+.remote-monitor-actions .btn-switch {
+  background: #2563eb;
+  color: #fff;
+}
+
+.remote-monitor-actions .btn-kill {
+  background: #dc2626;
+  color: #fff;
+}
+
+.remote-monitor-empty {
+  color: #6b7280;
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+.remote-monitor-pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+}
+
+.remote-monitor-pill.inactive {
+  background: #f3f4f6;
+  color: #6b7280;
+}

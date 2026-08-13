@@ -21,9 +21,9 @@ metadata:
 - **设计面**：状态机阶段见架构规格；错误码六域 + `UNKNOWN`；凭据本期落本机 owner-only 文件（ADR-0001），非系统钥匙串。
 - **交互面**：文案与页面结构以 UX 交互规格为准；恢复动作按整文件回滚诚实描述；支付 / 开机启动 / 自动更新 / 遥测本期禁用并附说明。
 - **实现面**：
-  - Rust：`crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch）
+  - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch）
   - Tauri：仅 `lumio_` 命令白名单；秘密不跨 IPC
-  - 前端：`apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair
+  - 前端：`codex/apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair
   - 配置接管以**快照存在性**判定首次，不以 manifest；敏感文件经 `secret_file::write_secret` 创建即 0600
 
 ## 待解决
@@ -37,13 +37,13 @@ metadata:
 
 ## 官网与更新提醒
 
-- 可部署静态站：仓库根目录 [`site/`](../../../site/)（`lumio.games`）
+- 可部署静态站：[`codex/site/`](../../../codex/site/)（`lumio.games`）
 - 更新提醒：`lumio_check_update` 对照 GitHub Releases latest，首页横幅引导打开下载页（不自动安装）
 
 ## 相关
 
-- [架构设计](../../../docs/specs/2026-08-11-lumio-codex-branded-client-design.md)
-- [交互设计](../../../docs/specs/2026-08-12-lumio-ux-interaction-design.md)
-- [实现计划](../../../docs/plans/2026-08-12-lumio-account-and-home.md)
+- [架构设计](../../../codex/docs/specs/2026-08-11-lumio-codex-branded-client-design.md)
+- [交互设计](../../../codex/docs/specs/2026-08-12-lumio-ux-interaction-design.md)
+- [实现计划](../../../codex/docs/plans/2026-08-12-lumio-account-and-home.md)
 - [ADR-0001 凭据本地文件](../../decisions/0001-lumio-credentials-local-file.md)
 - 可点击原型：`prototypes/lumio-ux/`

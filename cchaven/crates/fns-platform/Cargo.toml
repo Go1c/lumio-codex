@@ -1,0 +1,24 @@
+[package]
+name = "fns-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+rustix = { workspace = true, features = ["process"] }
+thiserror.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
+security-framework-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

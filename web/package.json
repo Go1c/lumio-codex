@@ -1,0 +1,40 @@
+{
+  "name": "lumio-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lumio 统一官网门户：lumiogame.com 总站 + cc / codex 产品站 + 共享包",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint .",
+    "dev:portal": "npm run dev --workspace @lumio/portal",
+    "dev:cc": "npm run dev --workspace @lumio/cc",
+    "dev:codex": "npm run dev --workspace @lumio/codex"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.18.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.18",
+    "globals": "^15.14.0",
+    "jsdom": "^26.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0",
+    "vite": "^6.0.7",
+    "vitest": "^3.2.7"
+  }
+}

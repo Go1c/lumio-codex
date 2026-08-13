@@ -1,0 +1,22 @@
+{
+  "name": "@lumio/cc",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "cc.lumiogame.com：CC避风港产品站（介绍 / 定价 / 下载）",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc -b",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@lumio/auth": "*",
+    "@lumio/ui": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1"
+  }
+}

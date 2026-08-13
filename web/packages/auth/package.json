@@ -1,0 +1,23 @@
+{
+  "name": "@lumio/auth",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Sub2API 客户端与跨子域会话状态，门户与产品站共用",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "check": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
+  },
+  "dependencies": {
+    "@lumio/ui": "*",
+    "react": "^18.3.1"
+  }
+}

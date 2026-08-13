@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "jsx": "react-jsx",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@fns/control-api": [
+        "../../packages/control-api/src/index.ts"
+      ],
+      "@fns/control-api/*": [
+        "../../packages/control-api/src/*"
+      ]
+    },
+    "types": [
+      "react"
+    ],
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/**/*"
+  ]
+}

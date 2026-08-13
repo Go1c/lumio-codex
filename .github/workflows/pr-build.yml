@@ -19,6 +19,9 @@ jobs:
   windows-artifacts:
     name: Windows x64 internal unsigned
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: codex
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +31,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/codex-plus-manager/package-lock.json
+          cache-dependency-path: codex/apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -37,19 +40,19 @@ jobs:
         run: choco install nsis -y
 
       - name: Install frontend dependencies
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm ci
 
       - name: Frontend tests
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm test
 
       - name: TypeScript check
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run check
 
       - name: Build frontend
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
 
       - name: Rust tests
@@ -112,8 +115,8 @@ jobs:
         with:
           name: lumio-codex-windows-x64-internal-unsigned-${{ github.run_number }}
           path: |
-            dist/windows/LumioCodex-*-windows-x64-portable-internal-unsigned.zip
-            dist/windows/LumioCodex-*-windows-x64-setup-internal-unsigned.exe
+            codex/dist/windows/LumioCodex-*-windows-x64-portable-internal-unsigned.zip
+            codex/dist/windows/LumioCodex-*-windows-x64-setup-internal-unsigned.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -130,6 +133,9 @@ jobs:
           - arch: arm64
             runner: macos-14
             target: aarch64-apple-darwin
+    defaults:
+      run:
+        working-directory: codex
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -139,7 +145,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: apps/codex-plus-manager/package-lock.json
+          cache-dependency-path: codex/apps/codex-plus-manager/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -147,11 +153,11 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm ci
 
       - name: Build frontend
-        working-directory: apps/codex-plus-manager
+        working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
 
       - name: Build release binaries
@@ -203,7 +209,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lumio-codex-macos-${{ matrix.arch }}-internal-unsigned-${{ github.run_number }}
-          path: dist/macos/LumioCodex-*-macos-${{ matrix.arch }}-internal-unsigned.dmg
+          path: codex/dist/macos/LumioCodex-*-macos-${{ matrix.arch }}-internal-unsigned.dmg
           if-no-files-found: error
           retention-days: 14
 
