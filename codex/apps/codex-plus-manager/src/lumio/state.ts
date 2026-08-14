@@ -89,6 +89,9 @@ export type LumioEvent =
     }
   // 启动时进入离线可能没有任何可信的同步时间，缺失要如实传下去，不许补一个假时间戳。
   | { type: "offline-ready"; cachedAt: string | null }
+  // 设置页手动选择了官方应用：任何阶段都接受——离线/登出下自动检测失败时，
+  // 这是用户唯一的补救路径（QA D-3），不能再被「仅在线」的守卫丢弃。
+  | { type: "codex-app-changed"; app: LumioCodexApp }
   | { type: "account-refreshed"; account: LumioAccountSummary; cachedAt: string }
   | { type: "repair-required"; errorCode: string }
   | { type: "session-expired"; errorCode: string }
@@ -282,6 +285,12 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
       };
 
     case "provisioning-step-failed": {
+      // runCommand 在会话过期时先同步派发 session-expired（监听器随后把用户带回
+      // 登录入口）再 rethrow；这个迟到的失败事件不得把用户拽回 provisioning
+      // 失败态，否则「重试→再过期」会形成死循环（QA D-2）。
+      if (state.phase === "signed-out" || state.phase === "authenticating") {
+        return state;
+      }
       const attempts = state.provisioning.attempts + 1;
       return {
         ...state,
@@ -343,6 +352,20 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
 
     case "account-refreshed":
       return { ...state, account: event.account, cachedAt: event.cachedAt };
+
+    case "codex-app-changed": {
+      const ready = state.phase === "ready-online" || state.phase === "ready-offline";
+      if (!ready) {
+        // 非就绪阶段只记住选择：offline-ready/online-ready 派发时会消费它。
+        return { ...state, codexApp: event.app };
+      }
+      return {
+        ...state,
+        codexApp: event.app,
+        actions: { ...state.actions, canLaunch: true },
+        actionNotes: { ...state.actionNotes, launch: null },
+      };
+    }
 
     case "repair-required":
       return {

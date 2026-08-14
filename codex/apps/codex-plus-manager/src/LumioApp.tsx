@@ -244,15 +244,9 @@ export function LumioApp() {
     dispatch({ type: "authenticated", account: current.account });
   }, []);
   const onCodexAppChanged = useCallback((app: LumioCodexApp) => {
-    const current = stateRef.current;
-    if (current.account === null || current.phase !== "ready-online") return;
-    dispatch({
-      type: "online-ready",
-      account: current.account,
-      cachedAt: current.cachedAt ?? new Date().toISOString(),
-      codexApp: app,
-      defaultModel: current.defaultModel,
-    });
+    // 手选应用在任何阶段都有效（QA D-3）：离线/登出下自动检测失败时，
+    // 这是用户唯一的补救入口，不能再按「仅在线」守卫丢弃。
+    dispatch({ type: "codex-app-changed", app });
   }, []);
 
   const online = state.phase === "ready-online";

@@ -21,6 +21,9 @@ pub struct PublicSettings {
     pub agreement_revision: String,
     pub agreement_documents: Vec<AgreementDocument>,
     pub default_model: Option<String>,
+    /// 服务端未下发该开关（老版本 Sub2API）时为 None，调用方按「未开启」之外的
+    /// 三态语义自行处理；注册页还保留着错误码驱动的兜底显示路径。
+    pub invitation_code_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -129,6 +132,8 @@ struct RawPublicSettings {
     login_agreement_documents: Vec<AgreementDocument>,
     #[serde(default)]
     ccswitch_default_model_openai: String,
+    #[serde(default)]
+    invitation_code_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,6 +229,7 @@ impl LumioApiClient {
             agreement_revision: raw.login_agreement_revision,
             agreement_documents: raw.login_agreement_documents,
             default_model: non_empty(raw.ccswitch_default_model_openai),
+            invitation_code_enabled: raw.invitation_code_enabled,
         })
     }
 
@@ -484,6 +490,27 @@ mod tests {
         assert_eq!(settings.agreement_documents.len(), 1);
         assert_eq!(settings.agreement_documents[0].id, "terms");
         assert_eq!(settings.default_model.as_deref(), Some("gpt-example"));
+        assert_eq!(settings.invitation_code_enabled, None);
+    }
+
+    #[tokio::test]
+    async fn public_settings_reads_the_invitation_switch() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/settings/public"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
+                    "registration_enabled": true,
+                    "invitation_code_enabled": true
+                }))),
+            )
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        let settings = client.public_settings().await.unwrap();
+
+        assert_eq!(settings.invitation_code_enabled, Some(true));
     }
 
     #[tokio::test]
@@ -506,6 +533,77 @@ mod tests {
         assert!(settings.email_suffix_whitelist.is_empty());
         assert!(settings.agreement_documents.is_empty());
         assert_eq!(settings.default_model, None);
+    }
+
+    #[tokio::test]
+    async fn register_sends_the_invitation_code_when_present() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/auth/register"))
+            .and(body_json(serde_json::json!({
+                "email": "user@example.com",
+                "password": "supersecret",
+                "verify_code": "123456",
+                "invitation_code": "LUMIO-INVITE"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(envelope(
+                serde_json::json!({
+                    "access_token": "header.payload.signature",
+                    "refresh_token": "rt_abc",
+                    "expires_in": 3600,
+                    "user": { "id": 7, "email": "user@example.com", "balance": 0.0, "status": "active" }
+                }),
+            )))
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        let outcome = client
+            .register(&RegisterRequest {
+                email: "user@example.com".to_string(),
+                password: "supersecret".to_string(),
+                verify_code: Some("123456".to_string()),
+                invitation_code: Some("LUMIO-INVITE".to_string()),
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, AuthOutcome::Tokens { .. }));
+    }
+
+    #[tokio::test]
+    async fn register_omits_the_invitation_code_when_absent() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/auth/register"))
+            .and(body_json(serde_json::json!({
+                "email": "user@example.com",
+                "password": "supersecret",
+                "verify_code": "123456"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(envelope(
+                serde_json::json!({
+                    "access_token": "header.payload.signature",
+                    "refresh_token": "rt_abc",
+                    "expires_in": 3600,
+                    "user": { "id": 7, "email": "user@example.com", "balance": 0.0, "status": "active" }
+                }),
+            )))
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        let outcome = client
+            .register(&RegisterRequest {
+                email: "user@example.com".to_string(),
+                password: "supersecret".to_string(),
+                verify_code: Some("123456".to_string()),
+                invitation_code: None,
+            })
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, AuthOutcome::Tokens { .. }));
     }
 
     #[tokio::test]

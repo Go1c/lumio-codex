@@ -520,6 +520,81 @@ test("session expiry from any phase lands on signed-out with the code preserved"
   }
 });
 
+test("a late provisioning failure cannot yank the user back from the login entry", () => {
+  // D-2：runCommand 在会话过期时先同步派发 session-expired（随后监听器派发
+  // auth-step-changed: login）再 rethrow，ProvisioningView 的 catch 稍后才派发
+  // provisioning-step-failed——迟到的失败不得覆盖已经就位的登录入口。
+  const expired = reduceLumioState(readyOnlineSession(true), {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+  const atLogin = reduceLumioState(expired, { type: "auth-step-changed", step: "login" });
+  const next = reduceLumioState(atLogin, {
+    type: "provisioning-step-failed",
+    step: "verify-account",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.phase, "authenticating");
+  assert.equal(next.provisioning.failedStep, null);
+  assert.equal(next.provisioning.errorCode, null);
+});
+
+test("a late provisioning failure also leaves plain signed-out alone", () => {
+  const expired = reduceLumioState(readyOnlineSession(true), {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+  const next = reduceLumioState(expired, {
+    type: "provisioning-step-failed",
+    step: "verify-account",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.phase, "signed-out");
+});
+
+test("manually picking the app while offline re-enables the launch button", () => {
+  // D-3：离线首页用 state.codexApp 判定 canLaunch；ready-offline 下手选应用不得被丢弃。
+  const offline = reduceLumioState(signedOut(), {
+    type: "offline-ready",
+    cachedAt: "2026-08-12T00:00:00Z",
+  });
+  assert.equal(offline.actions.canLaunch, false);
+  assert.equal(offline.actionNotes.launch, "未检测到官方应用，去设置中选择");
+
+  const next = reduceLumioState(offline, { type: "codex-app-changed", app: detectedApp() });
+
+  assert.equal(next.phase, "ready-offline");
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actionNotes.launch, null);
+  assert.deepEqual(next.codexApp, detectedApp());
+});
+
+test("manually picking the app while signed out is remembered for the offline home", () => {
+  const picked = reduceLumioState(signedOut(), { type: "codex-app-changed", app: detectedApp() });
+
+  // 登出态本身不能启动，但选择被保留，进入离线首页时立即生效。
+  assert.equal(picked.phase, "signed-out");
+  assert.equal(picked.actions.canLaunch, false);
+  assert.deepEqual(picked.codexApp, detectedApp());
+
+  const offline = reduceLumioState(picked, { type: "offline-ready", cachedAt: null });
+  assert.equal(offline.actions.canLaunch, true);
+  assert.equal(offline.actionNotes.launch, null);
+});
+
+test("manually picking the app while online keeps the ready home consistent", () => {
+  const next = reduceLumioState(readyOnlineSession(true), {
+    type: "codex-app-changed",
+    app: detectedApp(),
+  });
+
+  assert.equal(next.phase, "ready-online");
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actionNotes.launch, null);
+});
+
 test("account refresh updates the balance without changing phase", () => {
   const online = reduceLumioState(signedOut(), {
     type: "online-ready",

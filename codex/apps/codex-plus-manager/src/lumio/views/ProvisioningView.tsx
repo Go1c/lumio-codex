@@ -2,7 +2,7 @@ import { Check, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { lumioErrorLabel } from "../errors.ts";
-import { LumioCommandError, runProvisioningStep } from "../invoke.ts";
+import { LumioCommandError, isSessionExpired, runProvisioningStep } from "../invoke.ts";
 import { PROVISIONING_STEP_IDS, PROVISIONING_STEP_TITLES } from "../state.ts";
 import type { LumioProvisioning, ProvisioningStepId } from "../state.ts";
 import type { LumioAccountSummary } from "../types.ts";
@@ -61,6 +61,9 @@ export function ProvisioningView({
             // Rust 旧包可能漏掉 account 字段；`undefined !== null` 会把假账户推进首页导致黑屏。
             if (result.account) onAccountResolved(result.account);
           } catch (error: unknown) {
+            // 会话过期已由全局监听器处理（回到登录入口）；这里再报步骤失败会把
+            // 用户从登录页拽回 provisioning，形成「重试→再过期」死循环。
+            if (isSessionExpired(error)) return;
             onStepFailed(step, errorCodeOf(error));
             return;
           } finally {

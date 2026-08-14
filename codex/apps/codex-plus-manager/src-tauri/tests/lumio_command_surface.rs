@@ -125,3 +125,49 @@ fn lumio_entrypoint_has_no_legacy_url_or_skin_processing() {
         );
     }
 }
+
+#[test]
+fn lumio_register_accepts_the_invitation_code_argument() {
+    // 前端 registerAccount 一直发送 invitationCode；命令签名一旦漏掉该参数，
+    // Tauri 会静默丢弃它，邀请码模式下注册将陷入死循环（QA D-1）。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("src/lumio_commands.rs")).expect("lumio_commands.rs");
+
+    let register = source
+        .split_once("pub async fn lumio_register(")
+        .and_then(|(_, rest)| rest.split_once(") -> Result<LumioCommandResult<LumioAuthPayload>"))
+        .map(|(signature, _)| signature)
+        .expect("lumio_register signature");
+    assert!(
+        register.contains("invitation_code: String"),
+        "lumio_register must accept invitation_code from the frontend:\n{register}"
+    );
+
+    // 透传而非硬编码 None：请求构造必须引用参数。
+    let body = source
+        .split_once("pub async fn lumio_register(")
+        .and_then(|(_, rest)| rest.split_once("pub async fn lumio_login("))
+        .map(|(body, _)| body)
+        .expect("lumio_register body");
+    assert!(
+        body.contains("invitation_code: non_empty(invitation_code)"),
+        "lumio_register must forward the invitation code:\n{body}"
+    );
+}
+
+#[test]
+fn lumio_settings_payload_carries_the_invitation_switch() {
+    // settings 下发缺这个开关，注册页的邀请码输入框就只能等服务端报错后才出现。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("src/lumio_commands.rs")).expect("lumio_commands.rs");
+
+    let payload = source
+        .split_once("pub struct LumioServiceSettingsPayload {")
+        .and_then(|(_, rest)| rest.split_once('}'))
+        .map(|(fields, _)| fields)
+        .expect("LumioServiceSettingsPayload fields");
+    assert!(
+        payload.contains("invitation_code_enabled"),
+        "LumioServiceSettingsPayload must expose invitation_code_enabled:\n{payload}"
+    );
+}
