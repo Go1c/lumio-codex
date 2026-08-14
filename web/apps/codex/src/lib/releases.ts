@@ -1,4 +1,4 @@
-/** 下载区的版本指针与选包逻辑，行为对齐 codex/site/site.js。 */
+/** 下载区的版本指针与选包逻辑。平台识别不信任 UA 里冻住的 Intel 字样。 */
 
 export type PlatformId = "mac-arm" | "mac-intel" | "windows";
 
@@ -30,11 +30,35 @@ export const PLATFORMS: Array<{ id: PlatformId; title: string }> = [
   { id: "windows", title: "Windows · x64" },
 ];
 
-export function detectPlatform(userAgent: string): PlatformId {
+type NavigatorLike = {
+  userAgent: string;
+  userAgentData?: {
+    getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>;
+  };
+};
+
+export function detectPlatform(userAgent: string, architecture?: string): PlatformId {
   if (/Macintosh|Mac OS X/i.test(userAgent)) {
-    return /Intel/i.test(userAgent) ? "mac-intel" : "mac-arm";
+    // Safari / Chrome 把 "Intel Mac OS X" 冻在 UA 里，Apple 芯片机也会带这个词。
+    if (architecture && /x86/i.test(architecture)) return "mac-intel";
+    return "mac-arm";
   }
   return "windows";
+}
+
+export function canReadArchitecture(nav: NavigatorLike): boolean {
+  return typeof nav.userAgentData?.getHighEntropyValues === "function";
+}
+
+export async function resolveRecommendedPlatform(nav: NavigatorLike): Promise<PlatformId> {
+  let architecture: string | undefined;
+  try {
+    architecture = (await nav.userAgentData?.getHighEntropyValues?.(["architecture"]))
+      ?.architecture;
+  } catch {
+    // 高熵 Client Hints 可能被拒，退回 UA 默认。
+  }
+  return detectPlatform(nav.userAgent, architecture);
 }
 
 export function assetForPlatform(

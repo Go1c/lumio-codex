@@ -5,9 +5,14 @@ import {
   GITHUB_RELEASES_URL,
   LOCAL_LATEST_URL,
   assetForPlatform,
+  canReadArchitecture,
   detectPlatform,
   loadReleaseManifest,
+  resolveRecommendedPlatform,
 } from "@/lib/releases";
+
+const SAFARI_ON_APPLE_SILICON =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
 
 const MANIFEST = {
   version: "1.2.46",
@@ -36,14 +41,46 @@ afterEach(() => {
 });
 
 describe("detectPlatform", () => {
-  it("按 UA 区分 Apple 芯片、Intel 与 Windows", () => {
-    expect(
-      detectPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"),
-    ).toBe("mac-intel");
+  it("不把 UA 里冻住的 Intel 字样当成 Intel Mac", () => {
+    expect(detectPlatform(SAFARI_ON_APPLE_SILICON)).toBe("mac-arm");
     expect(detectPlatform("Mozilla/5.0 (Macintosh; Mac OS X 14_0) AppleWebKit/605.1.15")).toBe(
       "mac-arm",
     );
     expect(detectPlatform("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe("windows");
+  });
+
+  it("只有 Client Hints 明确给出 x86 时才标 Intel Mac", () => {
+    expect(detectPlatform(SAFARI_ON_APPLE_SILICON, "x86")).toBe("mac-intel");
+    expect(detectPlatform(SAFARI_ON_APPLE_SILICON, "arm")).toBe("mac-arm");
+  });
+});
+
+describe("resolveRecommendedPlatform", () => {
+  it("读到 UA-CH architecture 后纠正推荐平台", async () => {
+    await expect(
+      resolveRecommendedPlatform({
+        userAgent: SAFARI_ON_APPLE_SILICON,
+        userAgentData: {
+          getHighEntropyValues: async () => ({ architecture: "x86" }),
+        },
+      }),
+    ).resolves.toBe("mac-intel");
+  });
+
+  it("没有 Client Hints 时按 Apple 芯片推荐", async () => {
+    await expect(resolveRecommendedPlatform({ userAgent: SAFARI_ON_APPLE_SILICON })).resolves.toBe(
+      "mac-arm",
+    );
+  });
+
+  it("只在浏览器能提供 architecture hints 时才去读", () => {
+    expect(canReadArchitecture({ userAgent: SAFARI_ON_APPLE_SILICON })).toBe(false);
+    expect(
+      canReadArchitecture({
+        userAgent: SAFARI_ON_APPLE_SILICON,
+        userAgentData: { getHighEntropyValues: async () => ({ architecture: "arm" }) },
+      }),
+    ).toBe(true);
   });
 });
 

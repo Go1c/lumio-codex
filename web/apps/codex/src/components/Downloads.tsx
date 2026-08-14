@@ -6,8 +6,10 @@ import {
   GITHUB_RELEASES_URL,
   PLATFORMS,
   assetForPlatform,
+  canReadArchitecture,
   detectPlatform,
   loadReleaseManifest,
+  resolveRecommendedPlatform,
   type PlatformId,
   type ReleaseManifest,
 } from "@/lib/releases";
@@ -25,11 +27,18 @@ type ManifestState =
 export function Downloads() {
   const [state, setState] = useState<ManifestState>({ status: "loading" });
   const [pending, setPending] = useState<PendingDownload | null>(null);
+  const [recommended, setRecommended] = useState<PlatformId>(() =>
+    detectPlatform(navigator.userAgent),
+  );
   const baseId = useId();
-  const recommended = detectPlatform(navigator.userAgent);
 
   useEffect(() => {
     let cancelled = false;
+    if (canReadArchitecture(navigator)) {
+      void resolveRecommendedPlatform(navigator).then((platform) => {
+        if (!cancelled) setRecommended(platform);
+      });
+    }
     loadReleaseManifest()
       .then((manifest) => {
         if (!cancelled) setState({ status: "ready", manifest });

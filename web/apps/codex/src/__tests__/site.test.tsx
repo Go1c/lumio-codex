@@ -44,6 +44,25 @@ describe("Codex 产品站", () => {
     expect(screen.getByText(/你使用的始终是官方 Codex 应用/)).toBeInTheDocument();
   });
 
+  it("带 Intel 字样的 Mac UA 把「你的设备」标在 Apple 芯片卡上", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+    vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    );
+
+    renderApp();
+
+    expect(
+      within(screen.getByRole("article", { name: "macOS · Apple 芯片" })).getByText("你的设备"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("article", { name: "macOS · Intel" })).queryByText("你的设备"),
+    ).not.toBeInTheDocument();
+  });
+
   it("按平台给出安装包，并在下载前弹确认层", async () => {
     vi.stubGlobal(
       "fetch",
