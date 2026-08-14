@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { siteUrl, type AccountLinks, type SiteId } from "../config";
+import { ClaudeMark, LumioLogo, OpenAIMark } from "./brand";
 
 export interface SiteNavItem {
   label: string;
@@ -61,6 +62,13 @@ export function SiteLink({
   );
 }
 
+/** 顶栏 mark 跟站点走：门户用 Lumio 字标，产品站用各自的品牌图标。 */
+function BrandMark({ site }: { site?: SiteId }) {
+  if (site === "codex") return <OpenAIMark size={22} className="mark-codex" />;
+  if (site === "cc") return <ClaudeMark size={22} className="mark-claude" />;
+  return <LumioLogo size={22} />;
+}
+
 /** 三站共用的外壳：同一套 Header / Footer，靠 props 决定当前站点、导航与账号区。 */
 export function SiteShell({
   brand,
@@ -74,13 +82,15 @@ export function SiteShell({
   const siblings = (Object.keys(SITE_LABELS) as SiteId[]).filter((id) => id !== site);
 
   return (
-    <div className="site">
+    <div className={`site theme-${site ?? "portal"}`}>
       <a className="skip-link" href="#main">
         跳到主要内容
       </a>
       <header className="site-header">
         <SiteLink href={brand.href ?? "/"} className="logo">
-          <span className="mark" aria-hidden="true" />
+          <span className="mark" aria-hidden="true">
+            <BrandMark site={site} />
+          </span>
           {brand.name}
           {brand.nameEn && <span className="logo-en">{brand.nameEn}</span>}
         </SiteLink>
@@ -117,13 +127,30 @@ export function SiteShell({
       <main id="main">{children}</main>
 
       <footer className="site-footer">
-        <span>© 2026 Lumio</span>
-        {siblings.map((id) => (
-          <a key={id} href={siteUrl(id)}>
-            {SITE_LABELS[id]}
-          </a>
-        ))}
-        {footerExtra}
+        <div className="footer-main">
+          <div className="footer-brand">
+            <span className="logo">
+              <span className="mark" aria-hidden="true">
+                <LumioLogo size={22} />
+              </span>
+              Lumio
+            </span>
+            <p className="footer-tagline">
+              一个账号，两件趁手的 AI 开发利器。注册、登录与余额统一在 Lumio 官网完成。
+            </p>
+          </div>
+          <nav className="footer-links" aria-label="站点互链">
+            {siblings.map((id) => (
+              <a key={id} href={siteUrl(id)}>
+                {SITE_LABELS[id]}
+              </a>
+            ))}
+          </nav>
+        </div>
+        <div className="footer-meta">
+          <span>© 2026 Lumio</span>
+          {footerExtra}
+        </div>
       </footer>
     </div>
   );

@@ -24,6 +24,11 @@ export function App() {
       ]}
       account={{ status: session.status, email: session.profile?.email }}
       accountLinks={portalAccountLinks(currentUrl)}
+      footerExtra={
+        <span>
+          Claude、Claude Code、Anthropic 为其各自所有者的商标，与本项目无从属关系。
+        </span>
+      }
     >
       <Routes>
         <Route path="/" element={<Home />} />

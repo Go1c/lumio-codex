@@ -1,24 +1,57 @@
 /*
- * 设计 token —— 抽取自 cchaven/apps/web/src/styles.css，是三站统一视觉的唯一基准。
+ * 设计 token —— 三站统一视觉的唯一基准（暗色科技风）。
  * 只放变量与全局排版基线；具体元素样式在 base.css / components.css。
+ *
+ * 体系：近黑深底 + 玻璃拟态 + 渐变光晕。品牌主色为蓝→紫渐变；
+ * 产品强调色区分身份：Codex = 青绿（--codex），CC避风港 = Claude 珊瑚橙（--claude）。
  */
 
 :root {
-  --blue: #2563eb;
-  --blue-dark: #1d4ed8;
-  --green: #16a34a;
-  --orange: #ea580c;
-  --red: #dc2626;
-  --ink: #16181d;
-  --gray: #6b7280;
-  --line: #e5e7eb;
-  --bg: #f7f8fa;
-  --term: #16181d;
-  --radius: 8px;
-  --radius-lg: 14px;
+  color-scheme: dark;
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 中性色 */
+  --bg: #050609;
+  --bg-elev: #0b0d12;
+  --ink: #eef1f7;
+  --ink-strong: #ffffff;
+  --gray: #9aa3b6;
+  --gray-dim: #6d7488;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --glass: rgba(255, 255, 255, 0.04);
+  --glass-strong: rgba(255, 255, 255, 0.08);
+
+  /* 品牌与语义色 */
+  --blue: #5b8cff;
+  --blue-dark: #3e6ef5;
+  --violet: #8b5cf6;
+  --green: #34d399;
+  --orange: #fb923c;
+  --red: #f87171;
+
+  /* 产品强调色 */
+  --codex: #2fd6a8;
+  --codex-dim: rgba(47, 214, 168, 0.14);
+  --claude: #d97757;
+  --claude-bright: #e98a63;
+  --claude-dim: rgba(217, 119, 87, 0.14);
+
+  /* 渐变 */
+  --grad-brand: linear-gradient(120deg, #6ea0ff, #8b5cf6);
+  --grad-codex: linear-gradient(120deg, #4ae3b5, #14a37f);
+  --grad-claude: linear-gradient(120deg, #e98a63, #c95f3e);
+
+  /* 结构 */
+  --term: #0a0c11;
+  --radius: 10px;
+  --radius-lg: 18px;
+  --shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.55);
+
+  font-family: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 大标题里拉丁字符走衬线、中文回落黑体（栈里不放 generic serif，避免中文变宋体） */
+  --font-display-latin: Georgia, "Times New Roman", "Inter Variable", Inter, -apple-system,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   font-size: 15px;
   color: var(--ink);
 }

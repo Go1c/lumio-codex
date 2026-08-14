@@ -1,5 +1,7 @@
 import { useId, useState } from "react";
 
+import { Aurora, OpenAIMark, Reveal, ScrollHint } from "@lumio/ui";
+
 import { Downloads } from "@/components/Downloads";
 
 const STEPS = [
@@ -38,28 +40,52 @@ const FAQS: Array<[string, string]> = [
 export function Home() {
   return (
     <>
+      <Aurora variant="codex" />
+
       <section className="hero" id="top">
-        <h1>更快开始使用官方 Codex</h1>
-        <p className="sub">
-          Lumio Codex 是一个轻量接入工具：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。你使用的始终是官方 Codex 应用。
-        </p>
-        <div className="ctas">
-          <a className="btn btn-primary btn-lg" href="#downloads">
-            下载 Lumio Codex
-          </a>
-        </div>
+        <Reveal immediate>
+          <span className="hero-mark" aria-hidden="true">
+            <OpenAIMark size={38} />
+          </span>
+        </Reveal>
+        <Reveal immediate delay={0.08}>
+          <h1>
+            更快开始使用<span className="grad-text">官方 Codex</span>
+          </h1>
+        </Reveal>
+        <Reveal immediate delay={0.16}>
+          <p className="sub">
+            Lumio Codex 是一个轻量接入工具：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。你使用的始终是官方 Codex 应用。
+          </p>
+        </Reveal>
+        <Reveal immediate delay={0.24}>
+          <div className="ctas">
+            <a className="btn btn-primary btn-lg" href="#downloads">
+              下载 Lumio Codex
+            </a>
+            <a className="btn btn-secondary btn-lg" href="#faq">
+              常见问题
+            </a>
+          </div>
+        </Reveal>
+        <Reveal immediate delay={0.4}>
+          <ScrollHint label="向下滚动 · 三步开始" />
+        </Reveal>
       </section>
 
-      <h2 className="section-title">三步开始</h2>
+      <Reveal>
+        <span className="section-kicker">Get Started</span>
+        <h2 className="section-title">三步开始</h2>
+      </Reveal>
       <div className="steps3">
-        {STEPS.map((step) => (
-          <div className="step" key={step.num}>
+        {STEPS.map((step, index) => (
+          <Reveal className="step" key={step.num} delay={index * 0.1}>
             <div className="num" aria-hidden="true">
               {step.num}
             </div>
             <h3>{step.title}</h3>
             <p>{step.body}</p>
-          </div>
+          </Reveal>
         ))}
       </div>
 
@@ -76,7 +102,10 @@ function Faq() {
 
   return (
     <section className="faq" id="faq" aria-label="常见问题">
-      <h2 className="section-title">常见问题</h2>
+      <Reveal>
+        <span className="section-kicker">FAQ</span>
+        <h2 className="section-title">常见问题</h2>
+      </Reveal>
       {FAQS.map(([question, answer], index) => {
         const panelId = `${baseId}-faq-${index}`;
         const expanded = open === index;

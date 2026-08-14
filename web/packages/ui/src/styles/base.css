@@ -1,4 +1,4 @@
-/* 全局重置、可访问性基线与站点外壳（Header / Footer）布局。 */
+/* 全局重置、可访问性基线、动效关键帧与站点外壳（Header / Footer）布局。 */
 
 * {
   margin: 0;
@@ -6,8 +6,14 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
 body {
   background: var(--bg);
+  color: var(--ink);
   min-height: 100vh;
   overflow-x: hidden;
 }
@@ -28,6 +34,10 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+::selection {
+  background: rgba(110, 160, 255, 0.35);
 }
 
 /* 全部交互元素焦点环可见 */
@@ -53,7 +63,9 @@ select {
   position: absolute;
   left: -9999px;
   top: 8px;
-  background: #fff;
+  background: var(--bg-elev);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
   padding: 8px 14px;
   border-radius: var(--radius);
   z-index: 2000;
@@ -62,9 +74,163 @@ select {
   left: 12px;
 }
 
+/* ---------- 动效关键帧 ---------- */
+
+/* 光晕漂移：Aurora 背景 blob 的缓慢游移 */
+@keyframes drift {
+  from {
+    transform: translate3d(-5%, -4%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6%, 9%, 0) scale(1.18);
+  }
+}
+
+/* 进场：淡入上浮（CSS 侧的 reveal，用于不经过 JS 的元素） */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 终端打字光标 */
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 星点闪烁 */
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 滚动提示箭头的呼吸下沉 */
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(6px);
+    opacity: 1;
+  }
+}
+
+/* hero 徽章圆点的呼吸发光 */
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-glow);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0);
+  }
+}
+
+/* ---------- Aurora 渐变光晕背景 ---------- */
+.aurora {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: min(920px, 130vh);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.aurora .blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.32;
+  animation: drift 26s ease-in-out infinite alternate;
+}
+.aurora .star {
+  position: absolute;
+  border-radius: 50%;
+  background: #cdd6ea;
+  box-shadow: 0 0 6px rgba(205, 214, 234, 0.8);
+  animation: twinkle 5s ease-in-out infinite;
+}
+.aurora .b1 {
+  width: 560px;
+  height: 560px;
+  top: -180px;
+  left: 8%;
+}
+.aurora .b2 {
+  width: 480px;
+  height: 480px;
+  top: -60px;
+  right: 4%;
+  animation-duration: 28s;
+  animation-delay: -8s;
+}
+.aurora .b3 {
+  width: 420px;
+  height: 420px;
+  top: 320px;
+  left: 38%;
+  opacity: 0.28;
+  animation-duration: 34s;
+  animation-delay: -16s;
+}
+/* 每个站点用自己的光晕配色 */
+.aurora-brand .b1 {
+  background: rgba(78, 124, 255, 0.4);
+}
+.aurora-brand .b2 {
+  background: rgba(139, 92, 246, 0.34);
+}
+.aurora-brand .b3 {
+  background: rgba(56, 189, 248, 0.3);
+}
+.aurora-codex .b1 {
+  background: rgba(31, 184, 141, 0.36);
+}
+.aurora-codex .b2 {
+  background: rgba(45, 212, 191, 0.26);
+}
+.aurora-codex .b3 {
+  background: rgba(78, 124, 255, 0.2);
+}
+.aurora-claude .b1 {
+  background: rgba(217, 119, 87, 0.36);
+}
+.aurora-claude .b2 {
+  background: rgba(201, 95, 62, 0.28);
+}
+.aurora-claude .b3 {
+  background: rgba(139, 92, 246, 0.18);
+}
+/* 底部渐隐，让星空自然融进页面深底 */
+.aurora::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 180px;
+  background: linear-gradient(to bottom, transparent, var(--bg));
+}
+
 /* ---------- 站点外壳 ---------- */
 .site {
-  background: #fff;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
@@ -73,48 +239,71 @@ select {
   display: flex;
   align-items: center;
   gap: 22px;
-  padding: 14px 40px;
+  padding: 12px 40px;
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(8px);
+  background: rgba(5, 6, 9, 0.7);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
   z-index: 100;
   flex-wrap: wrap;
 }
 .logo {
   font-weight: 700;
-  font-size: 17px;
-  color: var(--ink);
+  font-size: 16.5px;
+  letter-spacing: -0.01em;
+  color: var(--ink-strong);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 .logo:hover {
   text-decoration: none;
 }
 .logo .mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--blue), #7c3aed);
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.logo .mark-codex {
+  color: var(--ink-strong);
+}
+.logo .mark-claude {
+  color: var(--claude);
 }
 .logo-en {
-  font-weight: 400;
+  font-weight: 500;
   color: var(--gray);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .site-nav {
   display: flex;
-  gap: 20px;
+  gap: 4px;
   font-size: 14px;
   align-items: center;
 }
-.site-nav a {
-  color: #444;
+/* 胶囊式导航：hover 浮出圆角底（.btn 类的链接走按钮样式，不参与） */
+.site-nav a:not(.btn) {
+  color: var(--gray);
+  font-weight: 500;
+  padding: 7px 13px;
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.site-nav a:not(.btn):hover {
+  color: var(--ink-strong);
+  background: var(--glass-strong);
+  text-decoration: none;
 }
 .site-nav-end {
-  gap: 16px;
+  gap: 8px;
+}
+.site-nav .btn {
+  border-radius: 999px;
 }
 .account-link {
   display: flex;
@@ -126,22 +315,68 @@ select {
 }
 main {
   flex: 1;
+  position: relative;
 }
+/* 页面内容都压在 Aurora 之上 */
+main > :not(.aurora) {
+  position: relative;
+  z-index: 1;
+}
+
 .site-footer {
-  padding: 32px 40px;
+  margin-top: 110px;
   border-top: 1px solid var(--line);
+  padding: 46px 40px 34px;
+  font-size: 13.5px;
   color: var(--gray);
-  font-size: 13px;
+  background: rgba(255, 255, 255, 0.015);
+}
+.footer-main {
   display: flex;
-  gap: 24px;
-  margin-top: 80px;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 32px;
   flex-wrap: wrap;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+.footer-tagline {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--gray-dim);
+  max-width: 360px;
+  line-height: 1.7;
+}
+.footer-links {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+.footer-links a {
+  color: var(--gray);
+  transition: color 0.15s ease;
+}
+.footer-links a:hover {
+  color: var(--ink-strong);
+  text-decoration: none;
+}
+.footer-meta {
+  max-width: 1120px;
+  margin: 28px auto 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--gray-dim);
+  line-height: 1.7;
 }
 .avatar {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #7c3aed, var(--blue));
+  background: var(--grad-brand);
   color: #fff;
   font-size: 12px;
   line-height: 26px;
@@ -155,15 +390,17 @@ main {
     gap: 14px;
   }
   .site-footer {
-    padding: 24px 16px;
-    gap: 14px;
-    margin-top: 48px;
+    padding: 30px 16px 24px;
+    margin-top: 56px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

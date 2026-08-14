@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 
-import { Modal } from "@lumio/ui";
+import { Modal, Reveal } from "@lumio/ui";
 
 import {
   GITHUB_RELEASES_URL,
@@ -44,25 +44,30 @@ export function Downloads() {
 
   return (
     <section className="section" id="downloads" aria-labelledby={`${baseId}-title`}>
-      <h2 className="section-title" id={`${baseId}-title`}>
-        下载
-      </h2>
-      <p className="section-sub">
-        当前为内测渠道，制品未签名。从浏览器下载后 macOS 可能提示「已损坏」——那是隔离标记，不是真坏了。
-      </p>
+      <Reveal>
+        <span className="section-kicker">Downloads</span>
+        <h2 className="section-title" id={`${baseId}-title`}>
+          下载
+        </h2>
+        <p className="section-sub">
+          当前为内测渠道，制品未签名。从浏览器下载后 macOS 可能提示「已损坏」——那是隔离标记，不是真坏了。
+        </p>
+      </Reveal>
 
-      <div className="dl-grid">
-        {PLATFORMS.map((platform) => (
-          <DownloadCard
-            key={platform.id}
-            id={`${baseId}-${platform.id}`}
-            title={platform.title}
-            meta={metaFor(state, platform.id)}
-            recommended={platform.id === recommended}
-            onDownload={() => setPending(targetFor(state, platform.id))}
-          />
-        ))}
-      </div>
+      <Reveal delay={0.08}>
+        <div className="dl-grid">
+          {PLATFORMS.map((platform) => (
+            <DownloadCard
+              key={platform.id}
+              id={`${baseId}-${platform.id}`}
+              title={platform.title}
+              meta={metaFor(state, platform.id)}
+              recommended={platform.id === recommended}
+              onDownload={() => setPending(targetFor(state, platform.id))}
+            />
+          ))}
+        </div>
+      </Reveal>
 
       {pending && (
         <Modal
