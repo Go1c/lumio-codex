@@ -64,6 +64,7 @@ const (
 	MsgAdminMFARequired    ID = "admin.mfa_required"
 	MsgAdminMFAInvalid     ID = "admin.mfa_invalid"
 	MsgOrderNotRefundable  ID = "admin.order_not_refundable"
+	MsgRefundDeclined      ID = "admin.refund_declined" // 渠道拒绝退款（QA S-9）
 )
 
 var dictionaries = map[Lang]map[ID]string{
@@ -102,6 +103,7 @@ var dictionaries = map[Lang]map[ID]string{
 		MsgAdminMFARequired:    "请输入两步验证码。",
 		MsgAdminMFAInvalid:     "两步验证码不正确。",
 		MsgOrderNotRefundable:  "该订单当前状态不支持退款。",
+		MsgRefundDeclined:      "退款被支付渠道拒绝，订单已恢复为已支付，可排查后重试。",
 	},
 	// zh-HK 词条待补；缺失时自动回落 zh-CN。
 	ZhHK: {},

@@ -116,7 +116,9 @@ func (s *Server) Routes() http.Handler {
 	// 拒绝路径走 auditDenied 写 `{action}_denied` 再返回 403。
 	r.Route("/api/admin/v1", func(r chi.Router) {
 		r.Post("/auth/login", s.handleAdminLogin)
-		r.Post("/auth/login/totp", s.handleAdminTOTP)
+		// TOTP 端点必须限频：6 位验证码可在线穷举，口令锁定只按账号计数，
+		// 这里再按来源 IP 收紧（QA S-1）。
+		r.With(s.rateLimitAdminTOTP).Post("/auth/login/totp", s.handleAdminTOTP)
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)

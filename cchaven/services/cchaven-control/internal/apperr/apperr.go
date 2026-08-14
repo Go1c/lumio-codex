@@ -78,6 +78,22 @@ func InvalidParams() *Error {
 	return newError(http.StatusBadRequest, "invalid_params", i18n.MsgInvalidParams)
 }
 
+// PaymentAmountMismatch 表示支付回调金额与订单不符。
+//
+// 签名合法不等于金额合法：改价、篡改、渠道错单都会触发。订单停在 pending，
+// 等待真实回调或人工核对，绝不入账（QA S-5）。
+func PaymentAmountMismatch() *Error {
+	return newError(http.StatusBadRequest, "payment_amount_mismatch", i18n.MsgInvalidParams)
+}
+
+// RefundDeclined 表示支付渠道拒绝了退款。
+//
+// 退款单标 failed、订单恢复为已支付（可重试）；绝不停在 refunding——
+// 那个状态没有任何推进路径（QA S-9）。
+func RefundDeclined() *Error {
+	return newError(http.StatusBadGateway, "refund_declined", i18n.MsgRefundDeclined)
+}
+
 // Unauthorized 表示缺少有效会话。
 func Unauthorized() *Error {
 	return newError(http.StatusUnauthorized, "unauthorized", i18n.MsgUnauthorized)

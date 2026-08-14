@@ -35,6 +35,10 @@ type Config struct {
 	PortalURL  string // 统一门户（账号中心）地址，自有认证接口的 410 响应指向它
 	CookieName CookieNames
 
+	// envExplicit 记录 CCHAVEN_ENV 是否被显式设置；未设置时 Warnings 要提醒
+	// 当前跑在开发默认密钥上（QA S-12 的足枪）。
+	envExplicit bool
+
 	// Sub2APIBase 是身份真源的地址；Sub2APICacheTTL 是校验结果的缓存时长。
 	Sub2APIBase     string
 	Sub2APICacheTTL time.Duration
@@ -48,8 +52,14 @@ type Config struct {
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
-	WebSessionTTL   time.Duration
-	AdminSessionTTL time.Duration
+	// SessionAbsoluteTTL 是会话族的绝对寿命上限（与滑动续期的 RefreshTokenTTL 相对）。
+	//
+	// refresh 轮换让「持续使用的会话永不失效」，而上游（Sub2API）的停用决策没有
+	// 主动同步通道；绝对上限把伤害收敛到「至多 TTL 后失效」，到期须重新走浏览器
+	// 授权——那条链路每次都会回源校验账号状态（QA S-2）。
+	SessionAbsoluteTTL time.Duration
+	WebSessionTTL      time.Duration
+	AdminSessionTTL    time.Duration
 
 	SecureCookies  bool
 	CookieSameSite http.SameSite
@@ -102,6 +112,14 @@ func baseOr(value, fallback string) string {
 func (c Config) Warnings() []string {
 	var out []string
 
+	// 漏设环境变量的部署会静默用仓库里公开的开发默认密钥签 JWT/TOTP、cookie
+	// 不带 Secure——这等于任何人都能伪造令牌，必须在启动时喊出来（QA S-12）。
+	if c.Env != "prod" && !c.envExplicit {
+		out = append(out, "CCHAVEN_ENV 未设置，当前按 dev 运行："+
+			"JWT/TOTP/pepper 回落到公开的开发默认密钥，cookie 不带 Secure；"+
+			"生产部署必须显式设置 CCHAVEN_ENV=prod 并配置全部密钥")
+	}
+
 	if c.Env == "prod" && c.AdminURL == "" {
 		out = append(out, "未配置 CCHAVEN_ADMIN_URL：管理后台的来源不在可信集合里，"+
 			"浏览器会拦下它的跨源请求，后台的所有写操作都会返回 403")
@@ -138,7 +156,10 @@ func (s SMTPConfig) Enabled() bool { return s.Host != "" }
 
 // Load 读取环境变量并校验必填项。
 func Load() (Config, error) {
-	environment := env("CCHAVEN_ENV", "dev")
+	environment, envExplicit, err := parseEnv(os.Getenv("CCHAVEN_ENV"))
+	if err != nil {
+		return Config{}, err
+	}
 
 	sameSite, err := parseSameSite(env("CCHAVEN_COOKIE_SAMESITE", "lax"))
 	if err != nil {
@@ -153,11 +174,12 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Env:       environment,
-		HTTPAddr:  env("CCHAVEN_HTTP_ADDR", ":8080"),
-		PublicURL: strings.TrimRight(env("CCHAVEN_PUBLIC_URL", "http://localhost:5173"), "/"),
-		AdminURL:  adminURL,
-		PortalURL: strings.TrimRight(env("CCHAVEN_PORTAL_URL", DefaultPortalURL), "/"),
+		Env:         environment,
+		envExplicit: envExplicit,
+		HTTPAddr:    env("CCHAVEN_HTTP_ADDR", ":8080"),
+		PublicURL:   strings.TrimRight(env("CCHAVEN_PUBLIC_URL", "http://localhost:5173"), "/"),
+		AdminURL:    adminURL,
+		PortalURL:   strings.TrimRight(env("CCHAVEN_PORTAL_URL", DefaultPortalURL), "/"),
 		Sub2APIBase: strings.TrimRight(
 			env("CCHAVEN_SUB2API_BASE", DefaultSub2APIBase), "/"),
 		Sub2APICacheTTL: duration("CCHAVEN_SUB2API_CACHE_TTL", DefaultSub2APICacheTTL),
@@ -167,11 +189,12 @@ func Load() (Config, error) {
 			Referral: "cch_ref",
 			Admin:    "cch_admin",
 		},
-		DatabaseURL:     env("CCHAVEN_DATABASE_URL", ""),
-		AccessTokenTTL:  duration("CCHAVEN_ACCESS_TOKEN_TTL", 15*time.Minute),
-		RefreshTokenTTL: duration("CCHAVEN_REFRESH_TOKEN_TTL", 60*24*time.Hour),
-		WebSessionTTL:   duration("CCHAVEN_WEB_SESSION_TTL", 30*24*time.Hour),
-		AdminSessionTTL: duration("CCHAVEN_ADMIN_SESSION_TTL", 12*time.Hour),
+		DatabaseURL:        env("CCHAVEN_DATABASE_URL", ""),
+		AccessTokenTTL:     duration("CCHAVEN_ACCESS_TOKEN_TTL", 15*time.Minute),
+		RefreshTokenTTL:    duration("CCHAVEN_REFRESH_TOKEN_TTL", 60*24*time.Hour),
+		SessionAbsoluteTTL: duration("CCHAVEN_SESSION_ABSOLUTE_TTL", 14*24*time.Hour),
+		WebSessionTTL:      duration("CCHAVEN_WEB_SESSION_TTL", 30*24*time.Hour),
+		AdminSessionTTL:    duration("CCHAVEN_ADMIN_SESSION_TTL", 12*time.Hour),
 		SMTP: SMTPConfig{
 			Host:     env("CCHAVEN_SMTP_HOST", ""),
 			Port:     integer("CCHAVEN_SMTP_PORT", 587),
@@ -199,6 +222,24 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// parseEnv 解析 CCHAVEN_ENV，返回归一化后的值与「是否被显式设置」。
+//
+// 拼错就启动失败（如 production / prd）：静默按 dev 处理会让服务用仓库里公开的
+// 开发默认密钥签发 JWT 与 TOTP，等于向所有访问者开放伪造令牌（QA S-12）。
+// 大小写不敏感只求宽容，合法值仍然只有 dev 与 prod。
+func parseEnv(value string) (env string, explicit bool, err error) {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case "dev", "prod":
+		return trimmed, value != "", nil
+	case "":
+		return "dev", false, nil
+	default:
+		return "", false, fmt.Errorf("config: CCHAVEN_ENV 只接受 dev 或 prod，收到 %q；"+
+			"注意 production/prd 等别名不会被识别为 prod", value)
+	}
 }
 
 // parseSameSite 解析会话 cookie 的 SameSite 策略。

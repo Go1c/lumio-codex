@@ -117,15 +117,29 @@ type OutboxMessage struct {
 	Payload  map[string]any
 }
 
-// ClaimPendingEmails 取出一批待投递邮件。
+// ClaimPendingEmails 原子地领取一批待投递邮件：置为 sending 并刷新领取时间。
+//
+// 领取本身就是一条 UPDATE……RETURNING，提交后行锁立即释放——真正的 SMTP 投递
+// 必须发生在事务之外，否则一次网络挂起就会连着行锁、连接池连接和整条 worker
+// goroutine 一起拖死（QA S-8）。重试按 attempts 递增退避（每次 5 分钟、封顶
+// 30 分钟），失败不再以 5 秒间隔连打。
 func ClaimPendingEmails(ctx context.Context, q Querier, limit int) ([]OutboxMessage, error) {
 	rows, err := q.Query(ctx, `
-		SELECT id, to_email, template, payload
-		  FROM email_outbox
-		 WHERE status = 'pending'
-		 ORDER BY created_at
-		 LIMIT $1
-		   FOR UPDATE SKIP LOCKED`, limit)
+		WITH claimable AS (
+		    SELECT id
+		      FROM email_outbox
+		     WHERE status = 'pending'
+		       AND (last_attempt_at IS NULL
+		            OR last_attempt_at < now() - (least(attempts, 6) * interval '5 minutes'))
+		     ORDER BY created_at
+		     LIMIT $1
+		       FOR UPDATE SKIP LOCKED
+		)
+		UPDATE email_outbox e
+		   SET status = 'sending', last_attempt_at = now(), attempts = attempts + 1
+		  FROM claimable c
+		 WHERE e.id = c.id
+		RETURNING e.id, e.to_email, e.template, e.payload`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -146,23 +160,39 @@ func ClaimPendingEmails(ctx context.Context, q Querier, limit int) ([]OutboxMess
 	return out, rows.Err()
 }
 
-// MarkEmailSent 标记投递成功。
+// MarkEmailSent 标记投递成功。attempts 已在领取时计入，这里只落终态。
 func MarkEmailSent(ctx context.Context, q Querier, id int64, now time.Time) error {
 	_, err := q.Exec(ctx,
-		`UPDATE email_outbox SET status = 'sent', sent_at = $2, attempts = attempts + 1 WHERE id = $1`,
+		`UPDATE email_outbox SET status = 'sent', sent_at = $2, last_error = '' WHERE id = $1`,
 		id, now)
 	return err
 }
 
-// MarkEmailFailed 记录一次投递失败；连续失败 5 次后置为 failed 不再重试。
+// MarkEmailFailed 记录一次投递失败并退回 pending；累计失败 5 次后置为 failed 不再重试。
+//
+// attempts 已在领取时 +1，这里的 CASE 判断的是「本次已是第几次尝试」。
 func MarkEmailFailed(ctx context.Context, q Querier, id int64, reason string) error {
 	_, err := q.Exec(ctx, `
 		UPDATE email_outbox
-		   SET attempts = attempts + 1,
-		       last_error = $2,
-		       status = CASE WHEN attempts + 1 >= 5 THEN 'failed' ELSE 'pending' END
+		   SET last_error = $2,
+		       status = CASE WHEN attempts >= 5 THEN 'failed' ELSE 'pending' END
 		 WHERE id = $1`, id, reason)
 	return err
+}
+
+// RequeueStaleSendingEmails 把停滞在 sending 的行收回 pending。
+//
+// worker 在「领取已提交、结果未回写」之间崩溃时会留下 sending 行；不回收它们
+// 就永远不会再被领取（QA S-8）。由维护任务周期调用。
+func RequeueStaleSendingEmails(ctx context.Context, q Querier, staleBefore time.Time) (int64, error) {
+	tag, err := q.Exec(ctx, `
+		UPDATE email_outbox
+		   SET status = 'pending'
+		 WHERE status = 'sending' AND last_attempt_at < $1`, staleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // —— 审计日志 ——

@@ -205,3 +205,40 @@ func TestRateLimitPublic(t *testing.T) {
 		t.Errorf("其他 IP 应不受影响, got %d", got)
 	}
 }
+
+// TestRateLimitAdminTOTP 锁住管理端 TOTP 端点的按 IP 配额（QA S-1）。
+//
+// 口令锁定只按账号计数；没有这层按来源的限频，攻击者仍可换着账号/会话
+// 对 6 位验证码做在线穷举。
+func TestRateLimitAdminTOTP(t *testing.T) {
+	server := NewServer(&service.Service{Limiter: ratelimit.New()}, prodConfig())
+
+	var served int
+	handler := server.rateLimitAdminTOTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served++
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	call := func(ip string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/auth/login/totp", nil)
+		req.Header.Set("X-Forwarded-For", ip)
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	const attacker = "203.0.113.9"
+	for i := range service.RuleAdminTOTPByIP.Limit {
+		if got := call(attacker); got != http.StatusOK {
+			t.Fatalf("配额内第 %d 次请求应放行, got %d", i+1, got)
+		}
+	}
+	if got := call(attacker); got != http.StatusTooManyRequests {
+		t.Errorf("超出配额应返回 429, got %d", got)
+	}
+	if served != service.RuleAdminTOTPByIP.Limit {
+		t.Errorf("被拒的请求不应到达 handler: 实际处理 %d 次, 配额 %d",
+			served, service.RuleAdminTOTPByIP.Limit)
+	}
+}

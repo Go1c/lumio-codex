@@ -6,8 +6,10 @@ package mailer
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/smtp"
 	"strings"
 	"time"
@@ -19,9 +21,13 @@ import (
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/store"
 )
 
-// Sender 投递单封邮件。
+// sendTimeout 限定单封邮件的整个投递过程。此前 smtp.SendMail 没有任何超时，
+// SMTP 挂起会把行锁、连接与整条 worker goroutine 一起无限期拖死（QA S-8）。
+const sendTimeout = 15 * time.Second
+
+// Sender 投递单封邮件。实现必须尊重 ctx 的取消与截止时间。
 type Sender interface {
-	Send(to, subject, body string) error
+	Send(ctx context.Context, to, subject, body string) error
 }
 
 // Worker 周期性地把发件箱中的待发邮件投递出去。
@@ -47,39 +53,45 @@ func (w *Worker) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := w.drain(ctx); err != nil {
+			if err := w.DrainOnce(ctx); err != nil {
 				slog.Error("邮件投递批次失败", "error", err)
 			}
 		}
 	}
 }
 
-// drain 处理一批待发邮件。
-//
-// 取件用 FOR UPDATE SKIP LOCKED，多个实例并行运行也不会重复投递同一封。
-func (w *Worker) drain(ctx context.Context) error {
-	return db.InTx(ctx, w.pool, func(tx pgx.Tx) error {
-		messages, err := store.ClaimPendingEmails(ctx, tx, w.batch)
-		if err != nil {
-			return err
-		}
+// DrainOnce 处理一批待发邮件，供周期调度与测试直接驱动。
+func (w *Worker) DrainOnce(ctx context.Context) error {
+	// 阶段一：领取并立即提交，行锁与池连接就此释放。
+	var messages []store.OutboxMessage
+	if err := db.InTx(ctx, w.pool, func(tx pgx.Tx) error {
+		claimed, err := store.ClaimPendingEmails(ctx, tx, w.batch)
+		messages = claimed
+		return err
+	}); err != nil {
+		return err
+	}
 
-		for _, m := range messages {
-			subject, body := Render(m.Template, m.Payload)
+	// 阶段二：事务外逐封投递。SMTP 挂起最多占用 sendTimeout，不再持有任何行锁。
+	for _, m := range messages {
+		subject, body := Render(m.Template, m.Payload)
 
-			if err := w.sender.Send(m.To, subject, body); err != nil {
-				slog.Warn("邮件投递失败", "template", m.Template, "error", err)
-				if err := store.MarkEmailFailed(ctx, tx, m.ID, err.Error()); err != nil {
-					return err
-				}
-				continue
-			}
-			if err := store.MarkEmailSent(ctx, tx, m.ID, time.Now().UTC()); err != nil {
+		sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+		sendErr := w.sender.Send(sendCtx, m.To, subject, body)
+		cancel()
+
+		if sendErr != nil {
+			slog.Warn("邮件投递失败", "template", m.Template, "error", sendErr)
+			if err := store.MarkEmailFailed(ctx, w.pool, m.ID, sendErr.Error()); err != nil {
 				return err
 			}
+			continue
 		}
-		return nil
-	})
+		if err := store.MarkEmailSent(ctx, w.pool, m.ID, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LogSender 把邮件打到日志，供本地开发使用。
@@ -89,7 +101,7 @@ func (w *Worker) drain(ctx context.Context) error {
 type LogSender struct{}
 
 // Send 实现 Sender。
-func (LogSender) Send(to, subject, _ string) error {
+func (LogSender) Send(_ context.Context, to, subject, _ string) error {
 	slog.Info("邮件已生成（未实际投递）", "to", to, "subject", subject)
 	return nil
 }
@@ -101,7 +113,10 @@ type SMTPSender struct{ cfg config.SMTPConfig }
 func NewSMTPSender(cfg config.SMTPConfig) *SMTPSender { return &SMTPSender{cfg: cfg} }
 
 // Send 实现 Sender。
-func (s *SMTPSender) Send(to, subject, body string) error {
+//
+// 不用 smtp.SendMail：它没有拨号超时也不接受 ctx。这里手动走同一套流程
+// （STARTTLS → AUTH → MAIL/RCPT/DATA），拨号 5 秒、整体受调用方的 ctx 截止约束。
+func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 
 	var auth smtp.Auth
@@ -119,8 +134,54 @@ func (s *SMTPSender) Send(to, subject, body string) error {
 		body,
 	}, "\r\n")
 
-	if err := smtp.SendMail(addr, auth, s.cfg.From, []string{to}, []byte(message)); err != nil {
-		return fmt.Errorf("mailer: SMTP 投递失败: %w", err)
+	fail := func(err error) error { return fmt.Errorf("mailer: SMTP 投递失败: %w", err) }
+
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	if deadline, ok := ctx.Deadline(); ok {
+		dialer.Deadline = deadline
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return fail(err)
+	}
+	defer conn.Close()
+
+	client, err := smtp.NewClient(conn, s.cfg.Host)
+	if err != nil {
+		return fail(err)
+	}
+	defer client.Close()
+
+	// 与 smtp.SendMail 一致：服务器支持 STARTTLS 就先升级，明文链路上不发送凭据。
+	if ok, _ := client.Extension("STARTTLS"); ok {
+		if err := client.StartTLS(&tls.Config{ServerName: s.cfg.Host}); err != nil {
+			return fail(err)
+		}
+	}
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return fail(err)
+		}
+	}
+	if err := client.Mail(s.cfg.From); err != nil {
+		return fail(err)
+	}
+	if err := client.Rcpt(to); err != nil {
+		return fail(err)
+	}
+	writer, err := client.Data()
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := writer.Write([]byte(message)); err != nil {
+		_ = writer.Close()
+		return fail(err)
+	}
+	if err := writer.Close(); err != nil {
+		return fail(err)
+	}
+	if err := client.Quit(); err != nil {
+		return fail(err)
 	}
 	return nil
 }

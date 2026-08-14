@@ -181,6 +181,10 @@ func (s *Service) AdminLogin(ctx context.Context, email, password, ip, userAgent
 }
 
 // AdminVerifyTOTP 校验两步验证码并升级会话。
+//
+// 错误码必须与口令登录一样计入按账号的失败锁定（QA S-1）：TOTP 只有 10^6 种
+// 取值，拿到口令的攻击者若能无限重试，小时级在线穷举即可命中。复用口令的
+// 5 次锁 15 分钟机制，与路由层的按 IP 限频互为补充。
 func (s *Service) AdminVerifyTOTP(ctx context.Context, token, code string) error {
 	session, err := store.GetAdminSessionByHash(ctx, s.Pool, security.HashToken(token), s.now())
 	if err != nil {
@@ -197,6 +201,9 @@ func (s *Service) AdminVerifyTOTP(ctx context.Context, token, code string) error
 	if err != nil {
 		return err
 	}
+	if admin.LockedUntil != nil && admin.LockedUntil.After(s.now()) {
+		return apperr.AccountLocked(admin.LockedUntil.Sub(s.now()))
+	}
 	if !admin.TOTPEnabled() {
 		return apperr.AdminMFAInvalid()
 	}
@@ -206,7 +213,14 @@ func (s *Service) AdminVerifyTOTP(ctx context.Context, token, code string) error
 		return err
 	}
 	if !totp.Validate(code, secret) {
+		if err := store.RecordAdminLoginFailure(ctx, s.Pool, admin.ID,
+			AdminLoginFailureThreshold, AdminLoginLockDuration, s.now()); err != nil {
+			return err
+		}
 		return apperr.AdminMFAInvalid()
+	}
+	if err := store.ClearAdminLoginFailures(ctx, s.Pool, admin.ID, s.now()); err != nil {
+		return err
 	}
 	return store.MarkAdminSessionMFAPassed(ctx, s.Pool, session.ID)
 }
@@ -795,6 +809,7 @@ func (s *Service) RefundOrder(
 
 	now := s.now()
 	var finalStatus string
+	var reject error
 
 	err := db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
 		order, err := store.LockOrderByNo(ctx, tx, orderNo)
@@ -851,6 +866,23 @@ func (s *Service) RefundOrder(
 				return err
 			}
 			finalStatus = string(domain.OrderRefunded)
+		} else {
+			// 渠道明确拒绝（QA S-9）：退款单标 failed、订单恢复为已支付。
+			// 绝不停在 refunding——退款回调不存在、重试会被 OrderNotRefundable
+			// 拒绝，订单与退款单会永久卡死。状态变更必须提交落盘，
+			// 错误改在事务外返回，否则回滚会把「恢复已支付」一并吞掉。
+			if err := store.CompleteRefund(
+				ctx, tx, refundID, "failed", resp.ProviderRefundID, now,
+			); err != nil {
+				return err
+			}
+			if err := store.UpdateOrderStatus(
+				ctx, tx, orderNo, domain.OrderPaid, nil, nil, now,
+			); err != nil {
+				return err
+			}
+			finalStatus = string(domain.OrderPaid)
+			reject = apperr.RefundDeclined()
 		}
 
 		return store.WriteAudit(ctx, tx, store.AuditEntry{
@@ -865,6 +897,9 @@ func (s *Service) RefundOrder(
 			UserAgent:  userAgent,
 		})
 	})
+	if reject != nil {
+		return finalStatus, reject
+	}
 
 	return finalStatus, err
 }

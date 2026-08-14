@@ -9,6 +9,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
+	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/service"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/testsupport"
 )
 
@@ -73,11 +74,12 @@ func TestAdminIsSeparateFromUserAccounts(t *testing.T) {
 	// 普通用户会话访问管理端应被拒。
 	browser.Get("/api/admin/v1/metrics/overview").ExpectStatus(http.StatusUnauthorized)
 
-	// 管理员账号也不能用来登录用户侧。
+	// 管理员账号也不能用来登录用户侧：本地登录已收口到 Lumio 账号中心，
+	// 该端点对任何人（包括管理员）恒 410，隔离语义不变。
 	env.CreateAdmin(adminEmail, adminPassword)
 	env.NewClient().Post("/api/v1/auth/login", map[string]string{
 		"email": adminEmail, "password": adminPassword,
-	}).ExpectStatus(http.StatusUnauthorized)
+	}).ExpectStatus(http.StatusGone)
 }
 
 func TestAdminLoginRejectsWrongPassword(t *testing.T) {
@@ -172,6 +174,42 @@ func TestAdminTOTPEnrollmentAndGate(t *testing.T) {
 	next.Get("/api/admin/v1/metrics/overview").ExpectStatus(http.StatusOK)
 }
 
+// TestAdminTOTPBruteForceLocksAccount 锁住 QA S-1：TOTP 验证码错误必须计入
+// 按账号的失败锁定。TOTP 只有 10^6 种取值，拿到口令的攻击者若能无限重试，
+// 小时级在线穷举就能接管后台——错误计数与口令登录共用 5 次锁 15 分钟。
+func TestAdminTOTPBruteForceLocksAccount(t *testing.T) {
+	env := testsupport.New(t)
+	client := newAdminClient(t, env)
+
+	setup := client.Post("/api/admin/v1/auth/totp/setup", nil).ExpectStatus(http.StatusOK)
+	secret := setup.String("secret")
+	code, err := totp.GenerateCode(secret, env.Now())
+	if err != nil {
+		t.Fatalf("生成验证码失败: %v", err)
+	}
+	client.Post("/api/admin/v1/auth/totp/enable", map[string]string{"code": code}).
+		ExpectStatus(http.StatusOK)
+
+	next := env.NewClient()
+	next.Post("/api/admin/v1/auth/login", map[string]string{
+		"email": adminEmail, "password": adminPassword,
+	}).ExpectStatus(http.StatusOK)
+
+	// 连续错误触发锁定；次数刻意引用口令锁定的阈值常量，两处此后不会漂移。
+	for i := 0; i < service.AdminLoginFailureThreshold; i++ {
+		next.Post("/api/admin/v1/auth/login/totp", map[string]string{"code": "000000"}).
+			ExpectStatus(http.StatusUnauthorized)
+	}
+
+	// 锁定期间，正确的验证码也不得放行。
+	valid, _ := totp.GenerateCode(secret, env.Now())
+	locked := next.Post("/api/admin/v1/auth/login/totp", map[string]string{"code": valid}).
+		ExpectStatus(http.StatusLocked)
+	if locked.ErrorCode() != "account_locked" {
+		t.Errorf("错误码 = %q, want account_locked", locked.ErrorCode())
+	}
+}
+
 // TestAdminDisableUserLogsOutImmediately 验证禁用用户「立即被登出且无法登录」，并留审计。
 func TestAdminDisableUserLogsOutImmediately(t *testing.T) {
 	env := testsupport.New(t)
@@ -183,17 +221,10 @@ func TestAdminDisableUserLogsOutImmediately(t *testing.T) {
 	admin.Post(disablePath(userID), map[string]string{"reason": "滥用"}).
 		ExpectStatus(http.StatusOK)
 
-	// 浏览器与 APP 会话都立即失效。
+	// 浏览器与 APP 会话都立即失效：浏览器走 Sub2API 令牌路径，本地禁用
+	// 对它返回明确的「账号已停用」；APP 的本地会话族被撤销，表现为会话过期。
 	browser.Get("/api/v1/me").ExpectStatus(http.StatusForbidden)
-	appClient.Get("/api/v1/me").ExpectStatus(http.StatusForbidden)
-
-	// 也无法重新登录。
-	relogin := env.NewClient().Post("/api/v1/auth/login", map[string]string{
-		"email": "alice@example.com", "password": "Passw0rd!",
-	}).ExpectStatus(http.StatusForbidden)
-	if got := relogin.ErrorMessage(); got != "账号已停用，请联系支持。" {
-		t.Errorf("文案 = %q", got)
-	}
+	appClient.Get("/api/v1/me").ExpectStatus(http.StatusUnauthorized)
 
 	// 审计日志记录了操作人与前后值。
 	logs := admin.Get("/api/admin/v1/audit-logs").ExpectStatus(http.StatusOK).Array("items")
@@ -208,11 +239,10 @@ func TestAdminDisableUserLogsOutImmediately(t *testing.T) {
 		t.Errorf("审计应记录前后值: %v", entry)
 	}
 
-	// 解禁后恢复。
+	// 解禁后恢复：浏览器重新以 Sub2API 令牌访问即正常（本地登录已收口，
+	// 不再有「重新登录」端点可断言）。
 	admin.Post(enablePath(userID), nil).ExpectStatus(http.StatusOK)
-	env.NewClient().Post("/api/v1/auth/login", map[string]string{
-		"email": "alice@example.com", "password": "Passw0rd!",
-	}).ExpectStatus(http.StatusOK)
+	browser.Get("/api/v1/me").ExpectStatus(http.StatusOK)
 }
 
 // TestAdminUserListMasksEmailAndFilters 验证列表打码与筛选 chips。
@@ -342,8 +372,10 @@ func TestAdminUserDetailReturnsPlainEmailAndSnapshots(t *testing.T) {
 	}
 
 	entitlement := detail.Object("entitlement")
-	if got := entitlement["status"]; got != "trialing" {
-		t.Errorf("订阅状态 = %v, want trialing", got)
+	// 邀请闭环已把 7 天奖励按付费天数入账（KindPaid），试用订阅随之升级：
+	// 状态是 active 而非 trialing（applyDays 的 kind 改写规则）。
+	if got := entitlement["status"]; got != "active" {
+		t.Errorf("订阅状态 = %v, want active", got)
 	}
 	if got := entitlement["bonus_days_total"]; got != float64(7) {
 		t.Errorf("累计奖励天数 = %v, want 7", got)
@@ -544,10 +576,14 @@ func TestAdminSupportCannotWrite(t *testing.T) {
 		})
 	}
 
-	// 没有任何一次尝试真的生效：用户仍能登录，订单仍是已支付，配置没被改。
-	env.NewClient().Post("/api/v1/auth/login", map[string]string{
-		"email": "alice@example.com", "password": "Passw0rd!",
-	}).ExpectStatus(http.StatusOK)
+	// 没有任何一次尝试真的生效：账号仍 active、订单仍是已支付、配置没被改。
+	// 本地登录已收口到 Lumio 账号中心（该端点设计上恒 410），这里改从
+	// 管理端确认账号状态，断言意图不变。
+	owner := newAdminClient(t, env)
+	detail := owner.Get(userPath(userID)).ExpectStatus(http.StatusOK)
+	if got := detail.Object("user")["status"]; got != "active" {
+		t.Errorf("用户状态 = %v, want active", got)
+	}
 
 	orders := support.Get("/api/admin/v1/orders?status=paid").ExpectStatus(http.StatusOK).Array("items")
 	if len(orders) != 1 {

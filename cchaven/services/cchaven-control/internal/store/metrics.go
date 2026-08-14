@@ -72,7 +72,7 @@ func TrialConversionRate(ctx context.Context, q Querier, now time.Time, days int
 	err = q.QueryRow(ctx, `
 		WITH cohort AS (
 		    SELECT user_id FROM subscription_events
-		     WHERE type = 'trial_granted' AND created_at >= $1 - make_interval(days => $2::int)
+		     WHERE type = 'trial_granted' AND created_at >= $1::timestamptz - make_interval(days => $2::int)
 		)
 		SELECT (SELECT count(*) FROM cohort),
 		       (SELECT count(DISTINCT c.user_id)
@@ -113,7 +113,7 @@ func PlatformDistribution(ctx context.Context, q Querier, now time.Time, days in
 		       END AS label,
 		       count(*)
 		  FROM user_devices
-		 WHERE last_seen_at >= $1 - make_interval(days => $2::int)
+		 WHERE last_seen_at >= $1::timestamptz - make_interval(days => $2::int)
 		 GROUP BY label ORDER BY count(*) DESC`, now, days)
 }
 
@@ -122,7 +122,7 @@ func AppVersionDistribution(ctx context.Context, q Querier, now time.Time, days 
 	return bucketQuery(ctx, q, `
 		SELECT coalesce(nullif(app_version, ''), '未知') AS label, count(*)
 		  FROM user_devices
-		 WHERE last_seen_at >= $1 - make_interval(days => $2::int)
+		 WHERE last_seen_at >= $1::timestamptz - make_interval(days => $2::int)
 		 GROUP BY label ORDER BY count(*) DESC`, now, days)
 }
 
@@ -136,7 +136,7 @@ func SourceDistribution(ctx context.Context, q Querier, now time.Time, days int)
 		       END AS label,
 		       count(*)
 		  FROM users
-		 WHERE created_at >= $1 - make_interval(days => $2::int)
+		 WHERE created_at >= $1::timestamptz - make_interval(days => $2::int)
 		 GROUP BY label ORDER BY count(*) DESC`, now, days)
 }
 

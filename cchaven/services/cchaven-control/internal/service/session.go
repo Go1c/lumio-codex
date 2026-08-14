@@ -76,6 +76,7 @@ func (s *Service) RefreshSession(ctx context.Context, refreshToken string) (Toke
 
 	now := s.now()
 	var pair TokenPair
+	var failure error
 
 	err := db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
 		record, err := store.GetRefreshTokenByHash(ctx, tx, security.HashToken(refreshToken))
@@ -92,7 +93,11 @@ func (s *Service) RefreshSession(ctx context.Context, refreshToken string) (Toke
 			); err != nil && !errors.Is(err, store.ErrNotFound) {
 				return err
 			}
-			return apperr.SessionExpired()
+			// 撤销必须提交落盘：这里若直接返回错误，InTx 会回滚，
+			// 重放检测就只剩 401 响应、撤族从未生效——攻击者与真实用户
+			// 手里的新令牌都能继续使用。错误改由事务外返回。
+			failure = apperr.SessionExpired()
+			return nil
 		}
 		if record.RevokedAt != nil || !record.ExpiresAt.After(now) {
 			return apperr.SessionExpired()
@@ -104,6 +109,13 @@ func (s *Service) RefreshSession(ctx context.Context, refreshToken string) (Toke
 				return apperr.SessionExpired()
 			}
 			return err
+		}
+
+		// 绝对寿命兜底（QA S-2）：轮换本身是滑动续期，若不设上限，账号在
+		// Sub2API 侧的停用决策永远传导不到这些会话。超过上限即拒绝轮换，
+		// 用户须重新走浏览器授权——那条链路每次都回源校验账号状态。
+		if family.CreatedAt.Add(s.Cfg.SessionAbsoluteTTL).Before(now) {
+			return apperr.SessionExpired()
 		}
 
 		user, err := store.GetUserByID(ctx, tx, family.UserID)
@@ -147,6 +159,9 @@ func (s *Service) RefreshSession(ctx context.Context, refreshToken string) (Toke
 		}
 		return nil
 	})
+	if failure != nil {
+		return TokenPair{}, failure
+	}
 
 	return pair, err
 }

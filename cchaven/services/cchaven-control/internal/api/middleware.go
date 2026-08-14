@@ -118,6 +118,23 @@ func (s *Server) rateLimitPublic(next http.Handler) http.Handler {
 	})
 }
 
+// rateLimitAdminTOTP 对管理端 TOTP 验证按 IP 限频（QA S-1）。
+//
+// 口令错误有按账号的失败锁定，但 TOTP 端点此前既无限频也无计数：拿到管理员
+// 口令的攻击者可以对 6 位验证码无限次在线穷举。这里按来源收紧到每分钟 10 次，
+// 与 service 层按账号的失败锁定（5 次锁 15 分钟）互为补充。
+func (s *Server) rateLimitAdminTOTP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ok, retry := s.svc.Limiter.Allow(
+			"admin-totp:ip:"+httpx.ClientIP(r), service.RuleAdminTOTPByIP,
+		); !ok {
+			httpx.Fail(w, r, apperr.RateLimited(retry))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requireAdmin 校验管理端会话；未通过两步验证的半会话会被拒绝。
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

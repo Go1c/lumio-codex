@@ -151,6 +151,59 @@ func TestSameSiteRejectsUnknownValue(t *testing.T) {
 	}
 }
 
+// TestEnvRejectsUnknownValue 锁住环境足枪（QA S-12）：CCHAVEN_ENV=production 这类
+// 拼写错误若静默按 dev 处理，服务会用仓库里公开的开发默认密钥签发 JWT/TOTP。
+func TestEnvRejectsUnknownValue(t *testing.T) {
+	for _, value := range []string{"production", "prd", "staging", "PRODUCTION"} {
+		t.Setenv("CCHAVEN_ENV", value)
+		setBaseEnv(t)
+
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("CCHAVEN_ENV=%q 应让服务启动失败，而不是静默按 dev 处理", value)
+		}
+		if !strings.Contains(err.Error(), "CCHAVEN_ENV") {
+			t.Errorf("错误信息应指明 CCHAVEN_ENV，got %v", err)
+		}
+	}
+}
+
+func TestEnvAcceptsDevAndProdCaseInsensitively(t *testing.T) {
+	for _, value := range []string{"dev", "prod", "PROD", "prod "} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("CCHAVEN_ENV", value)
+			setBaseEnv(t)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("CCHAVEN_ENV=%q 应能加载: %v", value, err)
+			}
+			want := strings.ToLower(strings.TrimSpace(value))
+			if cfg.Env != want {
+				t.Errorf("Env = %q, want %q", cfg.Env, want)
+			}
+		})
+	}
+}
+
+// TestUnsetEnvWarnsAboutDevSecrets 未显式设置 CCHAVEN_ENV 时要在启动日志里
+// 提醒正在用开发默认密钥——这是「忘记设 prod」唯一能被运维看见的机会。
+func TestUnsetEnvWarnsAboutDevSecrets(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CCHAVEN_ENV", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() 失败: %v", err)
+	}
+
+	warnings := cfg.Warnings()
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "CCHAVEN_ENV") || !strings.Contains(joined, "dev") {
+		t.Errorf("未设置 CCHAVEN_ENV 应告警开发默认密钥, got %v", warnings)
+	}
+}
+
 func TestWarnings(t *testing.T) {
 	cases := []struct {
 		name     string

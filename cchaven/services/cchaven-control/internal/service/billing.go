@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -127,7 +128,9 @@ func (s *Service) HandleWebhook(ctx context.Context, channel string, payload []b
 	}
 
 	now := s.now()
-	return db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
+	var reject error
+
+	err = db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
 		order, err := store.LockOrderByNo(ctx, tx, notification.OrderNo)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -136,20 +139,46 @@ func (s *Service) HandleWebhook(ctx context.Context, channel string, payload []b
 			return err
 		}
 
-		if err := store.RecordPaymentEvent(
-			ctx, tx, &order.ID, "notify", channel, string(payload), true,
-		); err != nil {
-			return err
-		}
-
 		if !notification.Paid {
+			if err := store.RecordPaymentEvent(
+				ctx, tx, &order.ID, "notify", channel, string(payload), true,
+			); err != nil {
+				return err
+			}
 			if order.Status == domain.OrderPending {
 				return store.UpdateOrderStatus(ctx, tx, order.OrderNo, domain.OrderFailed, nil, nil, now)
 			}
 			return nil
 		}
 		if order.Status != domain.OrderPending {
-			return nil // 重复回调
+			// 重复回调也要留痕后确认。
+			return store.RecordPaymentEvent(
+				ctx, tx, &order.ID, "notify", channel, string(payload), true,
+			)
+		}
+
+		// 金额必须与下单一致（QA S-5）：签名合法不代表金额没被动过——
+		// 渠道侧改价、回调金额被篡改，都会把「1 分钱入账整单」的订单刷成已支付。
+		// 留痕（ok=false）后拒绝，订单停在 pending 等待真实回调或人工核对；
+		// 事件必须提交落盘，错误改在事务外返回，否则回滚会连留痕一起吞掉。
+		if notification.Amount != order.AmountCents {
+			slog.Error("支付回调金额与订单不符，拒绝入账",
+				"order_no", order.OrderNo, "channel", channel,
+				"order_amount_cents", order.AmountCents,
+				"notified_amount_cents", notification.Amount)
+			if err := store.RecordPaymentEvent(
+				ctx, tx, &order.ID, "notify", channel, string(payload), false,
+			); err != nil {
+				return err
+			}
+			reject = apperr.PaymentAmountMismatch()
+			return nil
+		}
+
+		if err := store.RecordPaymentEvent(
+			ctx, tx, &order.ID, "notify", channel, string(payload), true,
+		); err != nil {
+			return err
 		}
 
 		txnID := notification.TxnID
@@ -162,6 +191,10 @@ func (s *Service) HandleWebhook(ctx context.Context, channel string, payload []b
 		_, err = s.CreditPurchase(ctx, tx, order.UserID, order.OrderNo, order.PeriodMonths)
 		return err
 	})
+	if reject != nil {
+		return reject
+	}
+	return err
 }
 
 // OrderView 是订单的对外表示。

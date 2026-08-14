@@ -18,6 +18,7 @@ import (
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/payments"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/security"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/service"
+	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/store"
 )
 
 func main() {
@@ -102,7 +103,8 @@ func senderFor(cfg config.Config) mailer.Sender {
 	return mailer.LogSender{}
 }
 
-// runMaintenance 周期性执行清理任务：过期授权码回收、注销冷静期到期处理。
+// runMaintenance 周期性执行清理任务：过期授权码回收、注销冷静期到期处理、
+// 停滞邮件回收（worker 崩溃残留的 sending 行，QA S-8）。
 func runMaintenance(ctx context.Context, svc *service.Service) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
@@ -116,6 +118,11 @@ func runMaintenance(ctx context.Context, svc *service.Service) {
 				slog.Error("处理注销冷静期失败", "error", err)
 			} else if n > 0 {
 				slog.Info("已处理到期的注销申请", "count", n)
+			}
+			if n, err := store.RequeueStaleSendingEmails(ctx, svc.Pool, time.Now().Add(-10*time.Minute)); err != nil {
+				slog.Error("回收停滞邮件失败", "error", err)
+			} else if n > 0 {
+				slog.Info("已回收停滞的投递中的邮件", "count", n)
 			}
 		}
 	}

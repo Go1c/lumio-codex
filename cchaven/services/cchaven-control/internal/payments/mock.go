@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,6 +18,8 @@ import (
 type Mock struct {
 	baseURL string
 	secret  []byte
+	// declineRefund 让 Refund 返回失败，供测试构造「渠道拒绝退款」场景（QA S-9）。
+	declineRefund atomic.Bool
 }
 
 // NewMock 构造 mock 渠道。
@@ -69,7 +72,13 @@ func (m *Mock) Sign(payload []byte) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// Refund 立即返回成功，模拟同步退款渠道。
+// Refund 立即返回成功，模拟同步退款渠道；SetRefundDeclined(true) 后返回失败。
 func (m *Mock) Refund(_ context.Context, req RefundRequest) (RefundResponse, error) {
+	if m.declineRefund.Load() {
+		return RefundResponse{Succeeded: false}, nil
+	}
 	return RefundResponse{ProviderRefundID: "mock-refund-" + req.RefundID, Succeeded: true}, nil
 }
+
+// SetRefundDeclined 控制后续 Refund 调用是否模拟渠道拒绝。
+func (m *Mock) SetRefundDeclined(v bool) { m.declineRefund.Store(v) }

@@ -246,6 +246,40 @@ func TestRefreshTokenRotation(t *testing.T) {
 	}).ExpectStatus(http.StatusOK)
 }
 
+// TestRefreshSessionAbsoluteLifetimeCap 锁住会话族的绝对寿命上限（QA S-2）。
+//
+// refresh 轮换是滑动续期，账号在 Sub2API（身份真源）侧停用后本地无从感知；
+// 没有绝对上限，被停用用户的桌面端权益可以无限期续用。超过上限后轮换必须
+// 拒绝，逼用户重新走浏览器授权——那条链路每次都回源校验账号状态。
+func TestRefreshSessionAbsoluteLifetimeCap(t *testing.T) {
+	env := testsupport.New(t)
+	browser, _ := env.SignUp("alice@example.com")
+	session := env.AuthorizeApp(browser, "device-cap")
+
+	app := env.NewClient()
+	rotated := app.Post("/api/v1/oauth/token", map[string]string{
+		"grant_type": "refresh_token", "refresh_token": session.RefreshToken,
+	}).ExpectStatus(http.StatusOK)
+	fresh := rotated.String("refresh_token")
+
+	// 把会话族的开立时间拨到上限之外，模拟「持续续用到第 15 天」。
+	if _, err := env.Pool.Exec(t.Context(), `
+		UPDATE session_families
+		   SET created_at = $1
+		 WHERE client = 'app'
+		   AND user_id = (SELECT id FROM users WHERE email = 'alice@example.com')`,
+		env.Now().Add(-env.Cfg.SessionAbsoluteTTL-time.Hour)); err != nil {
+		t.Fatalf("回拨会话开立时间失败: %v", err)
+	}
+
+	resp := app.Post("/api/v1/oauth/token", map[string]string{
+		"grant_type": "refresh_token", "refresh_token": fresh,
+	}).ExpectStatus(http.StatusUnauthorized)
+	if resp.ErrorCode() != "session_expired" {
+		t.Errorf("错误码 = %q, want session_expired", resp.ErrorCode())
+	}
+}
+
 // TestRefreshTokenReuseRevokesFamily 验证重放检测：
 // 已轮换过的 refresh token 被再次出示，说明令牌外泄，整个会话族立即撤销。
 func TestRefreshTokenReuseRevokesFamily(t *testing.T) {

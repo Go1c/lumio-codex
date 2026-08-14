@@ -66,6 +66,11 @@ var (
 	RuleForgotByIP = ratelimit.Rule{Limit: 5, Window: 10 * time.Minute}
 	// RuleResendByIP 同一 IP 重发验证码的频率。
 	RuleResendByIP = ratelimit.Rule{Limit: 10, Window: 10 * time.Minute}
+	// RuleAdminTOTPByIP 管理端 TOTP 验证码的尝试频率。
+	//
+	// 口令锁定管「按账号」的穷举，这里管「按来源」的穷举（QA S-1）：两个维度
+	// 合起来，拿到口令的攻击者也无法对 6 位验证码做小时级在线暴破。
+	RuleAdminTOTPByIP = ratelimit.Rule{Limit: 10, Window: time.Minute}
 	// RulePublicReadByIP 公开只读接口（价格配置、邀请落地、归因回执）的频率。
 	//
 	// 配额给得宽松：这些接口支撑的是官网首屏，正常访客一次会话只打几次，

@@ -95,6 +95,47 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 	}
 }
 
+// TestWebhookRejectsAmountMismatch 锁住 QA S-5：签名合法但金额与订单不符的
+// 回调不得入账——否则「一分钱入账整单」就能把任意订单刷成已支付。
+func TestWebhookRejectsAmountMismatch(t *testing.T) {
+	env := testsupport.New(t)
+	browser, userID := env.SignUp("alice@example.com")
+
+	orderNo := env.Checkout(userID, "mock")
+
+	payload, signature := notify(t, env, orderNo, true, 1)
+	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
+		map[string]string{"X-CCHaven-Signature": signature}).
+		ExpectStatus(http.StatusBadRequest)
+
+	// 订单停在 pending，订阅不入账。
+	if got := env.EntitlementOf(userID)["status"]; got != "none" {
+		t.Errorf("金额不符不应入账, got %v", got)
+	}
+	if got := browser.Get("/api/v1/billing/orders/" + orderNo).String("status"); got != "pending" {
+		t.Errorf("订单应停在 pending 等待真实回调, got %q", got)
+	}
+
+	// 拒绝的回调要留痕（signature_ok=false），回滚不得连留痕一起吞掉。
+	var signatureOK bool
+	if err := env.Pool.QueryRow(t.Context(),
+		`SELECT signature_ok FROM payment_events WHERE type = 'notify' ORDER BY id DESC LIMIT 1`,
+	).Scan(&signatureOK); err != nil {
+		t.Fatalf("查询回调留痕失败: %v", err)
+	}
+	if signatureOK {
+		t.Error("金额不符的回调留痕应为 signature_ok=false")
+	}
+
+	// 金额一致的回调仍然正常入账，订单不因一次伪造回调被判死。
+	goodPayload, goodSignature := notify(t, env, orderNo, true, 6800)
+	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", goodPayload,
+		map[string]string{"X-CCHaven-Signature": goodSignature}).ExpectStatus(http.StatusOK)
+	if got := env.EntitlementOf(userID)["status"]; got != "active" {
+		t.Errorf("金额一致的回调应正常入账, got %v", got)
+	}
+}
+
 // TestWebhookIsIdempotent 验证支付渠道重投回调不会重复延长订阅。
 func TestWebhookIsIdempotent(t *testing.T) {
 	env := testsupport.New(t)
@@ -287,6 +328,47 @@ func TestHeartbeatFeedsTelemetry(t *testing.T) {
 	}
 }
 
+// TestMockRefundDeclineRecoversTheOrder 锁住 QA S-9：渠道拒绝退款后，
+// 订单必须恢复为已支付、退款单标 failed——停在 refunding 没有任何推进路径
+// （无退款回调、重试被 OrderNotRefundable 拒绝），订单会永久卡死。
+func TestMockRefundDeclineRecoversTheOrder(t *testing.T) {
+	env := testsupport.New(t)
+	_, userID := env.SignUp("alice@example.com")
+	orderNo := paidOrder(t, env, userID)
+
+	admin := newAdminClient(t, env)
+	env.Mock.SetRefundDeclined(true)
+	resp := admin.Post(fmt.Sprintf("/api/admin/v1/orders/%s/refund", orderNo),
+		map[string]string{"reason": "用户申请"}).ExpectStatus(http.StatusBadGateway)
+	if resp.ErrorCode() != "refund_declined" {
+		t.Errorf("错误码 = %q, want refund_declined", resp.ErrorCode())
+	}
+
+	// 订单回到 paid（可重试），退款单标 failed。
+	var orderStatus, refundStatus string
+	if err := env.Pool.QueryRow(t.Context(), `
+		SELECT o.status, r.status
+		  FROM orders o LEFT JOIN refunds r ON r.order_id = o.id
+		 WHERE o.order_no = $1`, orderNo).Scan(&orderStatus, &refundStatus); err != nil {
+		t.Fatalf("查询订单与退款单失败: %v", err)
+	}
+	if orderStatus != "paid" {
+		t.Errorf("拒绝后订单状态 = %q, want paid（可重试）", orderStatus)
+	}
+	if refundStatus != "failed" {
+		t.Errorf("退款单状态 = %q, want failed", refundStatus)
+	}
+
+	// 恢复渠道后可以重试并成功。
+	env.Mock.SetRefundDeclined(false)
+	retry := admin.Post(fmt.Sprintf("/api/admin/v1/orders/%s/refund", orderNo),
+		map[string]string{"reason": "用户申请"}).ExpectStatus(http.StatusOK)
+	if got := retry.String("status"); got != "refunded" {
+		t.Errorf("重试退款后订单状态 = %q, want refunded", got)
+	}
+}
+
+// TestMockRefundFlow 验证同步退款渠道的完整路径。
 func TestMockRefundFlow(t *testing.T) {
 	env := testsupport.New(t)
 	_, userID := env.SignUp("alice@example.com")
