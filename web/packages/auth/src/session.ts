@@ -8,7 +8,7 @@
 
 import { cookieDomainFor } from "@lumio/ui/config";
 
-import type { TokenPair } from "./client";
+import { refreshTokens, type TokenPair } from "./client";
 
 const ACCESS_COOKIE = "lumio_at";
 const REFRESH_COOKIE = "lumio_rt";
@@ -73,6 +73,46 @@ export function readSession(): StoredSession | null {
     refreshToken: readCookie(REFRESH_COOKIE) ?? "",
     expiresAt: Number(readCookie(EXPIRES_COOKIE) ?? 0),
   };
+}
+
+/** 仅读 refresh cookie：access cookie 到期被浏览器删除后，它是会话仍然可续期的唯一凭据。 */
+export function readRefreshToken(): string | null {
+  return readCookie(REFRESH_COOKIE);
+}
+
+/** access 或 refresh 任一存在即视为「可能有会话」，供初始态做乐观渲染。 */
+export function hasSession(): boolean {
+  return readCookie(ACCESS_COOKIE) !== null || readCookie(REFRESH_COOKIE) !== null;
+}
+
+/** Web Locks 的最小结构类型：只用到 request，避免绑定 DOM lib 版本。 */
+interface LocksLike {
+  request(name: string, callback: () => Promise<boolean>): Promise<boolean>;
+}
+
+/**
+ * 轮换会话令牌。
+ *
+ * Sub2API 的 refresh 是轮转式（旧令牌立即失效、复用会触发整族撤销），多标签页同时
+ * 刷新会互相作废。因此在 Web Locks（可用时）内执行，并在锁内重读 cookie：后来者
+ * 会看到先到者刚写入的新令牌，直接复用而不是拿旧令牌去撞 REFRESH_TOKEN_REUSED。
+ *
+ * `force` 为 true 时即使 access cookie 仍在也照样轮换——用于「服务端已明确拒绝
+ * 当前 access」的场景；为 false 时锁内发现已有 access（别的标签页刚转过）就直接复用。
+ */
+export async function rotateSession(force: boolean): Promise<boolean> {
+  const run = async (): Promise<boolean> => {
+    const refreshToken = readCookie(REFRESH_COOKIE);
+    if (!refreshToken) return false;
+    if (!force && readCookie(ACCESS_COOKIE)) return true;
+    const refreshed = await refreshTokens(refreshToken);
+    writeSession(refreshed);
+    return true;
+  };
+
+  const locks = (navigator as Navigator & { locks?: LocksLike }).locks;
+  if (locks?.request) return locks.request("lumio-auth-refresh", run);
+  return run();
 }
 
 export function clearSession(): void {

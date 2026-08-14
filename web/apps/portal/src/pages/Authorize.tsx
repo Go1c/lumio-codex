@@ -112,11 +112,13 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
 
   async function copyCode(code: string) {
     try {
-      await navigator.clipboard?.writeText(code);
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(code);
+      toast("授权码已复制");
     } catch {
-      // 剪贴板不可用时授权码仍然显示在页面上，手动选中复制即可。
+      // 剪贴板不可用时授权码仍然显示在页面上：如实提示手动复制，不谎报成功。
+      toast("复制未成功，请手动选中复制");
     }
-    toast("授权码已复制");
   }
 
   if (context.status === "loading") {

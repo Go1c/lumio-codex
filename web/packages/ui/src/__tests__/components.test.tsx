@@ -71,6 +71,26 @@ describe("Modal", () => {
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("通过 portal 挂到 body，不被 main > section 的层叠上下文困住", () => {
+    // 主题对 main 的直接子节统一强加 position:relative + z-index:1（为了压住
+    // Aurora 光晕），内联渲染的弹窗会被困在 z-index:1 的上下文里，被 sticky
+    // 页头（z100）与后续 section 盖住。弹窗必须 portal 到 body。
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+
+    render(
+      <Modal title="层级测试" onClose={() => {}}>
+        正文
+      </Modal>,
+      { container: host },
+    );
+
+    const dialog = screen.getByRole("dialog");
+    const backdrop = dialog.closest(".modal-backdrop");
+    expect(backdrop?.parentElement).toBe(document.body);
+    expect(host.contains(dialog)).toBe(false);
+  });
 });
 
 describe("Toast", () => {

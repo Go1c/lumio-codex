@@ -175,4 +175,60 @@ describe("授权确认页", () => {
     expect(await screen.findByText(/不受信任的回调地址/)).toBeInTheDocument();
     expect(navigation.urls).toEqual([]);
   });
+
+  /** jsdom 没有剪贴板：按用例注入 writeText 的行为（W-10 的成功/失败两分支）。 */
+  function stubClipboard(writeText: (text: string) => Promise<void>): void {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+  }
+
+  it("复制授权码成功时提示已复制", async () => {
+    signIn();
+    const written: string[] = [];
+    stubClipboard((text: string) => {
+      written.push(text);
+      return Promise.resolve();
+    });
+    stubFetch({
+      "/auth/me": () => envelope(PROFILE),
+      "/oauth/authorize/context": () => controlData(CONTEXT),
+      "/oauth/authorize": () =>
+        controlData({
+          code: "the-code",
+          redirect_to: `${REDIRECT_URI}?code=the-code&state=st4te`,
+          expires_in: 300,
+        }),
+    });
+
+    renderApp(`/authorize?${authorizeQuery()}`);
+    await userEvent.click(await screen.findByRole("button", { name: "同意授权" }));
+    await userEvent.click(await screen.findByRole("button", { name: "复制" }));
+
+    expect(await screen.findByText("授权码已复制")).toBeInTheDocument();
+    expect(written).toEqual(["the-code"]);
+  });
+
+  it("复制授权码失败时如实提示手动复制，不谎报成功", async () => {
+    signIn();
+    stubClipboard(() => Promise.reject(new Error("denied")));
+    stubFetch({
+      "/auth/me": () => envelope(PROFILE),
+      "/oauth/authorize/context": () => controlData(CONTEXT),
+      "/oauth/authorize": () =>
+        controlData({
+          code: "the-code",
+          redirect_to: `${REDIRECT_URI}?code=the-code&state=st4te`,
+          expires_in: 300,
+        }),
+    });
+
+    renderApp(`/authorize?${authorizeQuery()}`);
+    await userEvent.click(await screen.findByRole("button", { name: "同意授权" }));
+    await userEvent.click(await screen.findByRole("button", { name: "复制" }));
+
+    expect(await screen.findByText("复制未成功，请手动选中复制")).toBeInTheDocument();
+    expect(screen.queryByText("授权码已复制")).not.toBeInTheDocument();
+  });
 });

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { clearSession, readSession, serializeCookie, writeSession } from "../session";
+import {
+  clearSession,
+  hasSession,
+  readRefreshToken,
+  readSession,
+  serializeCookie,
+  writeSession,
+} from "../session";
 
 afterEach(() => {
   clearSession();
@@ -60,5 +67,26 @@ describe("会话读写", () => {
     clearSession();
 
     expect(readSession()).toBeNull();
+  });
+});
+
+describe("可续期会话的判定（W-1）", () => {
+  it("access cookie 到期被浏览器删除后，refresh cookie 仍可读回", () => {
+    document.cookie = serializeCookie("lumio_rt", "rt-1", { maxAge: 3600, hostname: "localhost" });
+
+    expect(readSession()).toBeNull();
+    expect(readRefreshToken()).toBe("rt-1");
+    expect(hasSession()).toBe(true);
+  });
+
+  it("两种 cookie 都不在时才认定没有会话", () => {
+    expect(readRefreshToken()).toBeNull();
+    expect(hasSession()).toBe(false);
+  });
+
+  it("只有 access 也在时同样视为有会话", () => {
+    document.cookie = serializeCookie("lumio_at", "at-1", { maxAge: 3600, hostname: "localhost" });
+
+    expect(hasSession()).toBe(true);
   });
 });

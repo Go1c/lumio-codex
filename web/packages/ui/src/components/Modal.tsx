@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -54,7 +55,11 @@ export function Modal({
     };
   }, [onClose]);
 
-  return (
+  // 挂到 body 而不是原地：主题给 main 的直接子节统一强加 position:relative +
+  // z-index:1（让内容压住 Aurora 光晕），原地渲染的弹窗会被困在这个 z-index:1
+  // 的层叠上下文里——sticky 页头（z100）与后续 section 都会盖在弹窗之上。
+  // portal 到 body 后 backdrop 的 z-index:900 回到根上下文，压过页头、低于 toast。
+  return createPortal(
     <div
       className="modal-backdrop"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
@@ -66,6 +71,7 @@ export function Modal({
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -2,8 +2,6 @@ import { Aurora, EmptyBlock, portalAccountLinks } from "@lumio/ui";
 
 import { DOWNLOAD_STEPS, ccDownloadLinks } from "@/content";
 
-const APP_DEEP_LINK = "cchaven://open";
-
 export function Download() {
   const links = ccDownloadLinks();
   const hasDownload = Boolean(links.arm ?? links.intel);
@@ -47,8 +45,10 @@ export function Download() {
           ))}
         </div>
 
+        {/* 桌面端尚未注册 cchaven:// scheme（spec-gaps B4），深链在这里只会报
+            「找不到处理该协议的应用」；注册完成前不放「打开 APP」入口（QA W-17）。 */}
         <p style={{ marginTop: 40, color: "var(--gray)", fontSize: 14 }}>
-          已下载？<a href={APP_DEEP_LINK}>打开 CC避风港 APP</a>
+          下载完成？安装后从「应用程序」或启动台打开 CC避风港。
           {" · "}
           <a href={portalAccountLinks(window.location.href).signup}>创建 Lumio 账号</a>
         </p>
