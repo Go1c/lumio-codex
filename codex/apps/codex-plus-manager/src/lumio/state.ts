@@ -215,7 +215,8 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         service: event.settings,
         serviceAvailable: true,
         defaultModel: event.settings.defaultModel,
-        errorCode: null,
+        // 修复页正在用 errorCode 解释冲突原因；服务恢复只更新可用性，不清这个码（QA D-12）。
+        errorCode: state.phase === "needs-repair" ? state.errorCode : null,
         actions: {
           ...state.actions,
           canSignIn: true,
@@ -232,7 +233,8 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
       return {
         ...state,
         serviceAvailable: false,
-        errorCode: event.errorCode,
+        // 同上：探活失败不许覆盖修复页的错误码，服务状态由 serviceAvailable 表达。
+        errorCode: state.phase === "needs-repair" ? state.errorCode : event.errorCode,
         actions: { ...state.actions, canSignIn: false, canRegister: false, canRefresh: false },
         actionNotes: {
           ...state.actionNotes,

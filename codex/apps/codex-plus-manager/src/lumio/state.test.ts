@@ -86,6 +86,36 @@ test("repair-required preserves no privileged actions", () => {
   });
 });
 
+// 启动编排判冲突进入修复页后，服务探活轮询仍会派发 settings/不可达事件（QA D-12）：
+// 服务可用性只归 serviceAvailable，不许顺手洗掉修复页正在向用户解释的错误码。
+function needsRepair(): LumioState {
+  return reduceLumioState(initialLumioState(), {
+    type: "repair-required",
+    errorCode: "CODEX_CONFIG_CONFLICT",
+  });
+}
+
+test("service recovery does not clear the repair error code", () => {
+  const next = reduceLumioState(needsRepair(), {
+    type: "service-settings-loaded",
+    settings: SERVICE,
+  });
+
+  assert.equal(next.phase, "needs-repair");
+  assert.equal(next.errorCode, "CODEX_CONFIG_CONFLICT");
+  assert.equal(next.serviceAvailable, true);
+});
+
+test("service loss does not overwrite the repair error code", () => {
+  const next = reduceLumioState(needsRepair(), {
+    type: "service-unavailable",
+    errorCode: "SERVICE_UNAVAILABLE",
+  });
+
+  assert.equal(next.phase, "needs-repair");
+  assert.equal(next.errorCode, "CODEX_CONFIG_CONFLICT");
+});
+
 const SERVICE: LumioServiceSettings = {
   registrationEnabled: true,
   emailVerifyEnabled: true,
