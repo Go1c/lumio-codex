@@ -216,9 +216,12 @@ jobs:
   publish-internal:
     name: Publish S3 + GitHub prerelease
     needs: [windows-artifacts, macos-dmg]
+    # Push to publish must ship: S3 + latest-internal.json + GitHub prerelease.
+    # Dispatch without the publish checkbox stays build-only.
     if: >
       github.event_name != 'pull_request' &&
       (startsWith(github.ref, 'refs/tags/v') ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/publish') ||
        (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest
     permissions:
