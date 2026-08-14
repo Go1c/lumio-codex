@@ -301,6 +301,13 @@ fn render_auth(existing: Option<&[u8]>, api_key: &str) -> Result<String, String>
         AUTH_KEY_FIELD.to_string(),
         serde_json::Value::String(api_key.to_string()),
     );
+    // 官方 Codex 按 auth_mode 选凭据：残留的 "chatgpt" + 过期 tokens 会让它无视
+    // 刚写入的 API key，启动即「无法加载账号信息」（QA D-14）。模式必须随 key 一起
+    // 切到 apikey；旧值与 tokens 在快照里整体保留，restore 时原样还原。
+    object.insert(
+        "auth_mode".to_string(),
+        serde_json::Value::String("apikey".to_string()),
+    );
     serde_json::to_string_pretty(&value).map_err(|_| WRITE_FAILED.to_string())
 }
 
@@ -645,6 +652,37 @@ mod tests {
         assert!(auth.contains("user-key"));
         assert!(auth.contains("keep"));
         assert!(!auth.contains("sk-desktop"));
+    }
+
+    #[test]
+    fn takeover_switches_auth_mode_to_apikey_so_official_codex_uses_the_key() {
+        // 官方 Codex 按 auth_mode 选凭据：残留的 "chatgpt" + 过期 tokens 会让它无视
+        // Lumio 写入的 API key，启动即「无法加载账号信息」并要求重新登录（QA D-14）。
+        // 接管必须把模式切到 apikey；旧值与 tokens 随快照整体保留，restore 原样还原。
+        let fx = fixture();
+        std::fs::write(
+            fx.codex_home.join("auth.json"),
+            r#"{"auth_mode":"chatgpt","tokens":{"id_token":"keep"}}"#,
+        )
+        .unwrap();
+
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+
+        let auth: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(fx.codex_home.join("auth.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(auth["auth_mode"], "apikey");
+        assert_eq!(auth["OPENAI_API_KEY"], "sk-desktop");
+        // tokens 属于「其余内容」，接管不删除——官方端读到 apikey 模式即不再使用它们。
+        assert_eq!(auth["tokens"]["id_token"], "keep");
+
+        restore(&fx.codex_home, &fx.state_dir).unwrap();
+        let restored: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(fx.codex_home.join("auth.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored["auth_mode"], "chatgpt");
     }
 
     #[cfg(unix)]
