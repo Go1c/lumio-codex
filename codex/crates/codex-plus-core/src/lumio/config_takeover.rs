@@ -283,7 +283,10 @@ fn render_config(existing: Option<&[u8]>, request: &TakeoverRequest) -> Result<S
     provider["name"] = toml_edit::value(super::product::PRODUCT_NAME);
     provider["base_url"] = toml_edit::value(request.base_url.as_str());
     provider["wire_api"] = toml_edit::value("responses");
-    provider["env_key"] = toml_edit::value(AUTH_KEY_FIELD);
+    // 不写 env_key：它会让官方 Codex 只从环境变量取 key、无视 auth.json 里那把
+    // （实测 codex-cli 0.146 直接报 Missing environment variable，QA D-15）。key 的
+    // 唯一落点是 auth.json。历史接管可能留下过这个字段，重复接管时必须移除。
+    provider.as_table_mut().map(|table| table.remove("env_key"));
 
     Ok(doc.to_string())
 }
@@ -416,6 +419,23 @@ mod tests {
             written.contains("trust_level"),
             "user projects were dropped:\n{written}"
         );
+    }
+
+    #[test]
+    fn takeover_does_not_pin_the_provider_to_an_environment_variable() {
+        // env_key 会让官方 Codex 只从环境变量取 key、无视 auth.json 里那把（实测
+        // codex-cli 0.146：报 Missing environment variable；去掉后走 auth.json 正常出话，
+        // QA D-15）。key 的落点只有一个：auth.json。
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+
+        let written = std::fs::read_to_string(fx.codex_home.join("config.toml")).unwrap();
+        assert!(
+            !written.contains("env_key"),
+            "provider must not read the key from an environment variable:\n{written}"
+        );
+        assert!(written.contains("base_url"));
+        assert!(written.contains("wire_api"));
     }
 
     #[test]
