@@ -54,13 +54,17 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 
 也可在 `publish` 上 **Run workflow**，勾选 `publish`：版本号为 `0.0.0-internal-<run>`，Release tag 为 `internal-run-<run>`。
 
+**`git push origin publish` 同样会走本节的 S3 + 指针 + prerelease**（版本号 `0.0.0-internal-<run>`）。要 semver 文件名：打 `v*` tag。
+
+官网 Codex 站同源 `/latest-internal.json` 不会被本 workflow 改写，发版后还需把 S3 指针拷到站点根目录（见统一官网手册 §4）。
+
 ### 2.2 只构建、不分发
 
-1. 合并到 `publish`（或不勾选 `publish` 的 `workflow_dispatch`）  
+1. 不勾选 `publish` 的 `workflow_dispatch`（任意分支）  
 2. Actions → **Internal unsigned build artifacts**  
 3. 下载四个 artifact 手工分发；告知「未签名 / 右键打开 / SmartScreen」  
 
-分支名为 `publish` 时 CI 版本号常为 `0.0.0-internal-<run>`。要 semver 文件名：打 `v*` tag（§2.1）。
+不要用「只推 `publish`、不发布」当只构建——`publish` 的 push 会自动上架。
 
 ### 2.3 用本地打包 + 手工上传
 
