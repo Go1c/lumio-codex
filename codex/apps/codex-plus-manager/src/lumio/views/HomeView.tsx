@@ -354,6 +354,16 @@ export function HomeView({
               <span className="lumio-tag is-warning">{syncTimeUnknown ? "尚未同步" : "缓存值"}</span>
             ) : null}
             {syncTimeUnknown ? "恢复网络后自动更新" : (account.planLabel ?? "当前没有生效套餐")}
+            <button
+              className="lumio-small-button is-inline"
+              disabled={!actions.canPay || paying}
+              onClick={openPayment}
+              title={actions.canPay ? undefined : (actionNotes.pay ?? undefined)}
+              type="button"
+            >
+              <WalletCards size={12} />
+              {paying ? "正在打开…" : shellLabels.payment}
+            </button>
           </small>
         </article>
 
@@ -407,16 +417,6 @@ export function HomeView({
           </p>
         </div>
         <div className="lumio-actions">
-          <button
-            className="lumio-button is-secondary"
-            disabled={!actions.canPay || paying}
-            onClick={openPayment}
-            title={actions.canPay ? undefined : (actionNotes.pay ?? undefined)}
-            type="button"
-          >
-            <WalletCards size={17} />
-            {paying ? "正在打开…" : shellLabels.payment}
-          </button>
           <button
             className="lumio-button is-primary"
             disabled={primaryDisabled}
