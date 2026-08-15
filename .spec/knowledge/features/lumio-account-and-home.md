@@ -24,7 +24,7 @@ metadata:
 - **实现面**：
   - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch / official_app_install / autostart）
   - 开机启动（壳自身，非官方 Codex）：`autostart.rs` 默认开启（opt-out）——bootstrap 时对从未表达偏好的用户注册一次，用户关闭后偏好落 `state_dir()/launch-at-login.json` 永不自动重开；macOS 写 `~/Library/LaunchAgents/games.lumio.codex.plist`（launchd 拉起），Windows 经 `reg.exe` 写 HKCU Run（参数走 `Command::args`，无 shell 解析）；cargo 直跑（非 .app bundle / target 目录）不支持并报 `PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED`；系统现状为权威上报，用户从系统设置移除不自动恢复；零新依赖
-  - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI
+  - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI；缓存文件按平台带 `.msix`/`.dmg` 扩展名（裸名会让 Windows 签名/部署工具认不出包，D-21）；镜像 v5 起 sha 缺位时用 per-arch `contentLength` 做尺寸防线；Windows Authenticode 预检三态——钉选通过 / 确凿不匹配拒绝 / 预检不可用仅在侧载路线放行（`Add-AppxPackage` 系统级签名验证 + 装后包族钉选双兜底），便携路线无系统兜底必须硬失败（D-21）
   - Tauri：仅 `lumio_` 命令白名单（含 `lumio_install_official_app` / `lumio_official_app_status` / `lumio_cancel_official_app`）；秘密不跨 IPC
   - 前端：`codex/apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair；安装进度挂在 ready 首页，不新增全屏阶段
   - 配置接管以**快照存在性**判定首次，不以 manifest；敏感文件经 `secret_file::write_secret` 创建即 0600
@@ -38,8 +38,8 @@ metadata:
 - 已知坑：`provision` 步骤 payload 若漏 `account`，前端 `undefined !== null` 会推进假账户并在首页读 `email` 黑屏；IPC 侧用 `normalizeOptionalAccount`，UI 用 truthy 守卫
 - 真实遥测上报、签名后的自动安装更新
 - 登录后 provisioning 路径可再补一次接管冲突检查（启动有凭据路径已拦）
-- 官方应用镜像清单尚未经 Sub2API `GET /api/v1/desktop/config` 转发，源常量仍在客户端 `sources.rs`（ADR-0005）
-- 首次安装的下载链路缺陷已修（D-17：镜像 302 逐跳 https 跟随、FE3 微软投递域 http 放行、总超时放宽到 3600s）；Windows 装后不自动打开已修（D-18：去掉已注册包列表的进程级缓存 + Windows 启动改走 `ApplicationActivationManager` 包激活，激活失败退回直拉 exe）、下载无进度反馈已修（D-19：前端透传 `bytesDownloaded/bytesTotal` 并渲染进度条）；Windows / macOS 真机验收（干净机下载、校验、安装并启动）仍未跑通，D-18/D-19 待真机复验
+- 官方应用镜像清单尚未经 Sub2API `GET /api/v1/desktop/config` 转发，源常量仍在客户端 `sources.rs`（ADR-0005）；镜像已升 schema v5（`manager.payloads` 与 `SHA256SUMS` 均撤除），客户端以 per-arch `contentLength` 兜完整性，镜像端是否恢复 sha 下发待定
+- 首次安装的下载链路缺陷已修（D-17：镜像 302 逐跳 https 跟随、FE3 微软投递域 http 放行、总超时放宽到 3600s）；Windows 装后不自动打开已修（D-18：去掉已注册包列表的进程级缓存 + Windows 启动改走 `ApplicationActivationManager` 包激活，激活失败退回直拉 exe）、下载无进度反馈已修（D-19：前端透传 `bytesDownloaded/bytesTotal` 并渲染进度条）、失败原因常驻面板已修（D-20）、校验未通过已修（D-21：缓存文件补 `.msix` 扩展名 + 镜像 v5 contentLength 尺寸防线 + Authenticode 预检三态化——侧载路线预检不可用放行给系统部署验证）；Windows / macOS 真机验收（干净机下载、校验、安装并启动）仍未跑通，D-18/D-19/D-20/D-21 待真机复验，扩展名假设待 CI 诊断工作流（`.github/workflows/mirror-verify-probe.yml`，手动触发）闭合
 
 ## 官网与更新提醒
 
