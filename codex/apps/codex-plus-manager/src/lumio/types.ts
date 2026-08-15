@@ -39,6 +39,9 @@ export interface LumioOfficialAppInstall {
   stage: string | null;
   errorCode: string | null;
   path?: string | null;
+  /** 下载阶段才有值；命令层拿不到 Content-Length 时 bytesTotal 为 null。 */
+  bytesDownloaded?: number | null;
+  bytesTotal?: number | null;
 }
 
 export type LumioCredentialStatus = "present" | "missing" | "invalid";
@@ -51,9 +54,15 @@ export interface LumioBootstrap {
   account: LumioAccountSummary | null;
   telemetryEnabled: boolean;
   autoUpdateEnabled: boolean;
+  /** 默认开启（opt-out）：系统现状为权威；旧包不带该字段按「关」显示。 */
+  launchAtLoginEnabled?: boolean;
   // Optional while the command layer lands: the shell must stay usable against a
   // bootstrap payload that predates the credential probe.
   credentialStatus?: LumioCredentialStatus;
+}
+
+export interface LumioLaunchAtLoginResult {
+  enabled: boolean;
 }
 
 export interface LumioAgreementDocument {

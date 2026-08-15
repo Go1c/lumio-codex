@@ -6,6 +6,7 @@ import type {
   LumioBootstrap,
   LumioCodexApp,
   LumioExportLogsResult,
+  LumioLaunchAtLoginResult,
   LumioProvisionStepResult,
   LumioServiceSettings,
   LumioTakeoverHealth,
@@ -32,6 +33,7 @@ export const LUMIO_COMMANDS = {
   openBrowser: "lumio_open_browser",
   checkUpdate: "lumio_check_update",
   setTelemetry: "lumio_set_telemetry",
+  setLaunchAtLogin: "lumio_set_launch_at_login",
   exportLogs: "lumio_export_logs",
   installOfficialApp: "lumio_install_official_app",
   officialAppStatus: "lumio_official_app_status",
@@ -255,6 +257,10 @@ export async function checkUpdate(): Promise<LumioUpdateReminder> {
 
 export async function setTelemetry(enabled: boolean): Promise<LumioTelemetryResult> {
   return runCommand<LumioTelemetryResult>(LUMIO_COMMANDS.setTelemetry, { enabled });
+}
+
+export async function setLaunchAtLogin(enabled: boolean): Promise<LumioLaunchAtLoginResult> {
+  return runCommand<LumioLaunchAtLoginResult>(LUMIO_COMMANDS.setLaunchAtLogin, { enabled });
 }
 
 export async function exportLogs(): Promise<LumioExportLogsResult> {

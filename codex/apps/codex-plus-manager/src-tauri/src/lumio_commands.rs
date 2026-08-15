@@ -81,7 +81,14 @@ pub struct LumioBootstrapPayload {
     pub account: Option<LumioAccountPayload>,
     pub telemetry_enabled: bool,
     pub auto_update_enabled: bool,
+    pub launch_at_login: bool,
     pub credential_status: CredentialStatus,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioLaunchAtLoginPayload {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -279,6 +286,10 @@ fn result<T>(outcome: Result<T, String>) -> Result<LumioCommandResult<T>, ()> {
 pub fn lumio_bootstrap(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioBootstrapPayload>, ()> {
+    // 默认开机启动（opt-out）：只对从未表达过偏好的用户注册一次；结果以
+    // `current()` 的系统现状为准上报，注册动作本身失败不阻塞启动。
+    codex_plus_core::lumio::autostart::ensure_default_enabled();
+
     let codex_app = lock(&session.codex_app)
         .clone()
         .map(|path| codex_app_payload(&path, "manual"))
@@ -307,6 +318,7 @@ pub fn lumio_bootstrap(
         account,
         telemetry_enabled: session.telemetry_enabled.load(Ordering::SeqCst),
         auto_update_enabled: true,
+        launch_at_login: codex_plus_core::lumio::autostart::current(),
         credential_status: session.auth.credential_status(),
     }))
 }
@@ -629,6 +641,17 @@ pub fn lumio_set_telemetry(
 ) -> Result<LumioCommandResult<LumioTelemetryPayload>, ()> {
     session.telemetry_enabled.store(enabled, Ordering::SeqCst);
     result(Ok(LumioTelemetryPayload { enabled }))
+}
+
+#[tauri::command]
+pub fn lumio_set_launch_at_login(
+    enabled: bool,
+) -> Result<LumioCommandResult<LumioLaunchAtLoginPayload>, ()> {
+    result(
+        codex_plus_core::lumio::autostart::set(enabled)
+            .map(|enabled| LumioLaunchAtLoginPayload { enabled })
+            .map_err(str::to_string),
+    )
 }
 
 #[tauri::command]

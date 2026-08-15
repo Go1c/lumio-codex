@@ -41,7 +41,16 @@ test("registration blockers the server can report all have their own copy", () =
 });
 
 test("codes added beyond the baseline stay inside the approved domains", () => {
-  const domains = ["AUTH_", "ACCOUNT_", "KEY_", "SERVICE_", "CODEX_", "PAYMENT_HANDOFF_", "UPDATE_"];
+  const domains = [
+    "AUTH_",
+    "ACCOUNT_",
+    "KEY_",
+    "SERVICE_",
+    "CODEX_",
+    "PAYMENT_HANDOFF_",
+    "PREFERENCE_",
+    "UPDATE_",
+  ];
   for (const code of Object.keys(LUMIO_ERROR_COPY)) {
     if (code === "UNKNOWN") continue;
     assert.ok(
@@ -106,4 +115,12 @@ test("official app install copy never names the install machinery", () => {
   for (const forbidden of ["msix", "fe3", "sparkle", "侧载", "镜像"]) {
     assert.equal(copy.includes(forbidden), false, `forbidden term in official-app copy: ${forbidden}`);
   }
+});
+
+test("launch-at-login failures read as actionable preference problems", () => {
+  assert.equal(LUMIO_ERROR_COPY.PREFERENCE_LAUNCH_AT_LOGIN_FAILED, "开机启动设置未生效，请稍后重试");
+  assert.equal(
+    LUMIO_ERROR_COPY.PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED,
+    "当前运行方式不支持开机启动",
+  );
 });

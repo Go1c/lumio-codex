@@ -103,6 +103,7 @@ fn bootstrap_payload(credential_status: CredentialStatus) -> LumioBootstrapPaylo
         account: None,
         telemetry_enabled: false,
         auto_update_enabled: true,
+        launch_at_login: false,
         credential_status,
     }
 }

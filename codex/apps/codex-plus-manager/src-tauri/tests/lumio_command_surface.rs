@@ -37,6 +37,7 @@ fn lumio_builder_registers_only_the_lumio_allowlist() {
             "lumio_commands::lumio_open_browser",
             "lumio_commands::lumio_check_update",
             "lumio_commands::lumio_set_telemetry",
+            "lumio_commands::lumio_set_launch_at_login",
             "lumio_commands::lumio_export_logs",
             "lumio_commands::lumio_install_official_app",
             "lumio_commands::lumio_official_app_status",

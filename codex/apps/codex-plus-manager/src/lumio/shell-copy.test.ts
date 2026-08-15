@@ -23,6 +23,7 @@ test("the shell binds exactly the lumio command surface", () => {
     openBrowser: "lumio_open_browser",
     checkUpdate: "lumio_check_update",
     setTelemetry: "lumio_set_telemetry",
+    setLaunchAtLogin: "lumio_set_launch_at_login",
     exportLogs: "lumio_export_logs",
     installOfficialApp: "lumio_install_official_app",
     officialAppStatus: "lumio_official_app_status",

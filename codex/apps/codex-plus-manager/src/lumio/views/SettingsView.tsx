@@ -9,6 +9,7 @@ import {
   exportLogs,
   restoreConfig,
   selectCodexApp,
+  setLaunchAtLogin,
   shellLabels,
 } from "../invoke.ts";
 import { isOfficialAppInstallInProgress } from "../state.ts";
@@ -21,7 +22,6 @@ const DETECT_FLASH_MS = 1200;
 // Out-of-scope switches stay disabled with a stated reason rather than pretending
 // to take effect. Telemetry is in the same bucket: the backend only flips an
 // in-memory flag and never sends or persists anything.
-const LAUNCH_AT_LOGIN_NOTE = "本机开机启动尚未开放";
 const AUTO_UPDATE_NOTE = "自动安装尚未开放；有新版本时会在首页提醒";
 const TELEMETRY_NOTE = "使用数据收集尚未开放";
 const INVALID_APP_COPY = "所选应用无法识别为官方 Codex";
@@ -59,10 +59,12 @@ function Toggle({
 interface SettingsViewProps {
   autoUpdateEnabled: boolean;
   codexApp: LumioCodexApp | null;
+  launchAtLoginEnabled: boolean;
   officialAppInstall: LumioOfficialAppInstall;
   signedIn: boolean;
   telemetryEnabled: boolean;
   onCodexAppChanged: (app: LumioCodexApp) => void;
+  onLaunchAtLoginChanged: (enabled: boolean) => void;
   onSignOut: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
 }
@@ -70,10 +72,12 @@ interface SettingsViewProps {
 export function SettingsView({
   autoUpdateEnabled,
   codexApp,
+  launchAtLoginEnabled,
   officialAppInstall,
   signedIn,
   telemetryEnabled: _telemetryEnabled,
   onCodexAppChanged,
+  onLaunchAtLoginChanged,
   onSignOut,
   pushToast,
 }: SettingsViewProps) {
@@ -84,6 +88,7 @@ export function SettingsView({
   // the row shows the freshest local pick either way.
   const [pickedApp, setPickedApp] = useState<LumioCodexApp | null>(null);
   const [flashPath, setFlashPath] = useState(false);
+  const [launchAtLoginBusy, setLaunchAtLoginBusy] = useState(false);
   const [restoreConfirmOpen, setRestoreConfirmOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -132,6 +137,15 @@ export function SettingsView({
       });
   };
 
+  // 即点即生效：不做乐观翻转，命令返回后才推进状态；失败保持原状（= 规格的「失败回弹」）。
+  const toggleLaunchAtLogin = () => {
+    setLaunchAtLoginBusy(true);
+    void setLaunchAtLogin(!launchAtLoginEnabled)
+      .then((result) => onLaunchAtLoginChanged(result.enabled))
+      .catch((error: unknown) => pushToast(lumioErrorLabel(errorCodeOf(error))))
+      .finally(() => setLaunchAtLoginBusy(false));
+  };
+
   const exportDiagnostics = () => {
     setExporting(true);
     void exportLogs()
@@ -164,10 +178,14 @@ export function SettingsView({
           </span>
           <div>
             <strong>{shellLabels.launchAtLogin}</strong>
-            <p>登录电脑后自动准备 Lumio Codex</p>
-            <p className="lumio-setting-note">{LAUNCH_AT_LOGIN_NOTE}</p>
+            <p>登录电脑后自动启动 Lumio Codex（默认开启，可随时关闭）</p>
           </div>
-          <Toggle checked={false} disabled label={shellLabels.launchAtLogin} />
+          <Toggle
+            checked={launchAtLoginEnabled}
+            disabled={launchAtLoginBusy}
+            label={shellLabels.launchAtLogin}
+            onToggle={toggleLaunchAtLogin}
+          />
         </article>
 
         <article className="lumio-setting-row">

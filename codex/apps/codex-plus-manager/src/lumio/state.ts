@@ -65,6 +65,7 @@ export interface LumioState {
   account: LumioAccountSummary | null;
   codexApp: LumioCodexApp | null;
   officialAppInstall: LumioOfficialAppInstall;
+  launchAtLoginEnabled: boolean;
   defaultModel: string | null;
   provisioning: LumioProvisioning;
   telemetryEnabled: boolean;
@@ -98,6 +99,7 @@ export type LumioEvent =
   // 这是用户唯一的补救路径（QA D-3），不能再被「仅在线」的守卫丢弃。
   | { type: "codex-app-changed"; app: LumioCodexApp }
   | { type: "official-app-install-progress"; status: LumioOfficialAppInstall }
+  | { type: "launch-at-login-changed"; enabled: boolean }
   | { type: "account-refreshed"; account: LumioAccountSummary; cachedAt: string }
   | { type: "repair-required"; errorCode: string }
   | { type: "session-expired"; errorCode: string }
@@ -219,6 +221,7 @@ export function initialLumioState(): LumioState {
     account: null,
     codexApp: null,
     officialAppInstall: idleOfficialAppInstall(),
+    launchAtLoginEnabled: false,
     defaultModel: null,
     provisioning: pendingProvisioning(),
     telemetryEnabled: false,
@@ -249,6 +252,8 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         codexApp: event.payload.codexApp,
         telemetryEnabled: event.payload.telemetryEnabled,
         autoUpdateEnabled: event.payload.autoUpdateEnabled,
+        // 旧包不带该字段：本机偏好按「关」如实显示，用户可手动打开。
+        launchAtLoginEnabled: event.payload.launchAtLoginEnabled ?? false,
         actions: disabledActions(),
         actionNotes: noNotes(),
       };
@@ -443,6 +448,9 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
       };
     }
 
+    case "launch-at-login-changed":
+      return { ...state, launchAtLoginEnabled: event.enabled };
+
     case "repair-required":
       return {
         ...state,
@@ -461,6 +469,7 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
+        launchAtLoginEnabled: state.launchAtLoginEnabled,
         errorCode: event.errorCode,
         ...signedOutEntry(state.service, state.serviceAvailable),
       };
@@ -474,6 +483,7 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
+        launchAtLoginEnabled: state.launchAtLoginEnabled,
         ...signedOutEntry(state.service, state.serviceAvailable),
       };
   }

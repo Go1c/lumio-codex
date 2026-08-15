@@ -260,6 +260,10 @@ export function LumioApp() {
     // 这是用户唯一的补救入口，不能再按「仅在线」守卫丢弃。
     dispatch({ type: "codex-app-changed", app });
   }, []);
+  const onLaunchAtLoginChanged = useCallback(
+    (enabled: boolean) => dispatch({ type: "launch-at-login-changed", enabled }),
+    [],
+  );
   const onInstallProgress = useCallback((status: LumioOfficialAppInstall) => {
     dispatch({ type: "official-app-install-progress", status });
   }, []);
@@ -332,8 +336,10 @@ export function LumioApp() {
           <SettingsView
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
+            launchAtLoginEnabled={state.launchAtLoginEnabled}
             officialAppInstall={state.officialAppInstall}
             onCodexAppChanged={onCodexAppChanged}
+            onLaunchAtLoginChanged={onLaunchAtLoginChanged}
             onSignOut={onSignOutRequested}
             pushToast={pushToast}
             signedIn={state.account !== null}

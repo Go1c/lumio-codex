@@ -751,3 +751,42 @@ test("reducer never mutates the state it was given", () => {
 
   assert.equal(JSON.stringify(before), snapshot);
 });
+
+test("bootstrap carries the launch-at-login switch and toggles update it", () => {
+  const next = reduceLumioState(initialLumioState(), {
+    type: "bootstrapped",
+    payload: {
+      version: "1.0.0",
+      platform: "macos",
+      arch: "aarch64",
+      codexApp: null,
+      account: null,
+      telemetryEnabled: false,
+      autoUpdateEnabled: true,
+      launchAtLoginEnabled: true,
+    },
+  });
+
+  assert.equal(next.launchAtLoginEnabled, true);
+  const toggled = reduceLumioState(next, { type: "launch-at-login-changed", enabled: false });
+  assert.equal(toggled.launchAtLoginEnabled, false);
+  // 开关与本机偏好不属于任何阶段机转移，不得顺带改动其他状态。
+  assert.equal(toggled.phase, next.phase);
+});
+
+test("launch-at-login stays off when the bootstrap payload predates the switch", () => {
+  const next = reduceLumioState(initialLumioState(), {
+    type: "bootstrapped",
+    payload: {
+      version: "1.0.0",
+      platform: "macos",
+      arch: "aarch64",
+      codexApp: null,
+      account: null,
+      telemetryEnabled: false,
+      autoUpdateEnabled: true,
+    },
+  });
+
+  assert.equal(next.launchAtLoginEnabled, false);
+});

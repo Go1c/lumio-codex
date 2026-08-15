@@ -31,6 +31,8 @@ export const LUMIO_ERROR_COPY: Record<string, string> = {
   CODEX_LAUNCH_FAILED: "启动官方 Codex 失败",
   PAYMENT_HANDOFF_CREATE_FAILED: "暂时无法发起充值",
   PAYMENT_HANDOFF_EXPIRED: "支付链接已过期，请重新打开",
+  PREFERENCE_LAUNCH_AT_LOGIN_FAILED: "开机启动设置未生效，请稍后重试",
+  PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED: "当前运行方式不支持开机启动",
   UPDATE_VERIFY_FAILED: "更新包校验未通过，已放弃安装",
   UNKNOWN: "出现未知问题，请稍后重试",
 };

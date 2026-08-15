@@ -1,5 +1,6 @@
 pub mod account;
 pub mod api;
+pub mod autostart;
 pub mod config_takeover;
 pub mod credentials;
 pub mod errors;
