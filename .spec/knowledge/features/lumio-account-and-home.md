@@ -18,7 +18,8 @@ metadata:
 
 ## 设计
 
-- **设计面**：状态机阶段见架构规格；错误码六域 + `UNKNOWN`；凭据本期落本机 owner-only 文件（ADR-0001），非系统钥匙串。
+- **设计面**：状态机阶段见架构规格；错误码七域（`AUTH_` / `ACCOUNT_` / `KEY_` / `SERVICE_` / `CODEX_` / `PAYMENT_HANDOFF_` / `UPDATE_`）+ `UNKNOWN`；凭据本期落本机 owner-only 文件（ADR-0001），非系统钥匙串。
+  - 网关面（`/v1/*`，无管理 API 信封）错误体是 `{"code","message"}`：`api.rs` 的 `gateway_error_reason` 按 `code` → `reason` → `error.code` 解析后交给 `normalize_reason`；余额不足（`INSUFFICIENT_BALANCE`）归 `ACCOUNT_INSUFFICIENT_BALANCE`（用户可操作，禁止伪装成宕机），空模型目录归 `SERVICE_MODEL_CATALOG_EMPTY`（D-16）。
 - **交互面**：文案与页面结构以 UX 交互规格为准；恢复动作按整文件回滚诚实描述；支付 / 开机启动 / 自动更新 / 遥测本期禁用并附说明。
 - **实现面**：
   - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch）
