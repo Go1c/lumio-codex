@@ -33,6 +33,18 @@ pub struct StorePackageCandidate {
     pub architecture: String,
 }
 
+/// FE3 签名的 payload URL 只在 `http://` 下有效（https 重放返回 403），
+/// 下载门禁据此单独放行微软投递域的 http。
+pub fn is_microsoft_delivery_host(url: &reqwest::Url) -> bool {
+    match url.host_str() {
+        Some(host) => {
+            host == "dl.delivery.mp.microsoft.com"
+                || host.ends_with(".dl.delivery.mp.microsoft.com")
+        }
+        None => false,
+    }
+}
+
 pub fn resolve_store_msix_url(product_id: &str, arch: HostArch) -> Result<String, String> {
     let runtime = tokio::runtime::Handle::try_current();
     match runtime {
@@ -464,6 +476,25 @@ mod tests {
                 .unwrap()
                 .contains("ms-windows-store:")
         );
+    }
+
+    #[test]
+    fn microsoft_delivery_host_matches_only_the_delivery_subdomain() {
+        use super::is_microsoft_delivery_host;
+        let url = |value: &str| reqwest::Url::parse(value).unwrap();
+        assert!(is_microsoft_delivery_host(&url(
+            "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/x?P1=1"
+        )));
+        assert!(is_microsoft_delivery_host(&url(
+            "https://dl.delivery.mp.microsoft.com/filestreamingservice/files/y"
+        )));
+        assert!(!is_microsoft_delivery_host(&url(
+            "http://dl.delivery.mp.microsoft.com.evil.com/x"
+        )));
+        assert!(!is_microsoft_delivery_host(&url(
+            "http://fe3.delivery.mp.microsoft.com/x"
+        )));
+        assert!(!is_microsoft_delivery_host(&url("http://example.com/x")));
     }
 
     #[test]

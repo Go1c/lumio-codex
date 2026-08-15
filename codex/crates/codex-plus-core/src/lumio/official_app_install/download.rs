@@ -108,8 +108,22 @@ fn http_client() -> Result<reqwest::Client, String> {
     let builder = reqwest::Client::builder()
         .user_agent(format!("LumioCodex/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
-        .redirect(reqwest::redirect::Policy::none());
+        // 官方包 600–750MB，慢链路也要装得上。取消只在 chunk 边界生效，
+        // body 停滞时由该总超时兜底（D-17 遗留：读空闲超时待补）。
+        .timeout(Duration::from_secs(3600))
+        // 镜像 302 到自己的 CDN；跟随但每一跳必须仍是 https（测试里 wiremock 只会说 http）。
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let url = attempt.url();
+            let https = url.scheme() == "https" && url.host_str().is_some();
+            let test_local = cfg!(test)
+                && url.scheme() == "http"
+                && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "::1"));
+            if (https || test_local) && attempt.previous().len() < 5 {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }));
     #[cfg(test)]
     let builder = builder.no_proxy();
     builder.build().map_err(|_| DOWNLOAD_FAILED.to_string())
@@ -122,7 +136,10 @@ fn url_is_allowed(url: &str) -> bool {
     if parsed.scheme() == "https" {
         return parsed.host_str().is_some();
     }
-    // wiremock speaks HTTP only; production builds still reject every http URL.
+    if parsed.scheme() == "http" && super::windows_store::is_microsoft_delivery_host(&parsed) {
+        return true;
+    }
+    // wiremock speaks HTTP only; production builds still reject every other http URL.
     cfg!(test)
         && parsed.scheme() == "http"
         && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
@@ -401,6 +418,74 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err, "CODEX_APP_DOWNLOAD_FAILED");
+    }
+
+    #[test]
+    fn only_https_or_microsoft_delivery_http_passes_the_gate() {
+        assert!(url_is_allowed("https://mirror.example.org/latest/win-x64"));
+        assert!(url_is_allowed(
+            "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/x?P1=1"
+        ));
+        assert!(!url_is_allowed("http://example.com/x"));
+        assert!(!url_is_allowed(
+            "http://dl.delivery.mp.microsoft.com.evil.com/x"
+        ));
+        assert!(!url_is_allowed("ftp://dl.delivery.mp.microsoft.com/x"));
+        assert!(url_is_allowed("http://127.0.0.1:1234/x"));
+    }
+
+    #[tokio::test]
+    async fn mirror_redirect_chain_is_followed_to_the_final_200() {
+        let dest = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latest/win-x64"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/real/win-x64"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/real/win-x64"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY.to_vec()))
+            .mount(&server)
+            .await;
+
+        let cancel = AtomicBool::new(false);
+        let path = download_to_cache(
+            &source(format!("{}/latest/win-x64", server.uri()), None),
+            dest.path(),
+            &cancel,
+            &mut |_| {},
+        )
+        .await
+        .expect("302 到同源 https/测试本机目标必须跟随到最终 200");
+
+        assert_eq!(std::fs::read(&path).unwrap(), BODY);
+        assert!(!path.with_file_name("win-x64.part").exists());
+    }
+
+    #[tokio::test]
+    async fn redirect_to_a_foreign_http_host_is_not_followed() {
+        let dest = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latest/win-x64"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("Location", "http://example.com/pkg"),
+            )
+            .mount(&server)
+            .await;
+
+        let cancel = AtomicBool::new(false);
+        let err = download_to_cache(
+            &source(format!("{}/latest/win-x64", server.uri()), None),
+            dest.path(),
+            &cancel,
+            &mut |_| {},
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err, "CODEX_APP_DOWNLOAD_FAILED");
+        assert!(!dest.path().join("official-app").join("win-x64").exists());
     }
 
     #[test]

@@ -315,7 +315,7 @@ fn live_download(
     }
     if source.url.starts_with("store:") {
         let resolved = resolve_official_store_url(arch)?;
-        if !resolved.starts_with("https://") {
+        if !store_resolved_url_allowed(&resolved) {
             return Err(DOWNLOAD_FAILED.to_string());
         }
         source.url = resolved;
@@ -350,6 +350,17 @@ fn resolve_official_store_url(arch: HostArch) -> Result<String, String> {
         }),
         Err(_) => resolve_store_msix_url(STORE_PRODUCT_ID, arch),
     }
+}
+
+/// FE3 只签发 `http://` 投递链接（https 重放 403），除微软投递域外仍必须 https。
+fn store_resolved_url_allowed(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() == "https" {
+        return parsed.host_str().is_some();
+    }
+    parsed.scheme() == "http" && windows_store::is_microsoft_delivery_host(&parsed)
 }
 
 fn live_verify(path: &Path, source: &PackageSource, platform: HostPlatform) -> Result<(), String> {
@@ -438,6 +449,21 @@ mod tests {
             online: true,
             windows_sideload_ok: None,
         }
+    }
+
+    #[test]
+    fn store_resolved_urls_must_be_https_or_microsoft_delivery() {
+        assert!(store_resolved_url_allowed(
+            "https://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/abc?P1=1"
+        ));
+        assert!(store_resolved_url_allowed(
+            "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/abc?P1=1"
+        ));
+        assert!(!store_resolved_url_allowed("http://example.com/file"));
+        assert!(!store_resolved_url_allowed(
+            "http://tlu.dl.delivery.mp.microsoft.com.evil.com/file"
+        ));
+        assert!(!store_resolved_url_allowed("store:9PLM9XGG6VKS"));
     }
 
     #[test]
