@@ -525,6 +525,7 @@ a:hover { text-decoration: underline; }
 
 .lx-action-panel {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -537,6 +538,24 @@ a:hover { text-decoration: underline; }
 .lx-action-panel h2 { margin: 0 0 6px; font-size: 17px; font-weight: 620; }
 .lx-action-panel p.sub { margin: 0; color: var(--text-dim); font-size: 12px; }
 .lx-actions { display: flex; flex: none; gap: 11px; }
+
+/* 安装进度条（D-19）：未知总量时低幅往复，reduced-motion 由原型全局开关收敛 */
+.lx-install-progress { flex-basis: 100%; }
+.lx-install-progress .track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+}
+.lx-install-progress .fill {
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6c8cff, #8f6cff);
+  animation: lx-install-slide 1.6s ease-in-out infinite alternate;
+}
+.lx-install-progress p { margin: 8px 0 0; color: var(--text-dim); font-size: 11px; }
+@keyframes lx-install-slide { from { transform: translateX(0); } to { transform: translateX(160%); } }
 
 /* 信息条（离线 / 重连） */
 .lx-notice {

@@ -258,9 +258,24 @@ pub fn begin_background_install(session_app: Option<PathBuf>) -> Result<(), Stri
             }
         }
         let _guard = JobGuard;
-        let _ = start_official_app_install_with(session_app).await;
+        let result = start_official_app_install_with(session_app).await;
+        if let Err(code) = result {
+            note_background_failure(code);
+        }
     });
     Ok(())
+}
+
+/// 主管线外的提前失败（缓存目录不可写、平台不支持）不会经过 `fail_with`，
+/// 状态会停在 planning——按钮永远忙、失败无反馈（D-20）。只升级仍停在
+/// planning 的状态，绝不覆盖主管线已写下的 failed / cancelled。
+fn note_background_failure(code: String) {
+    progress::update_status(|status| {
+        if status.phase == InstallPhase::Planning {
+            status.phase = InstallPhase::Failed;
+            status.error_code = Some(code);
+        }
+    });
 }
 
 pub fn detect_existing_app(session_app: Option<&Path>) -> Option<PathBuf> {
@@ -609,5 +624,31 @@ mod tests {
             "model = \"keep-me\"\n"
         );
         assert_eq!(current_status().phase, InstallPhase::Cancelled);
+    }
+
+    /// D-20：后台任务在进入主管线前提前出错（缓存目录不可写等）时，
+    /// 状态会停在 planning、按钮永远忙。守卫必须把它升级为 failed，
+    /// 且不得覆盖主管线已经写下的失败码。
+    #[test]
+    fn early_background_failure_upgrades_a_stuck_planning_phase_only() {
+        let _guard = progress::reset_status_for_tests();
+        progress::set_planning();
+
+        note_background_failure("CODEX_APP_DOWNLOAD_FAILED".to_string());
+        let status = current_status();
+        assert_eq!(status.phase, InstallPhase::Failed);
+        assert_eq!(
+            status.error_code.as_deref(),
+            Some("CODEX_APP_DOWNLOAD_FAILED")
+        );
+
+        progress::set_phase(InstallPhase::Failed, Some("verify"));
+        note_background_failure("LATER_CODE".to_string());
+        let status = current_status();
+        assert_eq!(
+            status.error_code.as_deref(),
+            Some("CODEX_APP_DOWNLOAD_FAILED"),
+            "不得覆盖主管线已记录的失败码"
+        );
     }
 }

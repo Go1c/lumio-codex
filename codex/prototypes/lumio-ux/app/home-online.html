@@ -67,6 +67,12 @@
           <div class="lx-actions">
             <button class="lx-button is-primary" type="button" id="launch">🚀 启动 Codex</button>
           </div>
+          <div class="lx-install-progress" hidden id="install-progress">
+            <div class="track" role="progressbar" aria-label="下载官方 Codex 进度">
+              <div class="fill"></div>
+            </div>
+            <p id="install-copy">下载 45% · 335 MB / 745 MB</p>
+          </div>
         </section>
         <p class="lx-settings-note" id="no-codex-note" hidden>
           未检测到官方应用，<a href="settings.html">去设置中选择</a>
@@ -104,6 +110,7 @@
   <script>
     window.protoVariants = [
       { hash: "#no-codex", label: "未检测到官方应用" },
+      { hash: "#installing", label: "安装进行中（进度条）" },
     ];
   </script>
   <script src="../assets/prototype.js" defer></script>
@@ -158,13 +165,19 @@
         Proto.toast("链接已更新，请使用最新打开的页面", "ok");
       });
 
-      // 变体：未检测到官方应用
+      // 变体：未检测到官方应用 / 安装进行中（D-19 进度条）
       const applyVariant = () => {
         const noCodex = location.hash === "#no-codex";
-        document.getElementById("codex-title").textContent = noCodex ? "尚未检测到官方应用" : "已检测到官方应用";
-        document.getElementById("codex-sub").textContent = noCodex ? "可在设置中重新检测或手动选择" : "版本 2.4.1 · /Applications/Codex.app";
-        document.getElementById("launch").disabled = noCodex;
+        const installing = location.hash === "#installing";
+        document.getElementById("codex-title").textContent =
+          noCodex || installing ? "尚未检测到官方应用" : "已检测到官方应用";
+        document.getElementById("codex-sub").textContent =
+          noCodex || installing ? "将为你安装官方 Codex" : "版本 2.4.1 · /Applications/Codex.app";
+        const launch = document.getElementById("launch");
+        launch.disabled = noCodex || installing;
+        launch.textContent = installing ? "正在安装官方 Codex… 下载" : "🚀 启动 Codex";
         document.getElementById("no-codex-note").hidden = !noCodex;
+        document.getElementById("install-progress").hidden = !installing;
       };
       window.addEventListener("hashchange", applyVariant);
       applyVariant();

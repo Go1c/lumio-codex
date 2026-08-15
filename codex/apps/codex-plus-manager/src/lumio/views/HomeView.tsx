@@ -1,5 +1,6 @@
 import {
   Activity,
+  AlertTriangle,
   CheckCircle2,
   CloudOff,
   Download,
@@ -24,14 +25,19 @@ import {
 import type { LumioOfficialAppInstallStatus } from "../invoke.ts";
 import { paymentUrl } from "../payment.ts";
 import { isOfficialAppInstallInProgress, type LumioState } from "../state.ts";
+import {
+  downloadPercent,
+  installFailureCopy,
+  installProgressCopy,
+  installStageLabel,
+  toInstallProgress,
+} from "../install-progress.ts";
 import type {
   LumioAccountSummary,
   LumioCodexApp,
   LumioOfficialAppInstall,
-  LumioOfficialAppInstallPhase,
   LumioUpdateReminder,
 } from "../types.ts";
-import { LUMIO_OFFICIAL_APP_INSTALL_PHASES } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
 
 const RECONNECT_PROBE_MS = 30_000;
@@ -52,29 +58,6 @@ function formatBalance(balance: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(balance);
-}
-
-function asInstallPhase(phase: string): LumioOfficialAppInstallPhase {
-  return (LUMIO_OFFICIAL_APP_INSTALL_PHASES as readonly string[]).includes(phase)
-    ? (phase as LumioOfficialAppInstallPhase)
-    : "failed";
-}
-
-function toInstallProgress(status: LumioOfficialAppInstallStatus): LumioOfficialAppInstall {
-  return {
-    phase: asInstallPhase(status.phase),
-    stage: status.stage,
-    errorCode: status.errorCode,
-    path: status.installedPath,
-  };
-}
-
-function installStageLabel(stage: string | null, phase: string): string | null {
-  const key = (stage ?? phase).toLowerCase();
-  if (key.includes("download")) return "下载";
-  if (key.includes("verify")) return "校验";
-  if (key.includes("install") || key.includes("detect") || key.includes("plan")) return "安装";
-  return null;
 }
 
 function wait(ms: number): Promise<void> {
@@ -276,6 +259,18 @@ export function HomeView({
       : codexApp
         ? shellLabels.launch
         : INSTALL_AND_LAUNCH_COPY;
+  const installInProgress = isOfficialAppInstallInProgress(officialAppInstall);
+  const installEnded =
+    officialAppInstall.phase === "failed" || officialAppInstall.phase === "cancelled";
+  const downloadPercentValue =
+    officialAppInstall.phase === "downloading"
+      ? downloadPercent(
+          officialAppInstall.bytesDownloaded ?? null,
+          officialAppInstall.bytesTotal ?? null,
+        )
+      : null;
+  const progressCopy = installProgressCopy(officialAppInstall, downloadPercentValue);
+  const failureCopy = installEnded ? installFailureCopy(officialAppInstall) : null;
 
   const openPayment = () => {
     const url = paymentUrl(state);
@@ -427,6 +422,35 @@ export function HomeView({
             {primaryLabel}
           </button>
         </div>
+
+        {installInProgress ? (
+          <div className="lumio-install-progress">
+            <div
+              aria-label={progressCopy}
+              aria-valuemax={100}
+              aria-valuemin={0}
+              aria-valuenow={downloadPercentValue ?? undefined}
+              className="lumio-install-progress-track"
+              role="progressbar"
+            >
+              <div
+                className={`lumio-install-progress-fill${
+                  downloadPercentValue === null ? " is-indeterminate" : ""
+                }`}
+                style={{ width: `${downloadPercentValue ?? 30}%` }}
+              />
+            </div>
+            <p>{progressCopy}</p>
+          </div>
+        ) : null}
+
+        {installEnded && failureCopy !== null ? (
+          // D-20：失败原因常驻面板（toast 只有 4 秒），主按钮即重试入口。
+          <p className="lumio-install-failure" role="alert">
+            <AlertTriangle size={14} />
+            {failureCopy}
+          </p>
+        ) : null}
       </section>
 
       {actions.canPay ? null : <p className="lumio-settings-note">{actionNotes.pay}</p>}

@@ -607,6 +607,7 @@ a:focus-visible {
 
 .lumio-action-panel {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -630,6 +631,57 @@ a:focus-visible {
 .lumio-actions {
   display: flex;
   gap: 9px;
+}
+
+/* D-19：745MB 的包没有量化进度就像卡死。整行铺在行动面板底部；
+   未知总量时长条保持低幅动画，prefers-reduced-motion 由全局开关收敛。 */
+.lumio-install-progress {
+  flex-basis: 100%;
+}
+
+.lumio-install-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 8%);
+}
+
+.lumio-install-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6c8cff, #8f6cff);
+  transition: width 0.4s ease;
+}
+
+.lumio-install-progress-fill.is-indeterminate {
+  animation: lumio-install-indeterminate 1.6s ease-in-out infinite;
+}
+
+@keyframes lumio-install-indeterminate {
+  0% {
+    transform: translateX(-40%);
+  }
+
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.lumio-install-progress p {
+  margin: 8px 0 0;
+  color: #74798e;
+  font-size: 11px;
+}
+
+/* D-20：失败原因常驻在行动面板，不随 4 秒 toast 消失 */
+.lumio-install-failure {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: #e2a16b;
+  font-size: 11px;
 }
 
 .lumio-settings-page {
