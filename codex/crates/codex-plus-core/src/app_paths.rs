@@ -289,25 +289,26 @@ pub fn resolve_codex_app_dir(app_dir: Option<&Path>) -> Option<PathBuf> {
 /// Search for standalone Codex installations (non-MS Store).
 ///
 /// Common paths:
+/// - %LOCALAPPDATA%\Programs\Codex\     (portable official install)
+/// - %LOCALAPPDATA%\Programs\Codex\app\
 /// - %LOCALAPPDATA%\OpenAI\Codex\bin\  (standalone installer)
 /// - %LOCALAPPDATA%\OpenAI\Codex\      (user data root)
 /// - %LOCALAPPDATA%\Programs\OpenAI\Codex\ (alternative)
 pub fn find_standalone_codex_app_dir() -> Option<PathBuf> {
     let local_appdata = std::env::var_os("LOCALAPPDATA")?;
+    find_standalone_codex_app_dir_from(Path::new(&local_appdata))
+}
 
-    let candidates: &[PathBuf] = &[
-        PathBuf::from(&local_appdata)
-            .join("OpenAI")
-            .join("Codex")
-            .join("bin"),
-        PathBuf::from(&local_appdata).join("OpenAI").join("Codex"),
-        PathBuf::from(&local_appdata)
-            .join("Programs")
-            .join("OpenAI")
-            .join("Codex"),
+pub(crate) fn find_standalone_codex_app_dir_from(local_appdata: &Path) -> Option<PathBuf> {
+    let candidates = [
+        local_appdata.join("Programs").join("Codex"),
+        local_appdata.join("Programs").join("Codex").join("app"),
+        local_appdata.join("OpenAI").join("Codex").join("bin"),
+        local_appdata.join("OpenAI").join("Codex"),
+        local_appdata.join("Programs").join("OpenAI").join("Codex"),
     ];
 
-    for candidate in candidates {
+    for candidate in &candidates {
         if let Some(path) = normalize_codex_app_path(candidate) {
             if build_codex_executable(&path).exists() {
                 return Some(path);
@@ -677,4 +678,29 @@ fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'
     }
     let (head, rest) = value.split_at(prefix.len());
     head.eq_ignore_ascii_case(prefix).then_some(rest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_standalone_codex_app_dir_from;
+
+    #[test]
+    fn standalone_detect_includes_localappdata_programs_codex() {
+        let temp = tempfile::tempdir().unwrap();
+        let portable = temp.path().join("Programs").join("Codex");
+        std::fs::create_dir_all(portable.join("app")).unwrap();
+        std::fs::write(portable.join("app").join("ChatGPT.exe"), b"entry").unwrap();
+
+        let found = find_standalone_codex_app_dir_from(temp.path()).expect("portable root");
+        assert_eq!(found, portable.join("app"));
+
+        let temp_root = tempfile::tempdir().unwrap();
+        let root = temp_root.path().join("Programs").join("Codex");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("ChatGPT.exe"), b"entry").unwrap();
+        assert_eq!(
+            find_standalone_codex_app_dir_from(temp_root.path()).as_deref(),
+            Some(root.as_path())
+        );
+    }
 }

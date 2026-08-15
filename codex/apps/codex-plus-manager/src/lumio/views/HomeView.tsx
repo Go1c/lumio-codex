@@ -6,26 +6,42 @@ import {
   RefreshCw,
   Rocket,
   ShieldCheck,
-  Sparkles,
+  Star,
   WalletCards,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
   LumioCommandError,
+  detectCodexApp,
+  installOfficialApp,
   launchCodex,
+  officialAppStatus,
   openInBrowser,
   refreshAccount,
   shellLabels,
 } from "../invoke.ts";
+import type { LumioOfficialAppInstallStatus } from "../invoke.ts";
 import { paymentUrl } from "../payment.ts";
-import type { LumioState } from "../state.ts";
-import type { LumioAccountSummary, LumioUpdateReminder } from "../types.ts";
+import { isOfficialAppInstallInProgress, type LumioState } from "../state.ts";
+import type {
+  LumioAccountSummary,
+  LumioCodexApp,
+  LumioOfficialAppInstall,
+  LumioOfficialAppInstallPhase,
+  LumioUpdateReminder,
+} from "../types.ts";
+import { LUMIO_OFFICIAL_APP_INSTALL_PHASES } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
 
 const RECONNECT_PROBE_MS = 30_000;
 const RECONNECT_BANNER_MS = 3000;
 const PAYMENT_POLL_MS = 10_000;
+const INSTALL_POLL_MS = 400;
+const INSTALL_AND_LAUNCH_COPY = "安装并启动官方 Codex";
+const INSTALLING_COPY = "正在安装官方 Codex…";
+const OFFLINE_NO_APP_NOTE = "安装官方应用需要网络";
+const NO_APP_SUBCOPY = "将为你安装官方 Codex";
 
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
@@ -36,6 +52,35 @@ function formatBalance(balance: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(balance);
+}
+
+function asInstallPhase(phase: string): LumioOfficialAppInstallPhase {
+  return (LUMIO_OFFICIAL_APP_INSTALL_PHASES as readonly string[]).includes(phase)
+    ? (phase as LumioOfficialAppInstallPhase)
+    : "failed";
+}
+
+function toInstallProgress(status: LumioOfficialAppInstallStatus): LumioOfficialAppInstall {
+  return {
+    phase: asInstallPhase(status.phase),
+    stage: status.stage,
+    errorCode: status.errorCode,
+    path: status.installedPath,
+  };
+}
+
+function installStageLabel(stage: string | null, phase: string): string | null {
+  const key = (stage ?? phase).toLowerCase();
+  if (key.includes("download")) return "下载";
+  if (key.includes("verify")) return "校验";
+  if (key.includes("install") || key.includes("detect") || key.includes("plan")) return "安装";
+  return null;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function formatSyncTime(iso: string | null): string {
@@ -50,6 +95,8 @@ interface HomeViewProps {
   updateReminder: LumioUpdateReminder | null;
   onRefreshed: (account: LumioAccountSummary, cachedAt: string) => void;
   onReconnected: (account: LumioAccountSummary, cachedAt: string) => void;
+  onCodexAppChanged: (app: LumioCodexApp) => void;
+  onInstallProgress: (status: LumioOfficialAppInstall) => void;
   onOpenSettings: () => void;
   onDismissUpdate: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
@@ -60,11 +107,13 @@ export function HomeView({
   updateReminder,
   onRefreshed,
   onReconnected,
+  onCodexAppChanged,
+  onInstallProgress,
   onOpenSettings,
   onDismissUpdate,
   pushToast,
 }: HomeViewProps) {
-  const { account, actionNotes, actions, codexApp } = state;
+  const { account, actionNotes, actions, codexApp, officialAppInstall } = state;
   const offline = state.phase === "ready-offline";
   // 没有同步时间就没有同步过：账户数值此刻是启动时的占位而非缓存下来的真值，不能当余额渲染。
   const syncTimeUnknown = state.cachedAt === null;
@@ -154,6 +203,79 @@ export function HomeView({
       .catch((error: unknown) => pushToast(errorCodeOf(error)))
       .finally(() => setLaunching(false));
   };
+
+  const adoptInstalledApp = async (installedPath: string | null): Promise<LumioCodexApp | null> => {
+    const detected = await detectCodexApp();
+    if (detected) return detected;
+    if (installedPath) {
+      return { path: installedPath, version: null, source: "automatic" };
+    }
+    return null;
+  };
+
+  const finishSuccessfulInstall = async (installedPath: string | null) => {
+    const app = await adoptInstalledApp(installedPath);
+    if (app === null) {
+      pushToast("CODEX_APP_NOT_FOUND");
+      return;
+    }
+    onCodexAppChanged(app);
+    await launchCodex();
+    pushToast("官方 Codex 已启动", "success");
+  };
+
+  const applyInstallStatus = async (status: LumioOfficialAppInstallStatus): Promise<boolean> => {
+    onInstallProgress(toInstallProgress(status));
+    const alreadyInstalled = status.started === false && Boolean(status.installedPath);
+    if (status.phase === "succeeded" || alreadyInstalled) {
+      await finishSuccessfulInstall(status.installedPath);
+      return true;
+    }
+    if (status.phase === "failed" || status.phase === "cancelled") {
+      pushToast(status.errorCode ?? "CODEX_APP_INSTALL_FAILED");
+      return true;
+    }
+    return false;
+  };
+
+  const installThenLaunch = () => {
+    setLaunching(true);
+    void (async () => {
+      try {
+        const started = await installOfficialApp();
+        if (await applyInstallStatus(started)) return;
+        for (;;) {
+          await wait(INSTALL_POLL_MS);
+          const status = await officialAppStatus();
+          if (await applyInstallStatus(status)) return;
+        }
+      } catch (error: unknown) {
+        const code = errorCodeOf(error);
+        onInstallProgress({ phase: "failed", stage: null, errorCode: code });
+        pushToast(code);
+      } finally {
+        setLaunching(false);
+      }
+    })();
+  };
+
+  const onPrimaryClick = () => {
+    if (codexApp) {
+      launch();
+      return;
+    }
+    installThenLaunch();
+  };
+
+  const primaryDisabled = !actions.canLaunch || launching || isOfficialAppInstallInProgress(officialAppInstall);
+  const stageLabel = installStageLabel(officialAppInstall.stage, officialAppInstall.phase);
+  const primaryLabel = isOfficialAppInstallInProgress(officialAppInstall)
+    ? `${INSTALLING_COPY}${stageLabel ? ` ${stageLabel}` : ""}`
+    : launching
+      ? "正在启动…"
+      : codexApp
+        ? shellLabels.launch
+        : INSTALL_AND_LAUNCH_COPY;
 
   const openPayment = () => {
     const url = paymentUrl(state);
@@ -263,7 +385,7 @@ export function HomeView({
 
         <article className="lumio-card">
           <span className="lumio-card-icon">
-            <Sparkles size={20} />
+            <Star size={20} />
           </span>
           <p>{shellLabels.defaultModel}</p>
           <strong>{state.defaultModel ?? "等待服务端同步"}</strong>
@@ -280,7 +402,7 @@ export function HomeView({
           <h2>{codexApp === null ? "尚未检测到官方应用" : "已检测到官方应用"}</h2>
           <p>
             {codexApp === null
-              ? "可在设置中重新检测或手动选择"
+              ? NO_APP_SUBCOPY
               : `${codexApp.version === null ? "已就绪" : `版本 ${codexApp.version}`} · ${codexApp.path}`}
           </p>
         </div>
@@ -297,25 +419,25 @@ export function HomeView({
           </button>
           <button
             className="lumio-button is-primary"
-            disabled={!actions.canLaunch || launching}
-            onClick={launch}
+            disabled={primaryDisabled}
+            onClick={onPrimaryClick}
             type="button"
           >
             <Rocket size={17} />
-            {launching ? "正在启动…" : shellLabels.launch}
+            {primaryLabel}
           </button>
         </div>
       </section>
 
       {actions.canPay ? null : <p className="lumio-settings-note">{actionNotes.pay}</p>}
-      {actions.canLaunch ? null : (
+      {!actions.canLaunch && actionNotes.launch ? (
         <p className="lumio-settings-note">
           {actionNotes.launch}
           <button className="lumio-link-button" onClick={onOpenSettings} type="button">
             {shellLabels.settings}
           </button>
         </p>
-      )}
+      ) : null}
 
       {paymentOpen ? (
         <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">

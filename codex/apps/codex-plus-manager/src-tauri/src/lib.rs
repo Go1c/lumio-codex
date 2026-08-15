@@ -60,6 +60,9 @@ pub fn run() {
             lumio_commands::lumio_check_update,
             lumio_commands::lumio_set_telemetry,
             lumio_commands::lumio_export_logs,
+            lumio_commands::lumio_install_official_app,
+            lumio_commands::lumio_official_app_status,
+            lumio_commands::lumio_cancel_official_app,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])

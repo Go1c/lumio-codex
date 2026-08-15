@@ -22,7 +22,7 @@
 
 ## 非目标
 
-- 不捆绑、下载或修改官方 Codex/ChatGPT 应用二进制。
+- 不捆绑、不修改官方 Codex/ChatGPT 应用二进制；首次本机缺失时允许下载原样官方包。
 - 不增加第三方 OAuth、邀请码、Turnstile、设备管理或内置支付 UI。
 - 不向用户恢复 Codex++ 的 Provider、多供应商、脚本、Stepwise、Goals、MCP、Skill、Plugin、注入或会话增强入口。
 - 不建立新的用户库，不在客户端写死试用额度。
@@ -259,7 +259,7 @@ Sub2API 前端在没有 localStorage Token 时调用 `/auth/me` 探测 Cookie �
 - macOS：扫描 `/Applications`、`~/Applications` 中官方 Codex/ChatGPT 应用，解析 bundle 与可执行文件。
 - Windows：扫描 Store 包注册信息和常见安装路径，支持 packaged activation。
 - 自动检测失败时使用系统文件选择器，验证签名主体/包身份、可执行文件名和平台结构；首个内测阶段至少验证结构与产品标识，并明确显示“未验证签名”状态。
-- 不下载、不解包、不捆绑官方应用。
+- 不捆绑官方应用进 Lumio 安装包。本机缺失时的首次安装走 `lumio/official_app_install/`（下载原样官方包、校验签名后再安装）；装好后的版本更新仍交给官方。
 
 “启动 Codex”前执行：
 

@@ -33,6 +33,9 @@ export const LUMIO_COMMANDS = {
   checkUpdate: "lumio_check_update",
   setTelemetry: "lumio_set_telemetry",
   exportLogs: "lumio_export_logs",
+  installOfficialApp: "lumio_install_official_app",
+  officialAppStatus: "lumio_official_app_status",
+  cancelOfficialApp: "lumio_cancel_official_app",
 } as const;
 
 export const LUMIO_BOOTSTRAP_COMMAND = LUMIO_COMMANDS.bootstrap;
@@ -256,4 +259,26 @@ export async function setTelemetry(enabled: boolean): Promise<LumioTelemetryResu
 
 export async function exportLogs(): Promise<LumioExportLogsResult> {
   return runCommand<LumioExportLogsResult>(LUMIO_COMMANDS.exportLogs);
+}
+
+export interface LumioOfficialAppInstallStatus {
+  phase: string;
+  stage: string | null;
+  bytesDownloaded: number | null;
+  bytesTotal: number | null;
+  errorCode: string | null;
+  installedPath: string | null;
+  started?: boolean;
+}
+
+export async function installOfficialApp(): Promise<LumioOfficialAppInstallStatus> {
+  return runCommand<LumioOfficialAppInstallStatus>(LUMIO_COMMANDS.installOfficialApp);
+}
+
+export async function officialAppStatus(): Promise<LumioOfficialAppInstallStatus> {
+  return runCommand<LumioOfficialAppInstallStatus>(LUMIO_COMMANDS.officialAppStatus);
+}
+
+export async function cancelOfficialApp(): Promise<LumioOfficialAppInstallStatus> {
+  return runCommand<LumioOfficialAppInstallStatus>(LUMIO_COMMANDS.cancelOfficialApp);
 }

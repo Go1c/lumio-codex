@@ -11,7 +11,8 @@ import {
   selectCodexApp,
   shellLabels,
 } from "../invoke.ts";
-import type { LumioCodexApp } from "../types.ts";
+import { isOfficialAppInstallInProgress } from "../state.ts";
+import type { LumioCodexApp, LumioOfficialAppInstall } from "../types.ts";
 import { RESTORE_CONFIRM_COPY } from "./RepairView.tsx";
 import type { ToastTone } from "./Toast.tsx";
 
@@ -58,6 +59,7 @@ function Toggle({
 interface SettingsViewProps {
   autoUpdateEnabled: boolean;
   codexApp: LumioCodexApp | null;
+  officialAppInstall: LumioOfficialAppInstall;
   signedIn: boolean;
   telemetryEnabled: boolean;
   onCodexAppChanged: (app: LumioCodexApp) => void;
@@ -68,6 +70,7 @@ interface SettingsViewProps {
 export function SettingsView({
   autoUpdateEnabled,
   codexApp,
+  officialAppInstall,
   signedIn,
   telemetryEnabled: _telemetryEnabled,
   onCodexAppChanged,
@@ -187,7 +190,9 @@ export function SettingsView({
           <div>
             <strong>{shellLabels.officialAppPath}</strong>
             <p className={`lumio-path-value${flashPath ? " is-flash" : ""}`}>
-              {(pickedApp ?? codexApp)?.path ?? "未自动检测到"}
+              {isOfficialAppInstallInProgress(officialAppInstall)
+                ? "正在安装官方应用…"
+                : ((pickedApp ?? codexApp)?.path ?? "未自动检测到")}
             </p>
             {detectFailed ? <p className="lumio-field-error">未检测到，可手动选择</p> : null}
             {selectErrorCode === null ? null : (

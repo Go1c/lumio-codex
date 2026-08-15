@@ -26,7 +26,7 @@ metadata:
 | 文档 | 一句话 |
 |------|--------|
 | [`features/_TEMPLATE.md`](features/_TEMPLATE.md) | 新功能文档模板——新增功能记录时照此建,放对 领域 / 模块 |
-| [`features/lumio-account-and-home.md`](features/lumio-account-and-home.md) | Lumio 桌面账户与首页：注册/登录/2FA、provisioning、在线离线首页、修复与设置——改账户壳或启动编排时查 |
+| [`features/lumio-account-and-home.md`](features/lumio-account-and-home.md) | Lumio 桌面账户与首页：注册/登录/2FA、provisioning、在线离线首页、修复与设置、本机缺失时首次安装官方桌面应用——改账户壳或启动编排时查 |
 | [`features/lumio-unified-portal-and-identity.md`](features/lumio-unified-portal-and-identity.md) | 统一门户与统一身份：三站分工、Sub2API 唯一账号源、跨子域会话、控制面令牌校验、充值落点——改账号面或站点时查 |
 
 ## lessons(经验教训 · 复发问题暂存区)

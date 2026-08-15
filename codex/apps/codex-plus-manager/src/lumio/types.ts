@@ -19,6 +19,28 @@ export interface LumioCodexApp {
   source: "automatic" | "manual";
 }
 
+export const LUMIO_OFFICIAL_APP_INSTALL_PHASES = [
+  "idle",
+  "planning",
+  "downloading",
+  "verifying",
+  "installing",
+  "detecting",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+
+export type LumioOfficialAppInstallPhase = (typeof LUMIO_OFFICIAL_APP_INSTALL_PHASES)[number];
+
+/** Ready-home install progress. Not a LumioPhase — the shell stays on ready-online/offline. */
+export interface LumioOfficialAppInstall {
+  phase: LumioOfficialAppInstallPhase;
+  stage: string | null;
+  errorCode: string | null;
+  path?: string | null;
+}
+
 export type LumioCredentialStatus = "present" | "missing" | "invalid";
 
 export interface LumioBootstrap {

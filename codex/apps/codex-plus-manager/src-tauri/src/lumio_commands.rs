@@ -11,6 +11,7 @@ use codex_plus_core::lumio::api::{AccountProfile, AuthOutcome, LumioApiClient, R
 use codex_plus_core::lumio::config_takeover::{self, TakeoverHealth, TakeoverRequest};
 use codex_plus_core::lumio::credentials::{CredentialStatus, CredentialStore};
 use codex_plus_core::lumio::errors::redact;
+use codex_plus_core::lumio::official_app_install;
 use codex_plus_core::lumio::session::AuthSession;
 use codex_plus_core::lumio::{launch, product};
 use serde::Serialize;
@@ -165,6 +166,19 @@ pub struct LumioExportLogsPayload {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LumioEmptyPayload {}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioOfficialAppInstallPayload {
+    pub phase: String,
+    pub stage: Option<String>,
+    pub bytes_downloaded: Option<u64>,
+    pub bytes_total: Option<u64>,
+    pub error_code: Option<String>,
+    pub installed_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started: Option<bool>,
+}
 
 /// 进程内会话。令牌与桌面 Key 都由 [`AuthSession`] 持有，不进 payload、不进日志。
 pub struct LumioSession {
@@ -622,6 +636,58 @@ pub fn lumio_export_logs(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioExportLogsPayload>, ()> {
     result(export_logs(&session).map(|path| LumioExportLogsPayload { path }))
+}
+
+#[tauri::command]
+pub async fn lumio_install_official_app(
+    session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioOfficialAppInstallPayload>, ()> {
+    let session_app = lock(&session.codex_app).clone();
+    if let Some(path) = session_app.as_ref() {
+        if official_app_install::manual_path_still_valid(path) {
+            official_app_install::note_already_installed(path.clone());
+            return result(Ok(official_app_status_payload(Some(false))));
+        }
+    }
+    if let Some(path) = official_app_install::detect_existing_app(session_app.as_deref()) {
+        official_app_install::note_already_installed(path);
+        return result(Ok(official_app_status_payload(Some(false))));
+    }
+
+    match official_app_install::begin_background_install(session_app) {
+        Ok(()) => result(Ok(official_app_status_payload(Some(true)))),
+        Err(code) => result(Err(code)),
+    }
+}
+
+#[tauri::command]
+pub fn lumio_official_app_status(
+    _session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioOfficialAppInstallPayload>, ()> {
+    result(Ok(official_app_status_payload(None)))
+}
+
+#[tauri::command]
+pub fn lumio_cancel_official_app(
+    _session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioOfficialAppInstallPayload>, ()> {
+    official_app_install::request_cancel();
+    result(Ok(official_app_status_payload(None)))
+}
+
+fn official_app_status_payload(started: Option<bool>) -> LumioOfficialAppInstallPayload {
+    let status = official_app_install::current_status();
+    LumioOfficialAppInstallPayload {
+        phase: official_app_install::phase_kebab(status.phase).to_string(),
+        stage: status.stage.map(str::to_string),
+        bytes_downloaded: status.bytes_downloaded,
+        bytes_total: status.bytes_total,
+        error_code: status.error_code,
+        installed_path: status
+            .installed_path
+            .map(|path| path.to_string_lossy().into_owned()),
+        started,
+    }
 }
 
 fn export_logs(session: &LumioSession) -> Result<String, String> {

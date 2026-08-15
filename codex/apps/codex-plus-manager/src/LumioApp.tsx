@@ -21,6 +21,7 @@ import type {
   LumioAccountSummary,
   LumioBootstrap,
   LumioCodexApp,
+  LumioOfficialAppInstall,
   LumioPhase,
   LumioUpdateReminder,
 } from "./lumio/types.ts";
@@ -259,6 +260,9 @@ export function LumioApp() {
     // 这是用户唯一的补救入口，不能再按「仅在线」守卫丢弃。
     dispatch({ type: "codex-app-changed", app });
   }, []);
+  const onInstallProgress = useCallback((status: LumioOfficialAppInstall) => {
+    dispatch({ type: "official-app-install-progress", status });
+  }, []);
 
   const online = state.phase === "ready-online";
   const offline = state.phase === "ready-offline";
@@ -328,6 +332,7 @@ export function LumioApp() {
           <SettingsView
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
+            officialAppInstall={state.officialAppInstall}
             onCodexAppChanged={onCodexAppChanged}
             onSignOut={onSignOutRequested}
             pushToast={pushToast}
@@ -387,7 +392,9 @@ export function LumioApp() {
           </section>
         ) : (
           <HomeView
+            onCodexAppChanged={onCodexAppChanged}
             onDismissUpdate={() => setUpdateDismissed(true)}
+            onInstallProgress={onInstallProgress}
             onOpenSettings={openSettings}
             onReconnected={onReconnected}
             onRefreshed={onRefreshed}

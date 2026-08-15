@@ -2,6 +2,7 @@ import type {
   LumioAccountSummary,
   LumioBootstrap,
   LumioCodexApp,
+  LumioOfficialAppInstall,
   LumioPhase,
   LumioServiceSettings,
 } from "./types.ts";
@@ -63,6 +64,7 @@ export interface LumioState {
   authStep: LumioAuthStep;
   account: LumioAccountSummary | null;
   codexApp: LumioCodexApp | null;
+  officialAppInstall: LumioOfficialAppInstall;
   defaultModel: string | null;
   provisioning: LumioProvisioning;
   telemetryEnabled: boolean;
@@ -95,13 +97,14 @@ export type LumioEvent =
   // 设置页手动选择了官方应用：任何阶段都接受——离线/登出下自动检测失败时，
   // 这是用户唯一的补救路径（QA D-3），不能再被「仅在线」的守卫丢弃。
   | { type: "codex-app-changed"; app: LumioCodexApp }
+  | { type: "official-app-install-progress"; status: LumioOfficialAppInstall }
   | { type: "account-refreshed"; account: LumioAccountSummary; cachedAt: string }
   | { type: "repair-required"; errorCode: string }
   | { type: "session-expired"; errorCode: string }
   | { type: "signed-out" };
 
 const OFFLINE_NOTE = "需要恢复网络连接";
-const NO_APP_NOTE = "未检测到官方应用，去设置中选择";
+const OFFLINE_NO_APP_NOTE = "安装官方应用需要网络";
 const SERVICE_DOWN_NOTE = "服务暂时不可用，稍后自动重试";
 const REGISTRATION_CLOSED_NOTE = "注册暂未开放";
 const MAX_PROVISIONING_ATTEMPTS = 2;
@@ -154,6 +157,43 @@ function withoutCachedAccount(bootstrap: LumioBootstrap | null): LumioBootstrap 
   return bootstrap === null ? null : { ...bootstrap, account: null };
 }
 
+export function idleOfficialAppInstall(): LumioOfficialAppInstall {
+  return { phase: "idle", stage: null, errorCode: null };
+}
+
+export function isOfficialAppInstallInProgress(install: LumioOfficialAppInstall): boolean {
+  return (
+    install.phase === "planning" ||
+    install.phase === "downloading" ||
+    install.phase === "verifying" ||
+    install.phase === "installing" ||
+    install.phase === "detecting"
+  );
+}
+
+function readyLaunch(
+  phase: LumioPhase,
+  codexApp: LumioCodexApp | null,
+  install: LumioOfficialAppInstall,
+): { canLaunch: boolean; launchNote: string | null } {
+  if (isOfficialAppInstallInProgress(install)) {
+    return {
+      canLaunch: false,
+      launchNote: phase === "ready-offline" && codexApp === null ? OFFLINE_NO_APP_NOTE : null,
+    };
+  }
+  if (phase === "ready-online") {
+    return { canLaunch: true, launchNote: null };
+  }
+  if (phase === "ready-offline") {
+    return {
+      canLaunch: codexApp !== null,
+      launchNote: codexApp === null ? OFFLINE_NO_APP_NOTE : null,
+    };
+  }
+  return { canLaunch: false, launchNote: null };
+}
+
 function pendingProvisioning(): LumioProvisioning {
   return {
     steps: {
@@ -178,6 +218,7 @@ export function initialLumioState(): LumioState {
     authStep: "idle",
     account: null,
     codexApp: null,
+    officialAppInstall: idleOfficialAppInstall(),
     defaultModel: null,
     provisioning: pendingProvisioning(),
     telemetryEnabled: false,
@@ -317,7 +358,8 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
       };
     }
 
-    case "online-ready":
+    case "online-ready": {
+      const launch = readyLaunch("ready-online", event.codexApp, state.officialAppInstall);
       return {
         ...state,
         phase: "ready-online",
@@ -329,19 +371,21 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         errorCode: null,
         actions: {
           ...state.actions,
-          canLaunch: event.codexApp !== null,
+          canLaunch: launch.canLaunch,
           canRefresh: true,
           canPay: true,
         },
         actionNotes: {
           ...state.actionNotes,
-          launch: event.codexApp === null ? NO_APP_NOTE : null,
+          launch: launch.launchNote,
           refresh: null,
           pay: null,
         },
       };
+    }
 
-    case "offline-ready":
+    case "offline-ready": {
+      const launch = readyLaunch("ready-offline", state.codexApp, state.officialAppInstall);
       return {
         ...state,
         phase: "ready-offline",
@@ -349,32 +393,53 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         serviceAvailable: false,
         actions: {
           ...state.actions,
-          canLaunch: state.codexApp !== null,
+          canLaunch: launch.canLaunch,
           canRefresh: false,
           canPay: false,
         },
         actionNotes: {
           ...state.actionNotes,
-          launch: state.codexApp === null ? NO_APP_NOTE : null,
+          launch: launch.launchNote,
           refresh: OFFLINE_NOTE,
           pay: OFFLINE_NOTE,
         },
       };
+    }
 
     case "account-refreshed":
       return { ...state, account: event.account, cachedAt: event.cachedAt };
 
     case "codex-app-changed": {
+      const officialAppInstall = isOfficialAppInstallInProgress(state.officialAppInstall)
+        ? { phase: "succeeded" as const, stage: null, errorCode: null, path: event.app.path }
+        : state.officialAppInstall;
       const ready = state.phase === "ready-online" || state.phase === "ready-offline";
       if (!ready) {
         // 非就绪阶段只记住选择：offline-ready/online-ready 派发时会消费它。
-        return { ...state, codexApp: event.app };
+        return { ...state, codexApp: event.app, officialAppInstall };
       }
+      const launch = readyLaunch(state.phase, event.app, officialAppInstall);
       return {
         ...state,
         codexApp: event.app,
-        actions: { ...state.actions, canLaunch: true },
-        actionNotes: { ...state.actionNotes, launch: null },
+        officialAppInstall,
+        actions: { ...state.actions, canLaunch: launch.canLaunch },
+        actionNotes: { ...state.actionNotes, launch: launch.launchNote },
+      };
+    }
+
+    case "official-app-install-progress": {
+      const officialAppInstall = event.status;
+      const ready = state.phase === "ready-online" || state.phase === "ready-offline";
+      if (!ready) {
+        return { ...state, officialAppInstall };
+      }
+      const launch = readyLaunch(state.phase, state.codexApp, officialAppInstall);
+      return {
+        ...state,
+        officialAppInstall,
+        actions: { ...state.actions, canLaunch: launch.canLaunch },
+        actionNotes: { ...state.actionNotes, launch: launch.launchNote },
       };
     }
 

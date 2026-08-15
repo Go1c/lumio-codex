@@ -24,6 +24,9 @@ test("the shell binds exactly the lumio command surface", () => {
     checkUpdate: "lumio_check_update",
     setTelemetry: "lumio_set_telemetry",
     exportLogs: "lumio_export_logs",
+    installOfficialApp: "lumio_install_official_app",
+    officialAppStatus: "lumio_official_app_status",
+    cancelOfficialApp: "lumio_cancel_official_app",
   });
 });
 
@@ -263,6 +266,15 @@ test("provisioning feeds the verified account back into the state machine", asyn
   assert.match(view, /if \(result\.account\)/);
   assert.doesNotMatch(view, /result\.account !== null/);
   assert.match(shell, /if \(!current\.account\)/);
+});
+
+test("the home surface can install the official app instead of sending users to settings", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(home, /安装并启动官方 Codex/);
+  assert.match(home, /正在安装官方 Codex/);
+  assert.match(home, /安装官方应用需要网络/);
+  assert.doesNotMatch(home, /侧载|MSIX|FE3|Sparkle|镜像站/i);
 });
 
 test("the home view explains every disabled action instead of hiding it", async () => {

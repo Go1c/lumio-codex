@@ -21,6 +21,9 @@ test("interaction spec baseline codes map to their exact copy", () => {
   assert.equal(LUMIO_ERROR_COPY.CODEX_CONFIG_CONFLICT, "检测到本机配置被其他工具修改过");
   assert.equal(LUMIO_ERROR_COPY.CODEX_RESTORE_FAILED, "恢复未完成，已保留原始快照");
   assert.equal(LUMIO_ERROR_COPY.CODEX_LAUNCH_FAILED, "启动官方 Codex 失败");
+  assert.equal(LUMIO_ERROR_COPY.CODEX_APP_INSTALL_FAILED, "安装官方应用失败，可重试");
+  assert.equal(LUMIO_ERROR_COPY.CODEX_APP_DOWNLOAD_FAILED, "下载官方应用失败，请检查网络后重试");
+  assert.equal(LUMIO_ERROR_COPY.CODEX_APP_VERIFY_FAILED, "官方应用校验未通过，已放弃安装");
   assert.equal(LUMIO_ERROR_COPY.PAYMENT_HANDOFF_CREATE_FAILED, "暂时无法发起充值");
   assert.equal(LUMIO_ERROR_COPY.PAYMENT_HANDOFF_EXPIRED, "支付链接已过期，请重新打开");
   assert.equal(LUMIO_ERROR_COPY.UPDATE_VERIFY_FAILED, "更新包校验未通过，已放弃安装");
@@ -89,5 +92,18 @@ test("copy never leaks forbidden product surfaces", () => {
   const copy = Object.values(LUMIO_ERROR_COPY).join(" ").toLowerCase();
   for (const forbidden of ["provider", "base url", "api key", "stepwise", "mcp", "plugin", "dream skin"]) {
     assert.equal(copy.includes(forbidden), false, `forbidden term in error copy: ${forbidden}`);
+  }
+});
+
+test("official app install copy never names the install machinery", () => {
+  const copy = [
+    LUMIO_ERROR_COPY.CODEX_APP_INSTALL_FAILED,
+    LUMIO_ERROR_COPY.CODEX_APP_DOWNLOAD_FAILED,
+    LUMIO_ERROR_COPY.CODEX_APP_VERIFY_FAILED,
+  ]
+    .join(" ")
+    .toLowerCase();
+  for (const forbidden of ["msix", "fe3", "sparkle", "侧载", "镜像"]) {
+    assert.equal(copy.includes(forbidden), false, `forbidden term in official-app copy: ${forbidden}`);
   }
 });

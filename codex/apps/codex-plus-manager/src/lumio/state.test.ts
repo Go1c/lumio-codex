@@ -402,7 +402,7 @@ test("online readiness enables launch, refresh, and payment", () => {
   assert.equal(next.defaultModel, "gpt-example");
 });
 
-test("online readiness without a detected app disables launch and explains why", () => {
+test("online readiness without a detected app enables install-and-launch", () => {
   const next = reduceLumioState(signedOut(), {
     type: "online-ready",
     account: { email: "user@example.com", balance: 1, planLabel: null },
@@ -410,9 +410,8 @@ test("online readiness without a detected app disables launch and explains why",
     defaultModel: "gpt-example",
     codexApp: null,
   });
-
-  assert.equal(next.actions.canLaunch, false);
-  assert.equal(next.actionNotes.launch, "未检测到官方应用，去设置中选择");
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actionNotes.launch, null);
 });
 
 test("offline readiness keeps launch but blocks refresh and payment", () => {
@@ -429,16 +428,13 @@ test("offline readiness keeps launch but blocks refresh and payment", () => {
   assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
 });
 
-test("offline readiness without a detected app disables launch and explains why", () => {
+test("offline readiness without a detected app cannot install", () => {
   const next = reduceLumioState(signedOut(), {
     type: "offline-ready",
     cachedAt: "2026-08-12T00:00:00Z",
   });
-
-  assert.equal(next.phase, "ready-offline");
   assert.equal(next.actions.canLaunch, false);
-  assert.equal(next.actionNotes.launch, "未检测到官方应用，去设置中选择");
-  assert.equal(next.actionNotes.refresh, "需要恢复网络连接");
+  assert.equal(next.actionNotes.launch, "安装官方应用需要网络");
 });
 
 test("offline readiness entered at startup carries no invented sync time", () => {
@@ -655,7 +651,7 @@ test("manually picking the app while offline re-enables the launch button", () =
     cachedAt: "2026-08-12T00:00:00Z",
   });
   assert.equal(offline.actions.canLaunch, false);
-  assert.equal(offline.actionNotes.launch, "未检测到官方应用，去设置中选择");
+  assert.equal(offline.actionNotes.launch, "安装官方应用需要网络");
 
   const next = reduceLumioState(offline, { type: "codex-app-changed", app: detectedApp() });
 
@@ -676,6 +672,46 @@ test("manually picking the app while signed out is remembered for the offline ho
   const offline = reduceLumioState(picked, { type: "offline-ready", cachedAt: null });
   assert.equal(offline.actions.canLaunch, true);
   assert.equal(offline.actionNotes.launch, null);
+});
+
+function readyOnlineWithoutApp(): LumioState {
+  return reduceLumioState(signedOut(), {
+    type: "online-ready",
+    account: { email: "user@example.com", balance: 1, planLabel: null },
+    cachedAt: "2026-08-12T00:00:00Z",
+    defaultModel: "gpt-example",
+    codexApp: null,
+  });
+}
+
+test("install progress stays on the ready home and disables a second click", () => {
+  const online = readyOnlineWithoutApp();
+  const next = reduceLumioState(online, {
+    type: "official-app-install-progress",
+    status: { phase: "downloading", stage: "download", errorCode: null, path: null },
+  });
+  assert.equal(next.phase, "ready-online");
+  assert.equal(next.account?.email, "user@example.com");
+  assert.equal(next.officialAppInstall.phase, "downloading");
+  assert.equal(next.actions.canLaunch, false); // 安装中禁止重复点
+});
+
+test("successful install restores launch and canLaunch", () => {
+  const installing = reduceLumioState(readyOnlineWithoutApp(), {
+    type: "official-app-install-progress",
+    status: { phase: "downloading", stage: "download", errorCode: null, path: null },
+  });
+  const next = reduceLumioState(installing, {
+    type: "codex-app-changed",
+    app: detectedApp(),
+  });
+  assert.equal(next.actions.canLaunch, true);
+  assert.equal(next.actionNotes.launch, null);
+});
+
+test("offline with an app can still launch", () => {
+  const next = reduceLumioState(signedOutWithApp(), { type: "offline-ready", cachedAt: null });
+  assert.equal(next.actions.canLaunch, true);
 });
 
 test("manually picking the app while online keeps the ready home consistent", () => {

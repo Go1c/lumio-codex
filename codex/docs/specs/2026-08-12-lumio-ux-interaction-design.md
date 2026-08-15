@@ -244,7 +244,10 @@ flowchart LR
 | `SERVICE_UNAVAILABLE` | 服务暂时不可用，稍后自动重试 | 未登录首页 / 首页信息条 |
 | `SERVICE_RATE_LIMITED` | 请求过于频繁，请稍后再试 | 全局 toast；退避后重试 |
 | `SERVICE_VERSION_TOO_OLD` | 当前版本过旧，请更新后继续 | 全局阻断条 + 更新入口（已登录可离线启动） |
-| `CODEX_APP_NOT_FOUND` | 未检测到官方应用 | 首页行动面板 / 设置 |
+| `CODEX_APP_NOT_FOUND` | 未检测到官方应用 | 检测结果 / 设置；首页不再把它当死胡同 |
+| `CODEX_APP_INSTALL_FAILED` | 安装官方应用失败，可重试 | 首页安装进度 / 重试 |
+| `CODEX_APP_DOWNLOAD_FAILED` | 下载官方应用失败，请检查网络后重试 | 首页安装进度 / 检查网络后重试 |
+| `CODEX_APP_VERIFY_FAILED` | 官方应用校验未通过，已放弃安装 | 首页安装进度 / 放弃并保留未安装 |
 | `CODEX_APP_INVALID` | 所选应用无法识别为官方 Codex | 设置手动选择 |
 | `CODEX_CONFIG_CONFLICT` | 检测到本机配置被其他工具修改过 | 修复页 |
 | `CODEX_CONFIG_WRITE_FAILED` | 写入本机配置失败，已保留原始内容 | 修复页 / provisioning 第 3 步失败态 |

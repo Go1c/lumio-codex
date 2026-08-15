@@ -1,0 +1,587 @@
+use std::path::{Path, PathBuf};
+
+mod download;
+mod macos;
+mod plan;
+mod progress;
+mod sources;
+mod verify;
+mod windows;
+mod windows_store;
+
+pub use download::{DownloadProgress, download_to_cache, redact_url};
+pub use macos::{
+    choose_macos_dest, install_macos_from_dmg, interpret_codesign_output, user_applications,
+    verify_macos_team_id,
+};
+pub use plan::plan_official_app;
+pub use progress::{current_status, phase_kebab, request_cancel};
+pub use sources::{
+    MIRROR_CHECKSUMS_URL, MIRROR_MAC_ARM64, MIRROR_MAC_X64, MIRROR_MANIFEST_URL, MIRROR_WIN_ARM64,
+    MIRROR_WIN_X64, MirrorPayload, OFFICIAL_MAC_ARM64, OFFICIAL_MAC_X64, OPENAI_MAC_TEAM_ID,
+    OPENAI_MARKETPLACE_SUBJECT, PORTABLE_REL, STORE_PRODUCT_ID, parse_mirror_manifest,
+    planned_sources,
+};
+pub use verify::verify_sha256;
+pub use windows::{
+    CapabilityCheck, WinCapabilityReport, authenticode_pin_ok, install_windows_portable,
+    install_windows_sideload, parse_appx_application_executable, probe_windows_sideload,
+    probe_windows_sideload_with, verify_windows_authenticode,
+};
+pub use windows_store::resolve_store_msix_url;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallPhase {
+    Idle,
+    Planning,
+    Downloading,
+    Verifying,
+    Installing,
+    Detecting,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallStatus {
+    pub phase: InstallPhase,
+    /// 仅内部/测试用：download / verify / install。前端映射成人话，不直接上屏内部词。
+    pub stage: Option<&'static str>,
+    pub bytes_downloaded: Option<u64>,
+    pub bytes_total: Option<u64>,
+    pub error_code: Option<String>,
+    pub installed_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostPlatform {
+    Windows,
+    Macos,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostArch {
+    X64,
+    Arm64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallRoute {
+    WindowsSideload,
+    WindowsPortable,
+    MacosCopyApp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Mirror,
+    Official,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageSource {
+    pub kind: SourceKind,
+    pub url: String,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InstallDecision {
+    AlreadyInstalled {
+        path: PathBuf,
+    },
+    NeedsNetwork,
+    Ready {
+        platform: HostPlatform,
+        arch: HostArch,
+        route: InstallRoute,
+        sources: Vec<PackageSource>,
+    },
+}
+
+pub struct PlanInput<'a> {
+    pub platform: HostPlatform,
+    pub arch: HostArch,
+    pub detected_app: Option<&'a Path>,
+    pub online: bool,
+    pub windows_sideload_ok: Option<bool>,
+}
+
+const DOWNLOAD_FAILED: &str = "CODEX_APP_DOWNLOAD_FAILED";
+const VERIFY_FAILED: &str = "CODEX_APP_VERIFY_FAILED";
+const INSTALL_FAILED: &str = "CODEX_APP_INSTALL_FAILED";
+
+pub struct OfficialAppInstallRequest<'a> {
+    pub plan: PlanInput<'a>,
+    pub detect: &'a dyn Fn() -> Option<PathBuf>,
+    pub download: &'a mut dyn FnMut(&PackageSource) -> Result<PathBuf, String>,
+    pub verify: &'a dyn Fn(&Path, &PackageSource) -> Result<(), String>,
+    pub install: &'a mut dyn FnMut(&Path, InstallRoute) -> Result<PathBuf, String>,
+    pub write_config: &'a mut dyn FnMut(),
+}
+
+/// Injectable install pipeline. Production [`start_official_app_install`] wires the live adapters.
+pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Result<PathBuf, String> {
+    progress::set_planning();
+    if cancelled_download() {
+        return Err(DOWNLOAD_FAILED.to_string());
+    }
+
+    let from_detect = (request.detect)();
+    let from_plan = request.plan.detected_app.map(Path::to_path_buf);
+    let detected = from_detect.or(from_plan);
+    let plan = PlanInput {
+        platform: request.plan.platform,
+        arch: request.plan.arch,
+        detected_app: detected.as_deref(),
+        online: request.plan.online,
+        windows_sideload_ok: request.plan.windows_sideload_ok,
+    };
+
+    match plan_official_app(plan)? {
+        InstallDecision::AlreadyInstalled { path } => {
+            progress::set_succeeded(path.clone());
+            Ok(path)
+        }
+        InstallDecision::NeedsNetwork => fail_download(),
+        InstallDecision::Ready { route, sources, .. } => {
+            if cancelled_download() {
+                return Err(DOWNLOAD_FAILED.to_string());
+            }
+            progress::set_phase(InstallPhase::Downloading, Some("download"));
+            let mut last_error = DOWNLOAD_FAILED.to_string();
+            for source in &sources {
+                if cancelled_download() {
+                    return Err(DOWNLOAD_FAILED.to_string());
+                }
+                match (request.download)(source) {
+                    Ok(package) => {
+                        progress::set_phase(InstallPhase::Verifying, Some("verify"));
+                        if let Err(err) = (request.verify)(&package, source) {
+                            if err == VERIFY_FAILED || cancelled_download() {
+                                return fail_with(err);
+                            }
+                            last_error = err;
+                            continue;
+                        }
+                        if cancelled_download() {
+                            return Err(DOWNLOAD_FAILED.to_string());
+                        }
+                        progress::set_phase(InstallPhase::Installing, Some("install"));
+                        match (request.install)(&package, route) {
+                            Ok(installed) => {
+                                progress::set_phase(InstallPhase::Detecting, Some("detect"));
+                                let path = (request.detect)().unwrap_or(installed);
+                                (request.write_config)();
+                                progress::set_succeeded(path.clone());
+                                return Ok(path);
+                            }
+                            Err(err) => return fail_with(err),
+                        }
+                    }
+                    Err(err) if err == VERIFY_FAILED => return fail_with(err),
+                    Err(err) => {
+                        if cancelled_download() {
+                            return Err(err);
+                        }
+                        last_error = err;
+                    }
+                }
+            }
+            if cancelled_download() {
+                return Err(last_error);
+            }
+            fail_with(last_error)
+        }
+    }
+}
+
+pub async fn start_official_app_install() -> Result<PathBuf, String> {
+    start_official_app_install_with(None).await
+}
+
+pub async fn start_official_app_install_with(
+    session_app: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let detected = detect_existing_app(session_app.as_deref());
+    let platform = current_host_platform()?;
+    let arch = current_host_arch();
+    let windows_sideload_ok = match platform {
+        HostPlatform::Windows => Some(probe_windows_sideload()),
+        HostPlatform::Macos => None,
+    };
+    if let Some(path) = detected.clone() {
+        progress::set_succeeded(path.clone());
+        return Ok(path);
+    }
+
+    let cache = crate::lumio::product::cache_dir().ok_or_else(|| DOWNLOAD_FAILED.to_string())?;
+    std::fs::create_dir_all(&cache).map_err(|_| DOWNLOAD_FAILED.to_string())?;
+    std::fs::create_dir_all(cache.join("official-app")).map_err(|_| DOWNLOAD_FAILED.to_string())?;
+
+    let mirror_sha = fetch_mirror_sha256(platform, arch).await;
+    let session_for_detect = session_app.clone();
+
+    run_official_app_install(OfficialAppInstallRequest {
+        plan: PlanInput {
+            platform,
+            arch,
+            detected_app: detected.as_deref(),
+            online: true,
+            windows_sideload_ok,
+        },
+        detect: &|| detect_existing_app(session_for_detect.as_deref()),
+        download: &mut |source| live_download(source, arch, mirror_sha.as_deref(), &cache),
+        verify: &|path, source| live_verify(path, source, platform),
+        install: &mut |path, route| live_install(path, route),
+        write_config: &mut || {},
+    })
+}
+
+/// Start the install on the current Tokio runtime and return immediately.
+pub fn begin_background_install(session_app: Option<PathBuf>) -> Result<(), String> {
+    if !progress::try_begin_job() {
+        return Ok(());
+    }
+    progress::prepare_new_job();
+    progress::set_planning();
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        progress::end_job();
+        return Err(INSTALL_FAILED.to_string());
+    };
+    handle.spawn(async move {
+        struct JobGuard;
+        impl Drop for JobGuard {
+            fn drop(&mut self) {
+                progress::end_job();
+            }
+        }
+        let _guard = JobGuard;
+        let _ = start_official_app_install_with(session_app).await;
+    });
+    Ok(())
+}
+
+pub fn detect_existing_app(session_app: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = session_app {
+        if let Some(valid) = valid_manual_app(path) {
+            return Some(valid);
+        }
+    }
+    crate::app_paths::resolve_codex_app_dir(None)
+        .or_else(crate::app_paths::find_standalone_codex_app_dir)
+}
+
+pub fn manual_path_still_valid(path: &Path) -> bool {
+    valid_manual_app(path).is_some()
+}
+
+pub fn note_already_installed(path: PathBuf) {
+    progress::set_succeeded(path);
+}
+
+fn valid_manual_app(path: &Path) -> Option<PathBuf> {
+    let normalized = crate::app_paths::normalize_codex_app_path(path)?;
+    normalized.exists().then_some(normalized)
+}
+
+fn current_host_platform() -> Result<HostPlatform, String> {
+    match std::env::consts::OS {
+        "windows" => Ok(HostPlatform::Windows),
+        "macos" => Ok(HostPlatform::Macos),
+        _ => Err(INSTALL_FAILED.to_string()),
+    }
+}
+
+fn current_host_arch() -> HostArch {
+    match std::env::consts::ARCH {
+        "aarch64" => HostArch::Arm64,
+        _ => HostArch::X64,
+    }
+}
+
+fn live_download(
+    source: &PackageSource,
+    arch: HostArch,
+    mirror_sha: Option<&str>,
+    cache: &Path,
+) -> Result<PathBuf, String> {
+    let mut source = source.clone();
+    if source.kind == SourceKind::Mirror {
+        if let Some(sha) = mirror_sha {
+            source.sha256 = Some(sha.to_string());
+        }
+    }
+    if source.url.starts_with("store:") {
+        let resolved = resolve_official_store_url(arch)?;
+        if !resolved.starts_with("https://") {
+            return Err(DOWNLOAD_FAILED.to_string());
+        }
+        source.url = resolved;
+    } else if !source.url.starts_with("https://") {
+        return Err(DOWNLOAD_FAILED.to_string());
+    }
+
+    let cancel = progress::cancel_flag();
+    let mut on_progress = |progress_update: DownloadProgress| {
+        progress::update_status(|status| {
+            status.phase = InstallPhase::Downloading;
+            status.stage = Some("download");
+            status.bytes_downloaded = Some(progress_update.bytes_downloaded);
+            status.bytes_total = progress_update.bytes_total;
+        });
+    };
+
+    let handle = tokio::runtime::Handle::try_current().map_err(|_| DOWNLOAD_FAILED.to_string())?;
+    tokio::task::block_in_place(|| {
+        handle.block_on(download_to_cache(&source, cache, cancel, &mut on_progress))
+    })
+}
+
+fn resolve_official_store_url(arch: HostArch) -> Result<String, String> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| {
+            handle.block_on(async move {
+                tokio::task::spawn_blocking(move || resolve_store_msix_url(STORE_PRODUCT_ID, arch))
+                    .await
+                    .map_err(|_| DOWNLOAD_FAILED.to_string())?
+            })
+        }),
+        Err(_) => resolve_store_msix_url(STORE_PRODUCT_ID, arch),
+    }
+}
+
+fn live_verify(path: &Path, source: &PackageSource, platform: HostPlatform) -> Result<(), String> {
+    if let Some(expected) = source.sha256.as_deref() {
+        verify_sha256(path, expected)?;
+    }
+    match platform {
+        HostPlatform::Windows => verify_windows_authenticode(path),
+        // Team ID is enforced inside `install_macos_from_dmg`.
+        HostPlatform::Macos => Ok(()),
+    }
+}
+
+fn live_install(path: &Path, route: InstallRoute) -> Result<PathBuf, String> {
+    match route {
+        InstallRoute::WindowsSideload => install_windows_sideload(path),
+        InstallRoute::WindowsPortable => {
+            let dest = windows_portable_dest()?;
+            install_windows_portable(path, &dest)
+        }
+        InstallRoute::MacosCopyApp => install_macos_from_dmg(path),
+    }
+}
+
+fn windows_portable_dest() -> Result<PathBuf, String> {
+    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| INSTALL_FAILED.to_string())?;
+    Ok(PathBuf::from(local).join(PORTABLE_REL))
+}
+
+async fn fetch_mirror_sha256(platform: HostPlatform, arch: HostArch) -> Option<String> {
+    let manifest = fetch_https_text(MIRROR_MANIFEST_URL).await?;
+    let checksums = fetch_https_text(MIRROR_CHECKSUMS_URL).await;
+    parse_mirror_manifest(&manifest, platform, arch, checksums.as_deref())
+        .ok()
+        .and_then(|payload| payload.sha256)
+}
+
+async fn fetch_https_text(url: &str) -> Option<String> {
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(format!("LumioCodex/{}", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .ok()?;
+    let response = client.get(url).send().await.ok()?;
+    response.status().is_success().then_some(())?;
+    response.text().await.ok()
+}
+
+fn cancelled_download() -> bool {
+    if progress::cancel_requested() {
+        progress::set_cancelled();
+        true
+    } else {
+        false
+    }
+}
+
+fn fail_download() -> Result<PathBuf, String> {
+    fail_with(DOWNLOAD_FAILED.to_string())
+}
+
+fn fail_with(error: String) -> Result<PathBuf, String> {
+    if progress::cancel_requested() {
+        progress::set_cancelled();
+    } else {
+        progress::set_failed(&error);
+    }
+    Err(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::path::PathBuf;
+
+    fn ready_request(detected: Option<&Path>) -> PlanInput<'_> {
+        PlanInput {
+            platform: HostPlatform::Macos,
+            arch: HostArch::Arm64,
+            detected_app: detected,
+            online: true,
+            windows_sideload_ok: None,
+        }
+    }
+
+    #[test]
+    fn already_installed_skips_download() {
+        let _guard = progress::reset_status_for_tests();
+        let existing = PathBuf::from("/Applications/Codex.app");
+        let downloaded = Cell::new(false);
+        let installed = Cell::new(false);
+
+        let path = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| Some(existing.clone()),
+            download: &mut |_source| {
+                downloaded.set(true);
+                Ok(PathBuf::from("/tmp/pkg"))
+            },
+            verify: &|_path, _source| Ok(()),
+            install: &mut |_path, _route| {
+                installed.set(true);
+                Ok(PathBuf::from("/tmp/app"))
+            },
+            write_config: &mut || panic!("must not write config.toml"),
+        })
+        .expect("already-installed must succeed");
+
+        assert_eq!(path, existing);
+        assert!(
+            !downloaded.get(),
+            "must not download when an app is already present"
+        );
+        assert!(
+            !installed.get(),
+            "must not install when an app is already present"
+        );
+        assert_eq!(current_status().phase, InstallPhase::Succeeded);
+        assert_eq!(
+            current_status().installed_path.as_deref(),
+            Some(existing.as_path())
+        );
+    }
+
+    #[test]
+    fn verify_failure_does_not_call_install() {
+        let _guard = progress::reset_status_for_tests();
+        let installed = Cell::new(false);
+        let mut download_kinds = Vec::new();
+
+        let err = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |source| {
+                download_kinds.push(source.kind);
+                Ok(PathBuf::from("/tmp/pkg"))
+            },
+            verify: &|_path, _source| Err("CODEX_APP_VERIFY_FAILED".to_string()),
+            install: &mut |_path, _route| {
+                installed.set(true);
+                Ok(PathBuf::from("/tmp/app"))
+            },
+            write_config: &mut || panic!("must not write config.toml"),
+        })
+        .expect_err("verify failure must abort the pipeline");
+
+        assert_eq!(err, "CODEX_APP_VERIFY_FAILED");
+        assert!(!installed.get(), "verify failure must not call install");
+        assert_eq!(
+            download_kinds,
+            vec![SourceKind::Mirror],
+            "VERIFY_FAILED is not a network miss and must not try the next source"
+        );
+        assert_eq!(current_status().phase, InstallPhase::Failed);
+        assert_eq!(
+            current_status().error_code.as_deref(),
+            Some("CODEX_APP_VERIFY_FAILED")
+        );
+    }
+
+    #[test]
+    fn mirror_failure_falls_back_to_official() {
+        let _guard = progress::reset_status_for_tests();
+        let official_pkg = PathBuf::from("/tmp/official-pkg");
+        let mut download_kinds = Vec::new();
+        let installed_from = Cell::new(None);
+
+        let path = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |source| {
+                download_kinds.push(source.kind);
+                match source.kind {
+                    SourceKind::Mirror => Err("CODEX_APP_DOWNLOAD_FAILED".to_string()),
+                    SourceKind::Official => Ok(official_pkg.clone()),
+                }
+            },
+            verify: &|_path, _source| Ok(()),
+            install: &mut |path, _route| {
+                installed_from.set(Some(path.to_path_buf()));
+                Ok(PathBuf::from("/Applications/Codex.app"))
+            },
+            write_config: &mut || {},
+        })
+        .expect("official source must be tried after a mirror download miss");
+
+        assert_eq!(
+            download_kinds,
+            vec![SourceKind::Mirror, SourceKind::Official]
+        );
+        assert_eq!(
+            installed_from.take().as_deref(),
+            Some(official_pkg.as_path())
+        );
+        assert_eq!(path, PathBuf::from("/Applications/Codex.app"));
+    }
+
+    #[test]
+    fn cancel_or_half_failure_does_not_write_config_toml() {
+        let _guard = progress::reset_status_for_tests();
+        let home = tempfile::tempdir().unwrap();
+        let config = home.path().join("config.toml");
+        std::fs::write(&config, "model = \"keep-me\"\n").unwrap();
+        let wrote_config = Cell::new(false);
+
+        let err = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |_source| {
+                request_cancel();
+                Err("CODEX_APP_DOWNLOAD_FAILED".to_string())
+            },
+            verify: &|_path, _source| Ok(()),
+            install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
+            write_config: &mut || {
+                wrote_config.set(true);
+                std::fs::write(&config, "model = \"overwritten\"\n").unwrap();
+            },
+        })
+        .expect_err("cancel / half-failure must not succeed");
+
+        assert_eq!(err, "CODEX_APP_DOWNLOAD_FAILED");
+        assert!(!wrote_config.get(), "cancel must not write config.toml");
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            "model = \"keep-me\"\n"
+        );
+        assert_eq!(current_status().phase, InstallPhase::Cancelled);
+    }
+}
