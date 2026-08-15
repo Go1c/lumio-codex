@@ -18,11 +18,12 @@ metadata:
 
 ## 设计
 
-- **设计面**：状态机阶段见架构规格；错误码七域（`AUTH_` / `ACCOUNT_` / `KEY_` / `SERVICE_` / `CODEX_` / `PAYMENT_HANDOFF_` / `UPDATE_`）+ `UNKNOWN`；凭据本期落本机 owner-only 文件（ADR-0001），非系统钥匙串。
+- **设计面**：状态机阶段见架构规格；错误码八域（`AUTH_` / `ACCOUNT_` / `KEY_` / `SERVICE_` / `CODEX_` / `PAYMENT_HANDOFF_` / `PREFERENCE_` / `UPDATE_`）+ `UNKNOWN`（`PREFERENCE_` 随开机启动交付，D-16 时为七域）；凭据本期落本机 owner-only 文件（ADR-0001），非系统钥匙串。
   - 网关面（`/v1/*`，无管理 API 信封）错误体是 `{"code","message"}`：`api.rs` 的 `gateway_error_reason` 按 `code` → `reason` → `error.code` 解析后交给 `normalize_reason`；余额不足（`INSUFFICIENT_BALANCE`）归 `ACCOUNT_INSUFFICIENT_BALANCE`（用户可操作，禁止伪装成宕机），空模型目录归 `SERVICE_MODEL_CATALOG_EMPTY`（D-16）。
-- **交互面**：文案与页面结构以 UX 交互规格为准；恢复动作按整文件回滚诚实描述；支付 / 开机启动 / 自动更新 / 遥测本期禁用并附说明。首页主按钮：有应用为「启动 Codex」；无应用且在线为「安装并启动官方 Codex」；安装中为「正在安装官方 Codex…」加阶段（下载 / 校验 / 安装）；无应用且离线禁用并注明「安装官方应用需要网络」。设置里的重新检测 / 手动选择只留给装过但路径异常的人。
+- **交互面**：文案与页面结构以 UX 交互规格为准；恢复动作按整文件回滚诚实描述；支付 / 自动更新 / 遥测本期禁用并附说明（开机启动已交付，见下）。首页主按钮：有应用为「启动 Codex」；无应用且在线为「安装并启动官方 Codex」；安装中为「正在安装官方 Codex…」加阶段（下载 / 校验 / 安装），行动面板底部整行进度条（下载带百分比与已下载 / 总量，未知总量 / 校验 / 安装为往复动画，D-19）；失败 / 取消原因常驻行动面板（警示色 + 错误码，主按钮即重试，D-20），后台提前失败同样收敛为 failed 不许停在「正在安装」；无应用且离线禁用并注明「安装官方应用需要网络」。设置里的重新检测 / 手动选择只留给装过但路径异常的人。
 - **实现面**：
-  - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch / official_app_install）
+  - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch / official_app_install / autostart）
+  - 开机启动（壳自身，非官方 Codex）：`autostart.rs` 默认开启（opt-out）——bootstrap 时对从未表达偏好的用户注册一次，用户关闭后偏好落 `state_dir()/launch-at-login.json` 永不自动重开；macOS 写 `~/Library/LaunchAgents/games.lumio.codex.plist`（launchd 拉起），Windows 经 `reg.exe` 写 HKCU Run（参数走 `Command::args`，无 shell 解析）；cargo 直跑（非 .app bundle / target 目录）不支持并报 `PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED`；系统现状为权威上报，用户从系统设置移除不自动恢复；零新依赖
   - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI
   - Tauri：仅 `lumio_` 命令白名单（含 `lumio_install_official_app` / `lumio_official_app_status` / `lumio_cancel_official_app`）；秘密不跨 IPC
   - 前端：`codex/apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair；安装进度挂在 ready 首页，不新增全屏阶段
@@ -35,10 +36,10 @@ metadata:
 - 系统凭据库替换本地文件（需新依赖，另开 ADR）
 - 安全支付交接（一次性 handoff token）；当前为打开 `https://api.lumio.games/purchase`
 - 已知坑：`provision` 步骤 payload 若漏 `account`，前端 `undefined !== null` 会推进假账户并在首页读 `email` 黑屏；IPC 侧用 `normalizeOptionalAccount`，UI 用 truthy 守卫
-- 真实遥测上报、开机启动、签名后的自动安装更新
+- 真实遥测上报、签名后的自动安装更新
 - 登录后 provisioning 路径可再补一次接管冲突检查（启动有凭据路径已拦）
 - 官方应用镜像清单尚未经 Sub2API `GET /api/v1/desktop/config` 转发，源常量仍在客户端 `sources.rs`（ADR-0005）
-- 首次安装的下载链路缺陷已修（D-17：镜像 302 逐跳 https 跟随、FE3 微软投递域 http 放行、总超时放宽到 3600s）；Windows / macOS 真机验收（干净机下载、校验、安装并启动）仍未跑通
+- 首次安装的下载链路缺陷已修（D-17：镜像 302 逐跳 https 跟随、FE3 微软投递域 http 放行、总超时放宽到 3600s）；Windows 装后不自动打开已修（D-18：去掉已注册包列表的进程级缓存 + Windows 启动改走 `ApplicationActivationManager` 包激活，激活失败退回直拉 exe）、下载无进度反馈已修（D-19：前端透传 `bytesDownloaded/bytesTotal` 并渲染进度条）；Windows / macOS 真机验收（干净机下载、校验、安装并启动）仍未跑通，D-18/D-19 待真机复验
 
 ## 官网与更新提醒
 
