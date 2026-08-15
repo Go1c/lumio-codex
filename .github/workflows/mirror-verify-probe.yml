@@ -1,0 +1,49 @@
+name: Mirror payload verify probe
+
+# D-21：Windows 真机报告「官方校验未通过」，但用户机器不在手边时用
+# windows runner 复现取证。手动触发，跑完看 Probe matrix 步骤输出。
+# 关注两行：bare（无扩展名，旧行为的缓存文件名）与 msix（本修复后的缓存
+# 文件名）——如果 bare 失败而 msix 通过，即证实扩展名根因。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Download the mirror win-x64 payload
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tmp = $env:RUNNER_TEMP
+          Invoke-WebRequest -Uri 'https://codexapp.agentsmirror.com/latest/win-x64' -OutFile "$tmp\win-x64" -MaximumRetry 3
+          Copy-Item "$tmp\win-x64" "$tmp\win-x64.msix" -Force
+          Get-Item "$tmp\win-x64" | Select-Object Name,Length | Format-List
+
+      - name: Probe matrix (Get-AuthenticodeSignature)
+        shell: powershell
+        run: |
+          $tmp = $env:RUNNER_TEMP
+          foreach ($name in @('win-x64', 'win-x64.msix')) {
+            $sig = Get-AuthenticodeSignature -LiteralPath (Join-Path $tmp $name)
+            "PROBE name=$name status=$($sig.Status) message=$($sig.StatusMessage) signer=$($sig.SignerCertificate.Subject) issuer=$($sig.SignerCertificate.Issuer)"
+          }
+
+      - name: Probe the exact shipped precheck script
+        shell: powershell
+        run: |
+          # 与 crates 中 authenticode_report_from_powershell 逐字一致的脚本形态，
+          # 验证 Import-Module / JSON 输出链路本身是否可靠。
+          $ErrorActionPreference = 'Stop'
+          $securityModule = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+          Import-Module $securityModule -ErrorAction Stop
+          $sig = Get-AuthenticodeSignature -LiteralPath (Join-Path $env:RUNNER_TEMP 'win-x64.msix')
+          @{
+            status = [string]$sig.Status
+            subject = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Subject } else { '' }
+            issuer = if ($sig.SignerCertificate) { [string]$sig.SignerCertificate.Issuer } else { '' }
+          } | ConvertTo-Json -Compress
