@@ -3066,7 +3066,10 @@ pub async fn activate_packaged_app(
 }
 
 #[cfg(windows)]
-fn activate_packaged_app_blocking(app_user_model_id: &str, arguments: &str) -> anyhow::Result<u32> {
+pub fn activate_packaged_app_blocking(
+    app_user_model_id: &str,
+    arguments: &str,
+) -> anyhow::Result<u32> {
     use windows::Win32::System::Com::{
         CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
         CoUninitialize,

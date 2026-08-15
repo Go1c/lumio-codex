@@ -105,13 +105,9 @@ fn find_latest_codex_app_dir_from_appx_package() -> Option<PathBuf> {
 
 #[cfg(windows)]
 pub(crate) fn registered_windows_packages() -> anyhow::Result<Vec<RegisteredWindowsPackage>> {
-    use std::sync::OnceLock;
-
-    static PACKAGES: OnceLock<Result<Vec<RegisteredWindowsPackage>, String>> = OnceLock::new();
-    PACKAGES
-        .get_or_init(|| query_registered_windows_packages().map_err(|error| error.to_string()))
-        .clone()
-        .map_err(anyhow::Error::msg)
+    // 故意不缓存：首次安装完成后必须立刻看到新注册的包（D-18）。这两个 Win32
+    // 调用是进程内注册表查询，代价微秒级，调用点（bootstrap/启动/检测）都不是热路径。
+    query_registered_windows_packages()
 }
 
 #[cfg(windows)]

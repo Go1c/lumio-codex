@@ -4,12 +4,30 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-#[cfg(not(target_os = "macos"))]
-use crate::app_paths::build_codex_executable;
-use crate::app_paths::normalize_codex_app_path;
+use crate::app_paths::{build_codex_executable, normalize_codex_app_path};
 
 const APP_INVALID: &str = "CODEX_APP_INVALID";
 const LAUNCH_FAILED: &str = "CODEX_LAUNCH_FAILED";
+
+/// Windows 启动策略。MSIX 注册包必须走系统应用激活（带 AUMID、带包身份，
+/// 标准用户直接 CreateProcess 进 WindowsApps 会被 ACL 拒）；便携解压目录没有
+/// 包身份，只能直接拉可执行文件。纯路径推导，跨平台可测。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowsLaunch {
+    Packaged { app_user_model_id: String },
+    Executable { executable: PathBuf },
+}
+
+pub fn windows_launch_plan(app_dir: &Path) -> Result<WindowsLaunch, String> {
+    if let Some(app_user_model_id) = crate::app_paths::packaged_app_user_model_id(app_dir) {
+        return Ok(WindowsLaunch::Packaged { app_user_model_id });
+    }
+    let executable = build_codex_executable(app_dir);
+    if !executable.is_file() {
+        return Err(APP_INVALID.to_string());
+    }
+    Ok(WindowsLaunch::Executable { executable })
+}
 
 pub fn build_launch_command(app_dir: &Path) -> Result<(String, Vec<String>), String> {
     #[cfg(target_os = "macos")]
@@ -31,6 +49,36 @@ pub fn build_launch_command(app_dir: &Path) -> Result<(String, Vec<String>), Str
 }
 
 pub fn launch_official_codex(app_dir: &Path) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        launch_windows(app_dir)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let (program, args) = build_launch_command(app_dir)?;
+        spawn_detached(&program, &args)
+    }
+}
+
+#[cfg(windows)]
+fn launch_windows(app_dir: &Path) -> Result<(), String> {
+    match windows_launch_plan(app_dir)? {
+        WindowsLaunch::Packaged { app_user_model_id } => {
+            match crate::launcher::activate_packaged_app_blocking(&app_user_model_id, "") {
+                Ok(_) => Ok(()),
+                // 激活失败（包损坏/策略收紧）不把用户堵死：exe 还在就退回直接拉起。
+                Err(_) => launch_exe(app_dir),
+            }
+        }
+        WindowsLaunch::Executable { executable } => {
+            spawn_detached(&executable.to_string_lossy(), &[])
+        }
+    }
+}
+
+#[cfg(windows)]
+fn launch_exe(app_dir: &Path) -> Result<(), String> {
     let (program, args) = build_launch_command(app_dir)?;
     spawn_detached(&program, &args)
 }
@@ -100,6 +148,51 @@ fn spawn_detached(program: &str, args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D-18：WindowsApps 里注册的 MSIX 包不能靠直接 CreateProcess 拉起（标准用户
+    /// 常被 ACL 拒），必须走带 AUMID 的应用激活。便携解压目录没有包身份，仍直接
+    /// 拉可执行文件。
+    #[test]
+    fn windows_store_package_dirs_launch_through_activation() {
+        let app_dir = std::path::Path::new(
+            r"C:\Program Files\WindowsApps\OpenAI.Codex_26.810.7004.0_x64__2p2nqsd0c76g0\app",
+        );
+        match windows_launch_plan(app_dir).expect("store package dir must resolve a plan") {
+            WindowsLaunch::Packaged { app_user_model_id } => assert_eq!(
+                app_user_model_id, "OpenAI.Codex_2p2nqsd0c76g0!App",
+                "AUMID must come from the package family on the path"
+            ),
+            WindowsLaunch::Executable { .. } => {
+                panic!("store package dir must not fall back to a direct exe spawn")
+            }
+        }
+    }
+
+    #[test]
+    fn portable_installs_launch_the_extracted_executable() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("ChatGPT.exe"), b"stub").unwrap();
+
+        match windows_launch_plan(&app).expect("portable dir must resolve a plan") {
+            WindowsLaunch::Executable { executable } => {
+                assert_eq!(executable, app.join("ChatGPT.exe"));
+            }
+            WindowsLaunch::Packaged { .. } => {
+                panic!("portable dir has no package identity and must not claim activation")
+            }
+        }
+    }
+
+    #[test]
+    fn a_dir_without_identity_or_executable_is_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            windows_launch_plan(dir.path()).unwrap_err(),
+            "CODEX_APP_INVALID"
+        );
+    }
 
     #[cfg(target_os = "macos")]
     #[test]
