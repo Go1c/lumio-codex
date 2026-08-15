@@ -10,9 +10,11 @@ import {
   loadLumioBootstrap,
   loadPublicSettings,
   onSessionExpired,
+  openInBrowser,
   shellLabels,
   signOut,
 } from "./lumio/invoke.ts";
+import { paymentUrl } from "./lumio/payment.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
 import type { LumioEvent, ProvisioningStepId } from "./lumio/state.ts";
 import type {
@@ -215,6 +217,15 @@ export function LumioApp() {
       .catch(() => undefined)
       .finally(() => dispatch({ type: "signed-out" }));
   }, []);
+  // 余额不足的引导失败面也要能直接充值，别逼用户「稍后处理」退出再重来。
+  const onPayRequested = useCallback(() => {
+    const url = paymentUrl(stateRef.current);
+    if (url === null) {
+      pushToast(lumioErrorLabel("PAYMENT_HANDOFF_CREATE_FAILED"));
+      return;
+    }
+    void openInBrowser(url).catch((error: unknown) => pushToast(errorCodeOf(error)));
+  }, [pushToast]);
   const onSignOutRequested = useCallback(() => {
     setView("home");
     onDeferred();
@@ -357,9 +368,11 @@ export function LumioApp() {
         ) : state.phase === "provisioning" ? (
           <ProvisioningView
             email={state.account?.email ?? null}
+            canPay={state.actions.canPay}
             onAccountResolved={onAccountResolved}
             onCompleted={onProvisioned}
             onDeferred={onDeferred}
+            onPay={onPayRequested}
             onStepCompleted={onStepCompleted}
             onStepFailed={onStepFailed}
             onStepStarted={onStepStarted}

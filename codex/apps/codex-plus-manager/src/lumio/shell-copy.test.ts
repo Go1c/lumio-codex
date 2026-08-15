@@ -383,12 +383,11 @@ test("the telemetry switch stays disabled with a stated reason this cycle", asyn
 
 test("the home surface opens payment in the browser when online", async () => {
   const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
-  const paymentHelper = view.slice(
-    view.indexOf("function paymentUrl"),
-    view.indexOf("interface HomeViewProps"),
-  );
+  // URL 拼装抽到共享模块：首页与引导失败面必须走同一份推导，护栏钉在源头文件上。
+  const paymentHelper = await readFile(new URL("./payment.ts", import.meta.url), "utf8");
 
   assert.match(view, /openInBrowser/);
+  assert.match(view, /paymentUrl/);
   assert.match(paymentHelper, /apiBaseUrl/);
   assert.match(paymentHelper, /paymentPath/);
   assert.match(paymentHelper, /\/purchase/);

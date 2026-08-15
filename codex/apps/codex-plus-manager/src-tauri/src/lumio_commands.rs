@@ -17,6 +17,7 @@ use serde::Serialize;
 
 const SESSION_EXPIRED: &str = "AUTH_SESSION_EXPIRED";
 const SERVICE_UNAVAILABLE: &str = "SERVICE_UNAVAILABLE";
+const SERVICE_MODEL_CATALOG_EMPTY: &str = "SERVICE_MODEL_CATALOG_EMPTY";
 const KEY_PROVISION_FAILED: &str = "KEY_PROVISION_FAILED";
 const KEY_STORAGE_UNAVAILABLE: &str = "KEY_STORAGE_UNAVAILABLE";
 const RESTORE_FAILED: &str = "CODEX_RESTORE_FAILED";
@@ -465,12 +466,10 @@ async fn run_provision_step(
                 .auth
                 .api_key()
                 .ok_or_else(|| KEY_PROVISION_FAILED.to_string())?;
+            // 余额不足等账户态由 `models()` 以稳定码原样上抛，这里不得再包一层。
             let models = client.models(&key).await?;
             let preferred = lock(&session.model).clone();
-            let selected = preferred
-                .filter(|model| models.iter().any(|candidate| candidate == model))
-                .or_else(|| models.first().cloned())
-                .ok_or_else(|| SERVICE_UNAVAILABLE.to_string())?;
+            let selected = select_model(preferred.as_deref(), &models)?;
             *lock(&session.model) = Some(selected);
             Ok(None)
         }
@@ -675,5 +674,42 @@ fn non_empty(value: String) -> Option<String> {
         None
     } else {
         Some(value)
+    }
+}
+
+/// 目录为空是服务端分组 / 渠道配置问题，不是本机故障：单独成码，
+/// 不能借「服务不可用」让用户把配置问题当成宕机空等。
+fn select_model(preferred: Option<&str>, catalog: &[String]) -> Result<String, String> {
+    preferred
+        .filter(|model| catalog.iter().any(|candidate| candidate == model))
+        .map(str::to_string)
+        .or_else(|| catalog.first().cloned())
+        .ok_or_else(|| SERVICE_MODEL_CATALOG_EMPTY.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_model_catalog_is_not_an_outage() {
+        assert_eq!(
+            select_model(None, &[]),
+            Err("SERVICE_MODEL_CATALOG_EMPTY".to_string())
+        );
+    }
+
+    #[test]
+    fn the_preferred_model_wins_only_while_the_catalog_still_offers_it() {
+        let catalog = vec!["gpt-example".to_string(), "gpt-example-mini".to_string()];
+        assert_eq!(
+            select_model(Some("gpt-example-mini"), &catalog),
+            Ok("gpt-example-mini".to_string())
+        );
+        // 服务端目录已不含偏好模型时回落到目录首个，而不是失败。
+        assert_eq!(
+            select_model(Some("a-retired-model"), &catalog),
+            Ok("gpt-example".to_string())
+        );
     }
 }

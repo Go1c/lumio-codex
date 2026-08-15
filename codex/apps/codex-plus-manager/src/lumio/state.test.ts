@@ -321,6 +321,70 @@ test("a second failure on the same run suggests the repair page", () => {
   assert.equal(state.provisioning.suggestRepair, true);
 });
 
+test("an empty model catalog failure stays retryable and repair-suggesting", () => {
+  let state = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 12.5, planLabel: null },
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    state = reduceLumioState(state, {
+      type: "provisioning-step-failed",
+      step: "sync-models",
+      errorCode: "SERVICE_MODEL_CATALOG_EMPTY",
+    });
+  }
+
+  // 空目录与余额不足不同：这是服务端态，重试与修复页引导维持原行为。
+  assert.equal(state.provisioning.suggestRepair, true);
+  assert.equal(state.actions.canPay, false);
+});
+
+test("insufficient balance never suggests repair and stays payable", () => {
+  let state = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 0, planLabel: null },
+  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    state = reduceLumioState(state, {
+      type: "provisioning-step-failed",
+      step: "sync-models",
+      errorCode: "ACCOUNT_INSUFFICIENT_BALANCE",
+    });
+  }
+
+  // 修本机配置对余额不足毫无帮助；充值入口必须留在失败面上。
+  assert.equal(state.provisioning.attempts, 2);
+  assert.equal(state.provisioning.suggestRepair, false);
+  assert.equal(state.actions.canPay, true);
+});
+
+test("resuming a step withdraws the payment affordance", () => {
+  const authed = reduceLumioState(signedOut(), {
+    type: "authenticated",
+    account: { email: "user@example.com", balance: 0, planLabel: null },
+  });
+  const failed = reduceLumioState(authed, {
+    type: "provisioning-step-failed",
+    step: "sync-models",
+    errorCode: "ACCOUNT_INSUFFICIENT_BALANCE",
+  });
+  assert.equal(failed.actions.canPay, true);
+
+  const resumed = reduceLumioState(failed, {
+    type: "provisioning-step-started",
+    step: "sync-models",
+  });
+  assert.equal(resumed.actions.canPay, false);
+
+  // 重试后换成别的失败码，充值入口不得复活。
+  const other = reduceLumioState(resumed, {
+    type: "provisioning-step-failed",
+    step: "sync-models",
+    errorCode: "SERVICE_MODEL_CATALOG_EMPTY",
+  });
+  assert.equal(other.actions.canPay, false);
+});
+
 test("online readiness enables launch, refresh, and payment", () => {
   const next = reduceLumioState(signedOut(), {
     type: "online-ready",

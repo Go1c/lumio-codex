@@ -347,7 +347,10 @@ impl LumioApiClient {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(normalize_reason(status.as_u16(), None));
+            return Err(normalize_reason(
+                status.as_u16(),
+                gateway_error_reason(&body).as_deref(),
+            ));
         }
         let list: RawModelList =
             serde_json::from_str(&body).map_err(|_| network_error_code().to_string())?;
@@ -438,6 +441,29 @@ async fn read_envelope<T: serde::de::DeserializeOwned>(
     envelope
         .data
         .ok_or_else(|| network_error_code().to_string())
+}
+
+/// 网关面（`/v1/*`）的错误体不是管理 API 信封：Sub2API 的 AbortWithError 形如
+/// `{"code":"INSUFFICIENT_BALANCE","message":"…"}`，没有 `reason` 字段，`read_envelope`
+/// 读不到它。按 `code` → `reason` → `error.code` 的优先级取稳定 reason，交给
+/// `normalize_reason` 决定语义；取不到（非 JSON、空值）就落回状态码兜底。
+fn gateway_error_reason(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let reason = value
+        .get("code")
+        .and_then(|code| code.as_str())
+        .or_else(|| value.get("reason").and_then(|reason| reason.as_str()))
+        .or_else(|| {
+            value
+                .get("error")
+                .and_then(|error| error.get("code"))
+                .and_then(|code| code.as_str())
+        })?;
+    let trimmed = reason.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -898,6 +924,108 @@ mod tests {
         assert_eq!(
             models,
             vec!["gpt-example".to_string(), "gpt-example-mini".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_gateway_insufficient_balance_error_is_an_account_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "code": "INSUFFICIENT_BALANCE",
+                "message": "账户余额不足，请先充值后再使用。"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap_err(),
+            "ACCOUNT_INSUFFICIENT_BALANCE"
+        );
+    }
+
+    #[tokio::test]
+    async fn unrecognized_gateway_codes_still_read_as_an_outage() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "code": "BACKEND_MODE_ADMIN_ONLY"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap_err(),
+            "SERVICE_UNAVAILABLE"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_json_gateway_errors_keep_the_status_fallback() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("gateway exploded"))
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap_err(),
+            "SERVICE_UNAVAILABLE"
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_failures_without_a_body_keep_the_status_fallbacks() {
+        let rate_limited = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(429))
+            .mount(&rate_limited)
+            .await;
+        let client = LumioApiClient::new(&rate_limited.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap_err(),
+            "SERVICE_RATE_LIMITED"
+        );
+
+        // 带了网关 code 但没有映射的 401（INVALID_API_KEY 之类）不得长出新语义。
+        let unauthenticated = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "code": "API_KEY_REQUIRED"
+            })))
+            .mount(&unauthenticated)
+            .await;
+        let client = LumioApiClient::new(&unauthenticated.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap_err(),
+            "AUTH_SESSION_EXPIRED"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_model_catalog_is_a_success_not_an_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "object": "list", "data": [] })),
+            )
+            .mount(&server)
+            .await;
+
+        let client = LumioApiClient::new(&server.uri()).unwrap();
+        assert_eq!(
+            client.models("sk-desktop").await.unwrap(),
+            Vec::<String>::new()
         );
     }
 }

@@ -3,7 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { lumioErrorLabel } from "../errors.ts";
 import { LumioCommandError, isSessionExpired, runProvisioningStep } from "../invoke.ts";
-import { PROVISIONING_STEP_IDS, PROVISIONING_STEP_TITLES } from "../state.ts";
+import {
+  ACCOUNT_INSUFFICIENT_BALANCE_CODE,
+  PROVISIONING_STEP_IDS,
+  PROVISIONING_STEP_TITLES,
+} from "../state.ts";
 import type { LumioProvisioning, ProvisioningStepId } from "../state.ts";
 import type { LumioAccountSummary } from "../types.ts";
 
@@ -24,6 +28,8 @@ function errorCodeOf(error: unknown): string {
 interface ProvisioningViewProps {
   email: string | null;
   provisioning: LumioProvisioning;
+  canPay: boolean;
+  onPay: () => void;
   onStepStarted: (step: ProvisioningStepId) => void;
   onStepCompleted: (step: ProvisioningStepId) => void;
   onStepFailed: (step: ProvisioningStepId, errorCode: string) => void;
@@ -35,6 +41,8 @@ interface ProvisioningViewProps {
 export function ProvisioningView({
   email,
   provisioning,
+  canPay,
+  onPay,
   onStepStarted,
   onStepCompleted,
   onStepFailed,
@@ -91,6 +99,8 @@ export function ProvisioningView({
 
   const failedStep = provisioning.failedStep;
   const failedIndex = failedStep === null ? -1 : PROVISIONING_STEP_IDS.indexOf(failedStep);
+  const payable =
+    provisioning.errorCode === ACCOUNT_INSUFFICIENT_BALANCE_CODE && canPay;
 
   return (
     <section aria-live="polite" className="lumio-provision">
@@ -133,22 +143,43 @@ export function ProvisioningView({
         <p className="lumio-provision-foot">不需要手动操作，完成后自动进入首页</p>
       ) : (
         <>
-          <div className="lumio-provision-actions">
-            <button
-              className="lumio-button is-primary"
-              onClick={() => void runFrom(failedIndex)}
-              type="button"
-            >
-              重试
-            </button>
-            <button className="lumio-button is-secondary" onClick={onDeferred} type="button">
-              稍后处理
-            </button>
-          </div>
+          {/* 余额不足是账户态：主按钮带用户去充值，重试只是充完值后的恢复路径。 */}
+          {payable ? (
+            <div className="lumio-provision-actions">
+              <button className="lumio-button is-primary" onClick={onPay} type="button">
+                去充值
+              </button>
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => void runFrom(failedIndex)}
+                type="button"
+              >
+                重试
+              </button>
+              <button className="lumio-button is-secondary" onClick={onDeferred} type="button">
+                稍后处理
+              </button>
+            </div>
+          ) : (
+            <div className="lumio-provision-actions">
+              <button
+                className="lumio-button is-primary"
+                onClick={() => void runFrom(failedIndex)}
+                type="button"
+              >
+                重试
+              </button>
+              <button className="lumio-button is-secondary" onClick={onDeferred} type="button">
+                稍后处理
+              </button>
+            </div>
+          )}
           <p className="lumio-provision-foot">
-            {provisioning.suggestRepair
-              ? "多次尝试仍未成功，可以到修复页检查本机配置。"
-              : "遇到问题时你的本机配置不会被修改。"}
+            {payable
+              ? "充值完成后回到这里重试，本机配置不会被修改。"
+              : provisioning.suggestRepair
+                ? "多次尝试仍未成功，可以到修复页检查本机配置。"
+                : "遇到问题时你的本机配置不会被修改。"}
           </p>
         </>
       )}

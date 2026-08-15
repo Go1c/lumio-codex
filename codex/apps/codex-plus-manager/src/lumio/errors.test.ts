@@ -37,8 +37,8 @@ test("registration blockers the server can report all have their own copy", () =
   assert.equal(LUMIO_ERROR_COPY.CODEX_CONFIG_WRITE_FAILED, "写入本机配置失败，已保留原始内容");
 });
 
-test("codes added beyond the baseline stay inside the six approved domains", () => {
-  const domains = ["AUTH_", "KEY_", "SERVICE_", "CODEX_", "PAYMENT_HANDOFF_", "UPDATE_"];
+test("codes added beyond the baseline stay inside the approved domains", () => {
+  const domains = ["AUTH_", "ACCOUNT_", "KEY_", "SERVICE_", "CODEX_", "PAYMENT_HANDOFF_", "UPDATE_"];
   for (const code of Object.keys(LUMIO_ERROR_COPY)) {
     if (code === "UNKNOWN") continue;
     assert.ok(
@@ -46,6 +46,22 @@ test("codes added beyond the baseline stay inside the six approved domains", () 
       `error code outside the approved domains: ${code}`,
     );
   }
+});
+
+test("gateway account and catalog states get actionable copy instead of outage copy", () => {
+  assert.equal(LUMIO_ERROR_COPY.ACCOUNT_INSUFFICIENT_BALANCE, "账户余额不足，请先充值");
+  assert.equal(
+    LUMIO_ERROR_COPY.SERVICE_MODEL_CATALOG_EMPTY,
+    "当前没有可用模型，请稍后重试或联系支持",
+  );
+  assert.equal(
+    lumioErrorLabel("ACCOUNT_INSUFFICIENT_BALANCE"),
+    "账户余额不足，请先充值（ACCOUNT_INSUFFICIENT_BALANCE）",
+  );
+  assert.equal(
+    lumioErrorLabel("SERVICE_MODEL_CATALOG_EMPTY"),
+    "当前没有可用模型，请稍后重试或联系支持（SERVICE_MODEL_CATALOG_EMPTY）",
+  );
 });
 
 test("unknown and empty codes fall back without throwing", () => {

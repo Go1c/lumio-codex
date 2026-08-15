@@ -26,6 +26,9 @@ export const PROVISIONING_STEP_TITLES: Record<ProvisioningStepId, string> = {
 
 export type ProvisioningStepStatus = "pending" | "running" | "done" | "failed";
 
+/** 余额不足：用户可操作的账户态，与宕机 / 本机故障分别对待。 */
+export const ACCOUNT_INSUFFICIENT_BALANCE_CODE = "ACCOUNT_INSUFFICIENT_BALANCE";
+
 export type LumioAuthStep = "idle" | "login" | "register" | "two-factor";
 
 export interface LumioProvisioning {
@@ -275,6 +278,8 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
           failedStep: null,
           errorCode: null,
         },
+        // 充值入口只在失败面上出现；步骤一旦重新开跑就收回。
+        actions: { ...state.actions, canPay: false },
       };
 
     case "provisioning-step-completed":
@@ -294,6 +299,9 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         return state;
       }
       const attempts = state.provisioning.attempts + 1;
+      // 余额不足修本机配置没有意义，永远不引导去修复页；充值是唯一出路，
+      // 入口必须留在失败面上，不能逼用户「稍后处理」退出登录再重来。
+      const payable = event.errorCode === ACCOUNT_INSUFFICIENT_BALANCE_CODE;
       return {
         ...state,
         phase: "provisioning",
@@ -303,8 +311,9 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
           failedStep: event.step,
           errorCode: event.errorCode,
           attempts,
-          suggestRepair: attempts >= MAX_PROVISIONING_ATTEMPTS,
+          suggestRepair: !payable && attempts >= MAX_PROVISIONING_ATTEMPTS,
         },
+        actions: { ...state.actions, canPay: payable },
       };
     }
 

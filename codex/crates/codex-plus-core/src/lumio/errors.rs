@@ -23,6 +23,8 @@ pub fn normalize_reason(http_status: u16, reason: Option<&str>) -> String {
     let mapped = match reason.map(str::trim).filter(|value| !value.is_empty()) {
         Some("INVALID_CREDENTIALS" | "INVALID_USER") => "AUTH_INVALID_CREDENTIALS",
         Some("USER_NOT_ACTIVE") => "AUTH_ACCOUNT_DISABLED",
+        // 余额不足是用户可操作的账户态：提示充值即可解决，绝不能伪装成服务故障让用户空等重试。
+        Some("INSUFFICIENT_BALANCE") => "ACCOUNT_INSUFFICIENT_BALANCE",
         Some("INVALID_VERIFY_CODE" | "VERIFY_CODE_MAX_ATTEMPTS") => "AUTH_CODE_INVALID",
         Some("VERIFY_CODE_TOO_FREQUENT") => "AUTH_CODE_RATE_LIMITED",
         Some("EMAIL_VERIFY_REQUIRED" | "VERIFY_CODE_REQUIRED") => "AUTH_CODE_REQUIRED",
@@ -296,6 +298,24 @@ mod tests {
                 "{reason}"
             );
         }
+    }
+
+    #[test]
+    fn insufficient_balance_is_an_account_state_not_an_outage() {
+        assert_eq!(
+            normalize_reason(403, Some("INSUFFICIENT_BALANCE")),
+            "ACCOUNT_INSUFFICIENT_BALANCE"
+        );
+        // 映射只认 reason、不看状态码：网关把这个码挂在别的状态码上也不许退化成宕机。
+        assert_eq!(
+            normalize_reason(402, Some("INSUFFICIENT_BALANCE")),
+            "ACCOUNT_INSUFFICIENT_BALANCE"
+        );
+    }
+
+    #[test]
+    fn a_bodyless_401_still_reads_as_an_expired_session() {
+        assert_eq!(normalize_reason(401, None), "AUTH_SESSION_EXPIRED");
     }
 
     #[test]

@@ -18,6 +18,7 @@ import {
   refreshAccount,
   shellLabels,
 } from "../invoke.ts";
+import { paymentUrl } from "../payment.ts";
 import type { LumioState } from "../state.ts";
 import type { LumioAccountSummary, LumioUpdateReminder } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
@@ -42,13 +43,6 @@ function formatSyncTime(iso: string | null): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return "未知时间";
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(parsed);
-}
-
-function paymentUrl(state: LumioState): string | null {
-  const base = state.service?.apiBaseUrl?.replace(/\/$/, "");
-  const path = state.service?.paymentPath ?? "/purchase";
-  if (!base) return null;
-  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 interface HomeViewProps {
