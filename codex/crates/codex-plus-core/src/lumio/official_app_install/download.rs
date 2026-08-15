@@ -97,6 +97,17 @@ pub async fn download_to_cache(
         }
     }
 
+    // 镜像 v5 撤掉 SHA256SUMS 后的尺寸防线：已知期望尺寸时不许静默落盘
+    // 与清单不符的载荷（D-21）。
+    if let Some(expected) = source.expected_bytes {
+        let actual = std::fs::metadata(&part)
+            .map_err(|_| DOWNLOAD_FAILED.to_string())?
+            .len();
+        if actual != expected {
+            return Err(DOWNLOAD_FAILED.to_string());
+        }
+    }
+
     if ready.exists() {
         std::fs::remove_file(&ready).map_err(|_| DOWNLOAD_FAILED.to_string())?;
     }
@@ -153,9 +164,22 @@ fn is_sha256_hex(value: &str) -> bool {
 fn ready_path(dest: &Path, source: &PackageSource) -> PathBuf {
     // Production dest is `product::cache_dir()`; tests may pass an explicit file Path.
     if dest.is_dir() {
-        dest.join("official-app").join(package_name(source))
+        dest.join("official-app").join(format!(
+            "{}{}",
+            package_name(source),
+            payload_ext(source.platform)
+        ))
     } else {
         dest.to_path_buf()
+    }
+}
+
+/// 缓存文件必须带平台扩展名：Windows 的签名与部署工具靠它认出包格式，
+/// 裸文件名是「校验未通过」的头号嫌疑（D-21）。
+fn payload_ext(platform: super::HostPlatform) -> &'static str {
+    match platform {
+        super::HostPlatform::Windows => ".msix",
+        super::HostPlatform::Macos => ".dmg",
     }
 }
 
@@ -199,8 +223,8 @@ fn part_path(ready: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lumio::official_app_install::SourceKind;
     use crate::lumio::official_app_install::verify::verify_sha256;
+    use crate::lumio::official_app_install::{HostPlatform, SourceKind};
     use sha2::{Digest, Sha256};
     use std::sync::atomic::Ordering;
     use wiremock::matchers::{method, path};
@@ -215,9 +239,76 @@ mod tests {
     fn source(url: impl Into<String>, sha256: Option<String>) -> PackageSource {
         PackageSource {
             kind: SourceKind::Mirror,
+            platform: HostPlatform::Macos,
             url: url.into(),
             sha256,
+            expected_bytes: None,
         }
+    }
+
+    /// D-21：镜像 v5 撤掉 SHA256SUMS 期间至少要有尺寸防线；缓存文件必须带
+    /// 平台扩展名——裸文件名会让 Get-AuthenticodeSignature 认不出 Appx 签名
+    /// （真机「校验未通过」的头号嫌疑）。
+    #[tokio::test]
+    async fn windows_payloads_cache_with_the_msix_extension() {
+        let dest = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latest/win-x64"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY.to_vec()))
+            .mount(&server)
+            .await;
+
+        let mut win = source(format!("{}/latest/win-x64", server.uri()), None);
+        win.platform = HostPlatform::Windows;
+        let path = download_to_cache(&win, dest.path(), &AtomicBool::new(false), &mut |_| {})
+            .await
+            .unwrap();
+
+        assert!(
+            path.to_string_lossy().ends_with("win-x64.msix"),
+            "cache file must carry the msix extension: {}",
+            path.display()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_wrong_sized_payload_is_rejected_even_without_a_hash() {
+        let dest = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latest/win-x64"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY.to_vec()))
+            .mount(&server)
+            .await;
+
+        let mut win = source(format!("{}/latest/win-x64", server.uri()), None);
+        win.platform = HostPlatform::Windows;
+        win.expected_bytes = Some(BODY.len() as u64 + 1);
+
+        let err = download_to_cache(&win, dest.path(), &AtomicBool::new(false), &mut |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err, "CODEX_APP_DOWNLOAD_FAILED");
+    }
+
+    #[tokio::test]
+    async fn an_expected_size_equal_to_the_payload_passes() {
+        let dest = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/latest/win-x64"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(BODY.to_vec()))
+            .mount(&server)
+            .await;
+
+        let mut win = source(format!("{}/latest/win-x64", server.uri()), None);
+        win.platform = HostPlatform::Windows;
+        win.expected_bytes = Some(BODY.len() as u64);
+
+        download_to_cache(&win, dest.path(), &AtomicBool::new(false), &mut |_| {})
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -244,9 +335,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(path, dest.path().join("official-app").join("win-x64"));
+        // helper 默认 macOS 平台：扩展名取 .dmg（平台由字段决定，不看 URL 字样）。
+        assert_eq!(path, dest.path().join("official-app").join("win-x64.dmg"));
         assert_eq!(std::fs::read(&path).unwrap(), BODY);
-        assert!(!path.with_file_name("win-x64.part").exists());
+        assert!(!path.with_file_name("win-x64.dmg.part").exists());
         verify_sha256(&path, &expected).unwrap();
     }
 
@@ -257,8 +349,10 @@ mod tests {
         let err = download_to_cache(
             &PackageSource {
                 kind: SourceKind::Mirror,
+                platform: HostPlatform::Macos,
                 url: "http://example.com/x".into(),
                 sha256: None,
+                expected_bytes: None,
             },
             dir.path(),
             &cancel,
@@ -294,7 +388,7 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(err, "CODEX_APP_VERIFY_FAILED");
-        let ready = dest.path().join("official-app").join("win-x64");
+        let ready = dest.path().join("official-app").join("win-x64.dmg");
         assert!(!ready.exists(), "hash mismatch must not keep a ready file");
     }
 
@@ -327,8 +421,8 @@ mod tests {
         .unwrap_err();
         assert_eq!(err, "CODEX_APP_DOWNLOAD_FAILED");
 
-        let ready = dest.path().join("official-app").join("pkg");
-        let part = dest.path().join("official-app").join("pkg.part");
+        let ready = dest.path().join("official-app").join("pkg.dmg");
+        let part = dest.path().join("official-app").join("pkg.dmg.part");
         assert!(!ready.exists());
         assert!(part.exists(), "cancel must keep the .part file");
         assert_eq!(
@@ -356,13 +450,17 @@ mod tests {
         let sources = [
             PackageSource {
                 kind: SourceKind::Mirror,
+                platform: HostPlatform::Macos,
                 url: format!("{}/mirror", server.uri()),
                 sha256: None,
+                expected_bytes: None,
             },
             PackageSource {
                 kind: SourceKind::Official,
+                platform: HostPlatform::Macos,
                 url: format!("{}/official", server.uri()),
                 sha256: None,
+                expected_bytes: None,
             },
         ];
 
@@ -460,7 +558,7 @@ mod tests {
         .expect("302 到同源 https/测试本机目标必须跟随到最终 200");
 
         assert_eq!(std::fs::read(&path).unwrap(), BODY);
-        assert!(!path.with_file_name("win-x64.part").exists());
+        assert!(!path.with_file_name("win-x64.dmg.part").exists());
     }
 
     #[tokio::test]

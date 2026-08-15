@@ -24,6 +24,8 @@ pub struct MirrorPayload {
     pub arch: HostArch,
     pub package_moniker: Option<String>,
     pub sha256: Option<String>,
+    /// v5 起按架构携带的载荷尺寸，sha 缺位时的完整性防线（D-21）。
+    pub content_length: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +57,8 @@ struct WindowsArchitectureSource {
     package_moniker: Option<String>,
     #[serde(default)]
     downloadable: Option<bool>,
+    #[serde(default)]
+    content_length: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,8 +68,11 @@ struct MacosSource {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MacosArchSource {
     sha256: Option<String>,
+    #[serde(default)]
+    content_length: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -95,13 +102,17 @@ pub fn planned_sources(platform: HostPlatform, arch: HostArch) -> Vec<PackageSou
     vec![
         PackageSource {
             kind: SourceKind::Mirror,
+            platform,
             url: mirror.to_string(),
             sha256: None,
+            expected_bytes: None,
         },
         PackageSource {
             kind: SourceKind::Official,
-            url: official,
+            platform,
+            url: official.to_string(),
             sha256: None,
+            expected_bytes: None,
         },
     ]
 }
@@ -156,6 +167,7 @@ fn parse_windows_payload(
         arch,
         package_moniker: Some(package_moniker),
         sha256,
+        content_length: selected.and_then(|(_, source)| source.content_length),
     })
 }
 
@@ -177,6 +189,7 @@ fn parse_macos_payload(manifest: &MirrorManifest, arch: HostArch) -> Result<Mirr
         package_moniker: None,
         sha256: nonempty_sha(source.sha256.as_deref())
             .or_else(|| payload_sha(manifest, HostPlatform::Macos, arch)),
+        content_length: source.content_length,
     })
 }
 
@@ -357,6 +370,7 @@ mod tests {
         let x64 = parse_mirror_manifest(&json, HostPlatform::Windows, HostArch::X64, None).unwrap();
         assert_eq!(x64.package_moniker.as_deref(), Some(X64_MONIKER));
         assert_eq!(x64.sha256.as_deref(), Some(PAYLOAD_X64_SHA));
+        assert_eq!(x64.content_length, None, "v4 fixture 没有按架构尺寸");
 
         let arm =
             parse_mirror_manifest(&json, HostPlatform::Windows, HostArch::Arm64, None).unwrap();
@@ -384,6 +398,50 @@ mod tests {
         )
         .unwrap();
         assert_eq!(from_sums.sha256.as_deref(), Some(PAYLOAD_X64_SHA));
+    }
+
+    /// D-21：镜像升到 v5 后 manager 段与 SHA256SUMS 都没了，唯一能带的
+    /// 完整性线索是按架构的 contentLength。
+    #[test]
+    fn v5_manifests_without_payload_shas_carry_the_content_length() {
+        let json = r#"{
+          "schemaVersion": 5,
+          "generatedAt": "2026-08-15T10:14:57Z",
+          "sources": {
+            "windows": {
+              "productId": "9PLM9XGG6VKS",
+              "architecture": "x64",
+              "version": "26.810.7004.0",
+              "packageMoniker": "OpenAI.Codex_26.810.7004.0_x64__2p2nqsd0c76g0",
+              "architectures": {
+                "x64": {
+                  "architecture": "x64",
+                  "status": "downloadable",
+                  "downloadable": true,
+                  "version": "26.810.7004.0",
+                  "packageMoniker": "OpenAI.Codex_26.810.7004.0_x64__2p2nqsd0c76g0",
+                  "contentLength": 745309050
+                }
+              }
+            },
+            "macos": {
+              "arm64": { "contentLength": 639631488 },
+              "x64": {}
+            }
+          }
+        }"#;
+
+        let x64 = parse_mirror_manifest(json, HostPlatform::Windows, HostArch::X64, None).unwrap();
+        assert_eq!(x64.sha256, None, "v5 没有载荷 sha");
+        assert_eq!(x64.content_length, Some(745309050));
+
+        let mac = parse_mirror_manifest(json, HostPlatform::Macos, HostArch::Arm64, None).unwrap();
+        assert_eq!(mac.sha256, None);
+        assert_eq!(mac.content_length, Some(639631488));
+
+        let mac_x64 =
+            parse_mirror_manifest(json, HostPlatform::Macos, HostArch::X64, None).unwrap();
+        assert_eq!(mac_x64.content_length, None);
     }
 
     #[test]

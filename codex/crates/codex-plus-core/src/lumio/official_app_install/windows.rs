@@ -2,11 +2,40 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::sources::{OPENAI_MARKETPLACE_SUBJECT, PORTABLE_REL};
+use super::{HostPlatform, InstallRoute};
 
 const INSTALL_FAILED: &str = "CODEX_APP_INSTALL_FAILED";
 const VERIFY_FAILED: &str = "CODEX_APP_VERIFY_FAILED";
 const MARKETPLACE_ISSUER_CN_PREFIX: &str = "cn=microsoft marketplace ca";
 const MARKETPLACE_ISSUER_ORG: &str = "o=microsoft corporation";
+
+/// Authenticode 预检三态（D-21）：`Unavailable` 是「跑不出结果」（PowerShell
+/// 失败、无法解析），与 `Mismatch`（确凿不匹配）必须区分对待。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthenticodeVerdict {
+    Pinned,
+    Mismatch {
+        status: String,
+        subject: String,
+        issuer: String,
+    },
+    Unavailable,
+}
+
+/// 侧载路线放行 `Unavailable`：Add-AppxPackage 部署时强制做系统级签名验证，
+/// 装后解析也只认 OpenAI.Codex 包族——两道兜底都在。便携路线没有系统验证，
+/// 预检不可用就等于没有密码学防线，必须拒。`Mismatch` 任何路线都拒。
+pub fn authenticode_route_decision(
+    route: InstallRoute,
+    verdict: &AuthenticodeVerdict,
+) -> Result<(), String> {
+    match verdict {
+        AuthenticodeVerdict::Pinned => Ok(()),
+        AuthenticodeVerdict::Unavailable if route == InstallRoute::WindowsSideload => Ok(()),
+        AuthenticodeVerdict::Unavailable => Err(VERIFY_FAILED.to_string()),
+        AuthenticodeVerdict::Mismatch { .. } => Err(VERIFY_FAILED.to_string()),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityState {
@@ -108,19 +137,34 @@ pub fn install_windows_sideload(msix: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn verify_windows_authenticode(path: &Path) -> Result<(), String> {
+    let verdict = authenticode_verdict(path);
+    authenticode_route_decision(InstallRoute::WindowsPortable, &verdict)
+}
+
+/// 预检三态化（D-21）：脚本跑挂 / 输出解析不出 → `Unavailable`（不再一刀切
+/// 报校验失败）；解析成功 → 按钉选判定 `Pinned` / `Mismatch`。
+pub fn authenticode_verdict(path: &Path) -> AuthenticodeVerdict {
     #[cfg(windows)]
     {
-        let report = authenticode_report_from_powershell(path)?;
-        if authenticode_pin_ok(&report.0, &report.1, &report.2) {
-            Ok(())
-        } else {
-            Err(VERIFY_FAILED.to_string())
+        match authenticode_report_from_powershell(path) {
+            Ok((status, subject, issuer)) => {
+                if authenticode_pin_ok(&status, &subject, &issuer) {
+                    AuthenticodeVerdict::Pinned
+                } else {
+                    AuthenticodeVerdict::Mismatch {
+                        status,
+                        subject,
+                        issuer,
+                    }
+                }
+            }
+            Err(_) => AuthenticodeVerdict::Unavailable,
         }
     }
     #[cfg(not(windows))]
     {
         let _ = path;
-        Err(VERIFY_FAILED.to_string())
+        AuthenticodeVerdict::Unavailable
     }
 }
 
@@ -664,5 +708,47 @@ mod tests {
             "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B",
             "CN=Microsoft Marketplace CA G 028, O=Microsoft Corporation, C=US",
         ));
+    }
+
+    /// D-21：预检「跑不出结果」≠「签名不匹配」。侧载路线放行给
+    /// Add-AppxPackage 的系统级签名验证（装后解析只认 OpenAI.Codex 包族），
+    /// 便携路线没有系统验证兜底，预检不可用必须硬失败。
+    #[test]
+    fn an_unavailable_precheck_only_proceeds_on_the_sideload_route() {
+        use super::{AuthenticodeVerdict, InstallRoute};
+
+        let pinned = AuthenticodeVerdict::Pinned;
+        let mismatch = AuthenticodeVerdict::Mismatch {
+            status: "HashMismatch".to_string(),
+            subject: "CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B".to_string(),
+            issuer: "CN=Microsoft Marketplace CA G 024, O=Microsoft Corporation, C=US".to_string(),
+        };
+        let unavailable = AuthenticodeVerdict::Unavailable;
+
+        assert!(super::authenticode_route_decision(InstallRoute::WindowsSideload, &pinned).is_ok());
+        assert!(super::authenticode_route_decision(InstallRoute::WindowsPortable, &pinned).is_ok());
+
+        assert_eq!(
+            super::authenticode_route_decision(InstallRoute::WindowsSideload, &mismatch)
+                .unwrap_err(),
+            "CODEX_APP_VERIFY_FAILED",
+            "确凿的签名不匹配在任何路线都不许过"
+        );
+        assert_eq!(
+            super::authenticode_route_decision(InstallRoute::WindowsPortable, &mismatch)
+                .unwrap_err(),
+            "CODEX_APP_VERIFY_FAILED"
+        );
+
+        assert!(
+            super::authenticode_route_decision(InstallRoute::WindowsSideload, &unavailable).is_ok(),
+            "侧载预检不可用放行给系统部署验证"
+        );
+        assert_eq!(
+            super::authenticode_route_decision(InstallRoute::WindowsPortable, &unavailable)
+                .unwrap_err(),
+            "CODEX_APP_VERIFY_FAILED",
+            "便携路线没有系统验证，预检不可用就是没有密码学防线"
+        );
     }
 }

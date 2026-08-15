@@ -24,9 +24,10 @@ pub use sources::{
 };
 pub use verify::verify_sha256;
 pub use windows::{
-    CapabilityCheck, WinCapabilityReport, authenticode_pin_ok, install_windows_portable,
+    AuthenticodeVerdict, CapabilityCheck, WinCapabilityReport, authenticode_pin_ok,
+    authenticode_route_decision, authenticode_verdict, install_windows_portable,
     install_windows_sideload, parse_appx_application_executable, probe_windows_sideload,
-    probe_windows_sideload_with, verify_windows_authenticode,
+    probe_windows_sideload_with,
 };
 pub use windows_store::resolve_store_msix_url;
 
@@ -82,8 +83,13 @@ pub enum SourceKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageSource {
     pub kind: SourceKind,
+    /// 决定缓存文件扩展名（.msix / .dmg）——裸文件名会让 Windows 的签名与
+    /// 部署工具认不出包格式（D-21）。
+    pub platform: HostPlatform,
     pub url: String,
     pub sha256: Option<String>,
+    /// 镜像 v5 撤掉 SHA256SUMS 后唯一的完整性线索；已知则下载后核对尺寸。
+    pub expected_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +122,8 @@ pub struct OfficialAppInstallRequest<'a> {
     pub plan: PlanInput<'a>,
     pub detect: &'a dyn Fn() -> Option<PathBuf>,
     pub download: &'a mut dyn FnMut(&PackageSource) -> Result<PathBuf, String>,
-    pub verify: &'a dyn Fn(&Path, &PackageSource) -> Result<(), String>,
+    /// 带路由：Windows 预检不可用时只有侧载路线可以放行给系统部署验证（D-21）。
+    pub verify: &'a dyn Fn(&Path, &PackageSource, InstallRoute) -> Result<(), String>,
     pub install: &'a mut dyn FnMut(&Path, InstallRoute) -> Result<PathBuf, String>,
     pub write_config: &'a mut dyn FnMut(),
 }
@@ -158,7 +165,7 @@ pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Resul
                 match (request.download)(source) {
                     Ok(package) => {
                         progress::set_phase(InstallPhase::Verifying, Some("verify"));
-                        if let Err(err) = (request.verify)(&package, source) {
+                        if let Err(err) = (request.verify)(&package, source, route) {
                             if err == VERIFY_FAILED || cancelled_download() {
                                 return fail_with(err);
                             }
@@ -220,7 +227,7 @@ pub async fn start_official_app_install_with(
     std::fs::create_dir_all(&cache).map_err(|_| DOWNLOAD_FAILED.to_string())?;
     std::fs::create_dir_all(cache.join("official-app")).map_err(|_| DOWNLOAD_FAILED.to_string())?;
 
-    let mirror_sha = fetch_mirror_sha256(platform, arch).await;
+    let mirror_payload = fetch_mirror_payload(platform, arch).await;
     let session_for_detect = session_app.clone();
 
     run_official_app_install(OfficialAppInstallRequest {
@@ -232,8 +239,8 @@ pub async fn start_official_app_install_with(
             windows_sideload_ok,
         },
         detect: &|| detect_existing_app(session_for_detect.as_deref()),
-        download: &mut |source| live_download(source, arch, mirror_sha.as_deref(), &cache),
-        verify: &|path, source| live_verify(path, source, platform),
+        download: &mut |source| live_download(source, arch, mirror_payload.as_ref(), &cache),
+        verify: &|path, source, route| live_verify(path, source, platform, route),
         install: &mut |path, route| live_install(path, route),
         write_config: &mut || {},
     })
@@ -319,13 +326,18 @@ fn current_host_arch() -> HostArch {
 fn live_download(
     source: &PackageSource,
     arch: HostArch,
-    mirror_sha: Option<&str>,
+    mirror_payload: Option<&MirrorPayload>,
     cache: &Path,
 ) -> Result<PathBuf, String> {
     let mut source = source.clone();
     if source.kind == SourceKind::Mirror {
-        if let Some(sha) = mirror_sha {
-            source.sha256 = Some(sha.to_string());
+        if let Some(payload) = mirror_payload {
+            if source.sha256.is_none() {
+                source.sha256 = payload.sha256.clone();
+            }
+            if source.expected_bytes.is_none() {
+                source.expected_bytes = payload.content_length;
+            }
         }
     }
     if source.url.starts_with("store:") {
@@ -378,12 +390,23 @@ fn store_resolved_url_allowed(url: &str) -> bool {
     parsed.scheme() == "http" && windows_store::is_microsoft_delivery_host(&parsed)
 }
 
-fn live_verify(path: &Path, source: &PackageSource, platform: HostPlatform) -> Result<(), String> {
+fn live_verify(
+    path: &Path,
+    source: &PackageSource,
+    platform: HostPlatform,
+    route: InstallRoute,
+) -> Result<(), String> {
     if let Some(expected) = source.sha256.as_deref() {
         verify_sha256(path, expected)?;
     }
     match platform {
-        HostPlatform::Windows => verify_windows_authenticode(path),
+        HostPlatform::Windows => {
+            // 预检三态：钉选通过→过；确凿不匹配→拒；跑不出结果→侧载放行给
+            // Add-AppxPackage 的系统级签名验证（装后解析只认 OpenAI.Codex 包族），
+            // 便携路线没有系统兜底必须拒（D-21）。
+            let verdict = windows::authenticode_verdict(path);
+            windows::authenticode_route_decision(route, &verdict)
+        }
         // Team ID is enforced inside `install_macos_from_dmg`.
         HostPlatform::Macos => Ok(()),
     }
@@ -405,12 +428,10 @@ fn windows_portable_dest() -> Result<PathBuf, String> {
     Ok(PathBuf::from(local).join(PORTABLE_REL))
 }
 
-async fn fetch_mirror_sha256(platform: HostPlatform, arch: HostArch) -> Option<String> {
+async fn fetch_mirror_payload(platform: HostPlatform, arch: HostArch) -> Option<MirrorPayload> {
     let manifest = fetch_https_text(MIRROR_MANIFEST_URL).await?;
     let checksums = fetch_https_text(MIRROR_CHECKSUMS_URL).await;
-    parse_mirror_manifest(&manifest, platform, arch, checksums.as_deref())
-        .ok()
-        .and_then(|payload| payload.sha256)
+    parse_mirror_manifest(&manifest, platform, arch, checksums.as_deref()).ok()
 }
 
 async fn fetch_https_text(url: &str) -> Option<String> {
@@ -495,7 +516,7 @@ mod tests {
                 downloaded.set(true);
                 Ok(PathBuf::from("/tmp/pkg"))
             },
-            verify: &|_path, _source| Ok(()),
+            verify: &|_path, _source, _route| Ok(()),
             install: &mut |_path, _route| {
                 installed.set(true);
                 Ok(PathBuf::from("/tmp/app"))
@@ -533,7 +554,7 @@ mod tests {
                 download_kinds.push(source.kind);
                 Ok(PathBuf::from("/tmp/pkg"))
             },
-            verify: &|_path, _source| Err("CODEX_APP_VERIFY_FAILED".to_string()),
+            verify: &|_path, _source, _route| Err("CODEX_APP_VERIFY_FAILED".to_string()),
             install: &mut |_path, _route| {
                 installed.set(true);
                 Ok(PathBuf::from("/tmp/app"))
@@ -573,7 +594,7 @@ mod tests {
                     SourceKind::Official => Ok(official_pkg.clone()),
                 }
             },
-            verify: &|_path, _source| Ok(()),
+            verify: &|_path, _source, _route| Ok(()),
             install: &mut |path, _route| {
                 installed_from.set(Some(path.to_path_buf()));
                 Ok(PathBuf::from("/Applications/Codex.app"))
@@ -608,7 +629,7 @@ mod tests {
                 request_cancel();
                 Err("CODEX_APP_DOWNLOAD_FAILED".to_string())
             },
-            verify: &|_path, _source| Ok(()),
+            verify: &|_path, _source, _route| Ok(()),
             install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
             write_config: &mut || {
                 wrote_config.set(true);
