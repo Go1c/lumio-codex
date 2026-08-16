@@ -471,6 +471,9 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         phase: "signed-out",
         bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
+        // 公开设置只在服务不可用时重拉；service 保留时 defaultModel 必须一起保留，
+        // 否则同会话内重新登录后首页会永远显示「等待服务端同步」。
+        defaultModel: state.defaultModel,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,
@@ -485,6 +488,7 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
         phase: "signed-out",
         bootstrap: withoutCachedAccount(state.bootstrap),
         service: state.service,
+        defaultModel: state.defaultModel,
         codexApp: state.codexApp,
         telemetryEnabled: state.telemetryEnabled,
         autoUpdateEnabled: state.autoUpdateEnabled,

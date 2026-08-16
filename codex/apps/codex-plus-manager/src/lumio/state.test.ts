@@ -556,6 +556,23 @@ test("signing out with registration closed explains the disabled register entry"
   assert.equal(next.actionNotes.register, "注册暂未开放");
 });
 
+// 公开设置在服务可用期间不会再拉（LumioApp 的重试 effect 以 serviceAvailable 为闸），
+// 退出/过期把 defaultModel 清掉后，同会话内重新登录将永远显示「等待服务端同步」。
+test("signing out preserves the server-managed default model for the next login", () => {
+  const next = reduceLumioState(readyOnlineSession(true), { type: "signed-out" });
+
+  assert.equal(next.defaultModel, "gpt-example");
+});
+
+test("session expiry preserves the server-managed default model for the next login", () => {
+  const next = reduceLumioState(readyOnlineSession(true), {
+    type: "session-expired",
+    errorCode: "AUTH_SESSION_EXPIRED",
+  });
+
+  assert.equal(next.defaultModel, "gpt-example");
+});
+
 test("session expiry while the service is unreachable explains both entry points", () => {
   const unreachable = reduceLumioState(readyOnlineSession(true), {
     type: "service-unavailable",
