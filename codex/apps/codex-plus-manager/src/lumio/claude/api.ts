@@ -91,6 +91,8 @@ export function probeErrorCopy(code: string | null, host: string, port: number):
       return "没能在服务器上装好同步组件。";
     case "DEPLOY_ARTIFACT_MISSING":
       return "这台电脑还没有同步组件，装不上服务器。";
+    case "SSH_ALIAS_UNKNOWN":
+      return "本机 SSH 配置里没有这个 Host 别名。";
     default:
       return `连不上这台服务器。`;
   }
@@ -106,9 +108,21 @@ export function prepareErrorCopy(code: string | null, host: string, port: number
     case "SSH_UNREACHABLE":
     case "SSH_NOT_SSH":
     case "SSH_CLIENT_MISSING":
+    case "SSH_ALIAS_UNKNOWN":
       return probeErrorCopy(code, host, port);
     default:
       return "没能在服务器上装好同步组件。";
+  }
+}
+
+export function syncErrorCopy(code: string | null): string {
+  switch (code) {
+    case "SYNC_ENGINE_UNAVAILABLE":
+      return "这台电脑还没有同步组件，暂时拉不了文件。";
+    case "SSH_ALIAS_UNKNOWN":
+      return "本机 SSH 配置里没有这个 Host 别名。";
+    default:
+      return "没能把服务器上的文件拉到这台电脑。";
   }
 }
 

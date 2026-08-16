@@ -61,6 +61,8 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /~\/BestCodex\//);
   assert.match(source, /SSH 配置|Host 别名|配置别名/);
   assert.match(source, /setupStatus === "fail"/);
+  assert.match(source, /sync\.state === "fail"/);
+  assert.doesNotMatch(source, /当作完成/);
 });
 
 test("user-visible Claude copy never says agent or tmux", async () => {

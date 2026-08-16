@@ -1,6 +1,6 @@
 //! Per-project SSH local-forward tunnels. Switching tabs does not close them.
 
-use crate::claude_ssh::{ResolvedSshTarget, ssh_invocation_args};
+use crate::claude_ssh::{AskpassGuard, ResolvedSshTarget, attach_askpass, ssh_invocation_args};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
@@ -9,6 +9,7 @@ use std::sync::Mutex;
 pub struct TunnelHandle {
     pub local_port: u16,
     child: Child,
+    _askpass: Option<AskpassGuard>,
 }
 
 pub struct TunnelManager {
@@ -27,6 +28,7 @@ impl TunnelManager {
         project_id: &str,
         target: &ResolvedSshTarget,
         key_path: Option<&str>,
+        password: Option<&str>,
         remote_port: u16,
     ) -> Result<u16, String> {
         let mut tunnels = self.tunnels.lock().unwrap_or_else(|e| e.into_inner());
@@ -49,14 +51,24 @@ impl TunnelManager {
         args.insert(1, "-L".into());
         args.insert(2, format!("{local_port}:127.0.0.1:{remote_port}"));
         args.push(dest);
-        let child = Command::new("ssh")
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let mut command = Command::new("ssh");
+        command.args(&args);
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
+        let askpass = attach_askpass(&mut command, password, key_path, target.use_config)
+            .map_err(|_| "无法准备安全凭据通道。".to_string())?;
+        let child = command
             .spawn()
             .map_err(|_| "这台电脑还没有 ssh 命令。".to_string())?;
-        tunnels.insert(project_id.to_string(), TunnelHandle { local_port, child });
+        tunnels.insert(
+            project_id.to_string(),
+            TunnelHandle {
+                local_port,
+                child,
+                _askpass: askpass,
+            },
+        );
         Ok(local_port)
     }
 }

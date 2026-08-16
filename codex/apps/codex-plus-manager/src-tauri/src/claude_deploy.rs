@@ -172,7 +172,7 @@ pub fn deploy_remote(
 
 fn scp_file(
     target: &ResolvedSshTarget,
-    _password: Option<&str>,
+    password: Option<&str>,
     key_path: Option<&str>,
     source: &Path,
     destination: &str,
@@ -182,13 +182,15 @@ fn scp_file(
     let host = args.pop().ok_or("SSH_PREPARE_FAILED")?;
     args.push(source.to_string_lossy().into_owned());
     args.push(format!("{host}:{destination}"));
-    let status = Command::new("scp")
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|_| "SSH_CLIENT_MISSING")?;
+    let mut command = Command::new("scp");
+    command.args(&args);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::null());
+    command.stderr(Stdio::null());
+    let askpass =
+        crate::claude_ssh::attach_askpass(&mut command, password, key_path, target.use_config)?;
+    let status = command.status().map_err(|_| "SSH_CLIENT_MISSING")?;
+    drop(askpass);
     if status.success() {
         Ok(())
     } else {

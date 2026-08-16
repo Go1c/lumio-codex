@@ -15,8 +15,7 @@ use crate::claude_conflicts::{self, ConflictStore, Resolution};
 use crate::claude_deploy;
 use crate::claude_files::{self, expand_local_root};
 use crate::claude_ssh::{
-    AskpassGuard, ResolvedSshTarget, SshHost, parse_ssh_config, resolve_from_user_config,
-    ssh_invocation_args,
+    ResolvedSshTarget, SshHost, parse_ssh_config, resolve_from_user_config, ssh_invocation_args,
 };
 use crate::claude_sync::{self, SYNC_PROGRESS_EVENT, SyncEngine, SyncProgress};
 use crate::claude_terminal::TerminalManager;
@@ -173,16 +172,15 @@ fn run_ssh_target(
     command.env("LC_ALL", "C");
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let askpass = if key_path.map(|v| !v.is_empty()).unwrap_or(false) || target.use_config {
-        None
-    } else if let Some(password) = password {
-        let guard = AskpassGuard::start(password)?;
-        guard.configure(&mut command, password);
-        Some(guard)
-    } else {
+    let plan = crate::claude_ssh::password_auth_plan(password, key_path, target.use_config);
+    if plan.batch_mode
+        && !target.use_config
+        && key_path.map(|value| value.is_empty()).unwrap_or(true)
+    {
         command.arg("-o").arg("BatchMode=yes");
-        None
-    };
+    }
+    let askpass =
+        crate::claude_ssh::attach_askpass(&mut command, password, key_path, target.use_config)?;
     let output = command.output().map_err(|_| "SSH_CLIENT_MISSING")?;
     drop(askpass);
     Ok(output)
@@ -433,10 +431,13 @@ pub fn lumio_claude_first_sync(
     }
 
     if claude_sync::sidecar_command().is_some() {
-        if let Ok(local_port) =
-            app.state::<TunnelManager>()
-                .open(&key, &target, key_path.as_deref(), 9000)
-        {
+        if let Ok(local_port) = app.state::<TunnelManager>().open(
+            &key,
+            &target,
+            key_path.as_deref(),
+            password.as_deref(),
+            9000,
+        ) {
             let state_dir = expand_local_root(&local_root).join(".bestcodex-sync");
             if let Ok(config) = claude_sync::write_agent_config(
                 &state_dir,
@@ -447,7 +448,6 @@ pub fn lumio_claude_first_sync(
             ) {
                 if engine.adopt_sidecar(&key, &config).is_ok() {
                     let _ = remote_root;
-                    let _ = password;
                     engine.watch_local_files(&key, local_root.clone(), move |progress| {
                         let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
                     });
@@ -602,7 +602,9 @@ pub fn lumio_claude_list_files(
         password.as_deref(),
         key_path.as_deref(),
         host_alias.as_deref(),
-        &format!("find '{quoted}' -mindepth 1 2>/dev/null | sed 's|^{quoted}/||'"),
+        &format!(
+            "find '{quoted}' -mindepth 1 \\( -type d -printf '%P/\\n' -o -printf '%P\\n' \\) 2>/dev/null"
+        ),
     ) {
         Ok(output) if output.status.success() => {
             claude_files::parse_remote_listing(&String::from_utf8_lossy(&output.stdout), "remote")

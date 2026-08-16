@@ -174,29 +174,70 @@ pub fn read_preview(root: &Path, relative: &str, side: &str) -> Result<FilePrevi
 }
 
 pub fn parse_remote_listing(stdout: &str, side: &str) -> Vec<FileNode> {
-    let mut nodes = Vec::new();
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    struct Node {
+        is_dir: bool,
+        children: BTreeMap<String, Node>,
+    }
+
+    let mut root = Node::default();
     for line in stdout.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('.') {
             continue;
         }
-        let kind = if line.ends_with('/') {
-            "directory"
-        } else {
-            "file"
-        };
+        let is_dir = line.ends_with('/');
         let path = line.trim_end_matches('/');
-        let name = path.rsplit('/').next().unwrap_or(path).to_string();
-        nodes.push(FileNode {
-            name,
-            path: path.to_string(),
-            kind: kind.into(),
-            side: side.into(),
-            size: None,
-            children: None,
-        });
+        if path.is_empty() {
+            continue;
+        }
+        let mut current = &mut root;
+        let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        for (index, part) in parts.iter().enumerate() {
+            let last = index + 1 == parts.len();
+            let child = current
+                .children
+                .entry((*part).to_string())
+                .or_insert_with(Node::default);
+            if !last || is_dir {
+                child.is_dir = true;
+            }
+            current = child;
+        }
     }
-    nodes
+
+    fn flatten(nodes: &BTreeMap<String, Node>, prefix: &str, side: &str) -> Vec<FileNode> {
+        nodes
+            .iter()
+            .map(|(name, node)| {
+                let path = if prefix.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                FileNode {
+                    name: name.clone(),
+                    path: path.clone(),
+                    kind: if node.is_dir {
+                        "directory".into()
+                    } else {
+                        "file".into()
+                    },
+                    side: side.into(),
+                    size: None,
+                    children: if node.is_dir {
+                        Some(flatten(&node.children, &path, side))
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect()
+    }
+
+    flatten(&root.children, "", side)
 }
 
 #[cfg(test)]
@@ -227,5 +268,24 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         assert!(resolve_for_write(root.path(), "../secret").is_err());
         assert!(resolve_for_write(root.path(), "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn parse_remote_listing_nests_directories() {
+        let tree = parse_remote_listing("src/\nsrc/main.rs\nREADME.md\n", "remote");
+        assert!(
+            tree.iter()
+                .any(|node| node.name == "README.md" && node.kind == "file")
+        );
+        let src = tree.iter().find(|node| node.name == "src").expect("src");
+        assert_eq!(src.kind, "directory");
+        assert_eq!(src.side, "remote");
+        assert!(
+            src.children
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|node| node.path == "src/main.rs" && node.kind == "file")
+        );
     }
 }

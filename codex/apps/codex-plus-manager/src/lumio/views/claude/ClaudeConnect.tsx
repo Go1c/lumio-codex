@@ -1,6 +1,6 @@
 import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 
-import { listClaudeSshHosts, prepareErrorCopy, probeErrorCopy } from "../../claude/api.ts";
+import { listClaudeSshHosts, prepareErrorCopy, probeErrorCopy, syncErrorCopy } from "../../claude/api.ts";
 import { CONNECT_STEPS } from "../../claude/machine.ts";
 import { localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
 import { cancelClaudeConnect, runConnectProbe, runConnectSetup, runConnectSync } from "../../claude/session.ts";
@@ -320,7 +320,30 @@ export function ClaudeConnect({
           </div>
         ) : null}
 
-        {sheet.step === "sync" ? (
+        {sheet.step === "sync" && sheet.sync.state === "fail" ? (
+          <div>
+            <h2 id="lumio-claude-connect-title">没能完成首次同步</h2>
+            <p className="lumio-claude-lede">文件还没拉到这台电脑。先改连接信息，或再试一次。</p>
+            <div className="lumio-claude-fail">
+              {syncErrorCopy(sheet.sync.errorCode)}
+              <span className="lumio-claude-fail-code">{sheet.sync.errorCode ?? "SYNC_FAILED"}</span>
+            </div>
+            <div className="lumio-claude-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => dispatchClaude({ type: "back-to-host" })}
+                type="button"
+              >
+                返回修改
+              </button>
+              <button className="lumio-button is-primary" onClick={() => void runConnectSync()} type="button">
+                重试
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {sheet.step === "sync" && sheet.sync.state !== "fail" ? (
           <div>
             <h2 id="lumio-claude-connect-title">首次同步</h2>
             <p className="lumio-claude-lede">把服务器上的项目拉到这台电脑。完成后右侧就是终端。</p>
@@ -347,9 +370,6 @@ export function ClaudeConnect({
             <div className="lumio-claude-actions">
               <button className="lumio-button is-secondary" onClick={onBackToCodex} type="button">
                 切到 Codex（同步继续）
-              </button>
-              <button className="lumio-button is-primary" onClick={() => void runConnectSync()} type="button">
-                当作完成
               </button>
             </div>
           </div>

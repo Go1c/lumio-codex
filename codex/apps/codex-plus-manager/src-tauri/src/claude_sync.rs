@@ -323,6 +323,35 @@ mod tests {
     }
 
     #[test]
+    fn first_sync_engine_copies_fixture_into_local_root() {
+        let remote = tempfile::tempdir().unwrap();
+        std::fs::write(remote.path().join("hello.txt"), "hi\n").unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let engine = SyncEngine::new();
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let progress_cb = progress.clone();
+        let outcome = engine.run_first_sync(
+            "p-docs",
+            &local.path().to_string_lossy(),
+            Some(remote.path()),
+            move |item| {
+                progress_cb
+                    .lock()
+                    .unwrap()
+                    .push((item.files_done, item.files_total));
+            },
+        );
+        assert!(outcome.ok);
+        assert!(outcome.files_done >= 1);
+        assert_eq!(
+            std::fs::read_to_string(local.path().join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+        let seen = progress.lock().unwrap().clone();
+        assert!(seen.iter().any(|(done, total)| *done > 0 && *total > 0));
+    }
+
+    #[test]
     fn missing_sidecar_is_not_a_successful_sync() {
         let engine = SyncEngine::new();
         let local = tempfile::tempdir().unwrap();

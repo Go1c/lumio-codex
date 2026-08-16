@@ -179,6 +179,51 @@ pub fn resolve_from_user_config(
     resolve_ssh_target(host, user, port, alias, &text)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PasswordAuthPlan {
+    pub use_askpass: bool,
+    pub batch_mode: bool,
+}
+
+pub fn password_auth_plan(
+    password: Option<&str>,
+    key_path: Option<&str>,
+    use_config: bool,
+) -> PasswordAuthPlan {
+    if key_path.map(|value| !value.is_empty()).unwrap_or(false) || use_config {
+        return PasswordAuthPlan {
+            use_askpass: false,
+            batch_mode: true,
+        };
+    }
+    if password.map(|value| !value.is_empty()).unwrap_or(false) {
+        return PasswordAuthPlan {
+            use_askpass: true,
+            batch_mode: false,
+        };
+    }
+    PasswordAuthPlan {
+        use_askpass: false,
+        batch_mode: true,
+    }
+}
+
+pub fn attach_askpass(
+    command: &mut Command,
+    password: Option<&str>,
+    key_path: Option<&str>,
+    use_config: bool,
+) -> Result<Option<AskpassGuard>, &'static str> {
+    let plan = password_auth_plan(password, key_path, use_config);
+    if !plan.use_askpass {
+        return Ok(None);
+    }
+    let secret = password.unwrap_or("");
+    let guard = AskpassGuard::start(secret)?;
+    guard.configure(command, secret);
+    Ok(Some(guard))
+}
+
 pub fn ssh_invocation_args(
     target: &ResolvedSshTarget,
     key_path: Option<&str>,
@@ -320,5 +365,17 @@ mod tests {
             resolve_ssh_target("", None, 22, Some("missing"), CONFIG).unwrap_err(),
             "SSH_ALIAS_UNKNOWN"
         );
+    }
+
+    #[test]
+    fn password_auth_uses_askpass_instead_of_argv() {
+        let password = password_auth_plan(Some("hunter2"), None, false);
+        assert!(password.use_askpass);
+        assert!(!password.batch_mode);
+        let key = password_auth_plan(Some("hunter2"), Some("/tmp/id_ed25519"), false);
+        assert!(!key.use_askpass);
+        assert!(key.batch_mode);
+        let config = password_auth_plan(Some("hunter2"), None, true);
+        assert!(!config.use_askpass);
     }
 }
