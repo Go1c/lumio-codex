@@ -61,6 +61,16 @@ export function installFailureCopy(
   return lumioErrorLabel(install.errorCode ?? "CODEX_APP_INSTALL_FAILED");
 }
 
+/** 标准 macOS 默认写入 /Applications/Codex.app；自选目录用用户选的路径。 */
+export function resolveInstallDestination(
+  destination: string | null,
+  platform: string,
+): string | null {
+  if (destination) return destination;
+  if (platform === "macos") return "/Applications/Codex.app";
+  return null;
+}
+
 /** 进度条下方的人话；按钮文案只讲「正在安装」，量化信息由这里独占。 */
 export function installProgressCopy(
   install: Pick<
@@ -68,6 +78,7 @@ export function installProgressCopy(
     "phase" | "stage" | "bytesDownloaded" | "bytesTotal"
   >,
   percent: number | null,
+  destination?: string | null,
 ): string {
   if (install.phase === "downloading") {
     const downloaded = install.bytesDownloaded ?? null;
@@ -81,7 +92,9 @@ export function installProgressCopy(
     return "正在获取下载进度…";
   }
   if (install.phase === "verifying") return "正在校验安装包…";
-  if (install.phase === "installing") return "正在安装官方 Codex…";
+  if (install.phase === "installing") {
+    return destination ? `正在写入 ${destination}` : "正在安装官方 Codex…";
+  }
   if (install.phase === "planning") return "正在准备安装…";
   if (install.phase === "detecting") return "正在确认安装结果…";
   return "正在安装官方 Codex…";

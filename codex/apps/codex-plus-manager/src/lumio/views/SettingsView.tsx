@@ -386,7 +386,7 @@ export function SettingsView({
           <div className="lumio-modal">
             <h3>恢复本机配置？</h3>
             <p>{RESTORE_CONFIRM_COPY}</p>
-            <p>恢复后需要重新登录才能再次使用 Lumio 连接。</p>
+            <p>恢复后需要重新登录才能再次使用 BestCodex 连接。</p>
             <div className="lumio-modal-actions">
               <button
                 className="lumio-button is-secondary"

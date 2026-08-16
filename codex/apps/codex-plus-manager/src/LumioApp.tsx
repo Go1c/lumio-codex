@@ -59,7 +59,7 @@ const phaseCopy: Record<LumioPhase, string> = {
   bootstrapping: "正在检查本机环境",
   "signed-out": "等待登录",
   authenticating: "正在验证账户",
-  provisioning: "正在准备连接",
+  provisioning: "正在准备",
   "ready-online": "服务连接正常",
   "ready-offline": "使用本机缓存",
   "needs-repair": "需要检查配置",

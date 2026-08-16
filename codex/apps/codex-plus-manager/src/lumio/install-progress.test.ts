@@ -8,6 +8,7 @@ import {
   installFailureCopy,
   installProgressCopy,
   installStageLabel,
+  resolveInstallDestination,
   toInstallProgress,
 } from "./install-progress.ts";
 
@@ -88,9 +89,25 @@ test("installProgressCopy narrates quantities while downloading", () => {
 
 test("installProgressCopy falls back to stage narration without numbers", () => {
   assert.equal(installProgressCopy({ phase: "verifying", stage: "verify" }, null), "正在校验安装包…");
-  assert.equal(installProgressCopy({ phase: "installing", stage: "install" }, null), "正在安装官方 Codex…");
   assert.equal(installProgressCopy({ phase: "planning", stage: "plan" }, null), "正在准备安装…");
   assert.equal(installProgressCopy({ phase: "detecting", stage: "detect" }, null), "正在确认安装结果…");
+});
+
+test("installProgressCopy names the chosen write path while installing", () => {
+  assert.equal(
+    installProgressCopy({ phase: "installing", stage: "install" }, null, "/Applications/Codex.app"),
+    "正在写入 /Applications/Codex.app",
+  );
+  assert.equal(
+    installProgressCopy({ phase: "installing", stage: "install" }, null, "/Users/me/Apps/Codex.app"),
+    "正在写入 /Users/me/Apps/Codex.app",
+  );
+});
+
+test("resolveInstallDestination prefers the chosen folder and defaults macOS to Codex.app", () => {
+  assert.equal(resolveInstallDestination("/Users/me/Apps", "macos"), "/Users/me/Apps");
+  assert.equal(resolveInstallDestination(null, "macos"), "/Applications/Codex.app");
+  assert.equal(resolveInstallDestination(null, "windows"), null);
 });
 
 /** D-20：失败必须留在行动面板上说清原因，不能只靠 4 秒的 toast。 */

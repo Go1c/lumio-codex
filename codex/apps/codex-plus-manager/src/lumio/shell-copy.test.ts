@@ -260,6 +260,8 @@ test("neither auth view hardcodes business rules the server owns", async () => {
 test("the provisioning view carries the spec copy for slow and failed steps", async () => {
   const view = await readFile(new URL("./views/ProvisioningView.tsx", import.meta.url), "utf8");
 
+  assert.match(view, /<h1>正在准备<\/h1>/);
+  assert.doesNotMatch(view, /正在准备官方 Codex/);
   assert.match(view, /不需要手动操作，完成后自动进入首页/);
   assert.match(view, /比平时慢一些，仍在继续…/);
   assert.match(view, /重试/);
@@ -290,7 +292,41 @@ test("the home surface can install the official app instead of sending users to 
   assert.match(home, /安装并启动官方 Codex/);
   assert.match(home, /正在安装官方 Codex/);
   assert.match(home, /安装官方应用需要网络/);
+  assert.match(home, /连上之后再回来装。/);
   assert.doesNotMatch(home, /侧载|MSIX|FE3|Sparkle|镜像站/i);
+});
+
+test("failed or cancelled official-app install relabels the primary button as 重试", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(home, /"重试"/);
+  assert.match(home, /installEnded/);
+  assert.match(home, /officialAppInstall\.phase === "failed"/);
+  assert.match(home, /officialAppInstall\.phase === "cancelled"/);
+});
+
+test("in-progress official-app install wires cancelOfficialApp", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(home, /cancelOfficialApp/);
+  assert.match(home, /installInProgress/);
+});
+
+test("the install progress line receives the chosen destination", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.match(home, /resolveInstallDestination/);
+  assert.match(home, /installProgressCopy\(/);
+});
+
+test("the failure card and repair page open the BestCodex help URL", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+  const repair = await readFile(new URL("./views/RepairView.tsx", import.meta.url), "utf8");
+
+  assert.match(home, /打开帮助/);
+  assert.match(home, /HELP_URL/);
+  assert.match(repair, /打开帮助/);
+  assert.match(repair, /HELP_URL/);
 });
 
 test("the home view explains every disabled action instead of hiding it", async () => {
@@ -303,6 +339,7 @@ test("the home view explains every disabled action instead of hiding it", async 
   assert.match(view, /刷新失败，仍显示上次数据/);
   assert.match(view, /无法连接服务，正在使用/);
   assert.match(view, /你仍可以启动官方 Codex。/);
+  assert.match(view, /codexApp === null\s*\?[\s\S]{0,80}安装官方应用需要网络/);
   assert.match(view, /已重新连接/);
   assert.match(view, /缓存值/);
   // 离线首页可能在没有任何可信同步时间时进入，这时余额与时间都不许当作真值渲染。
@@ -341,6 +378,8 @@ test("the shell chrome uses Codex and Claude tabs and keeps HomeView mounted", a
   assert.match(shell, /aria-hidden=/);
   assert.match(shell, /HELP_URL/);
   assert.match(shell, /openInBrowser\(HELP_URL\)/);
+  assert.match(shell, /provisioning: "正在准备"/);
+  assert.doesNotMatch(shell, /正在准备连接/);
 });
 
 test("the titlebar leaves room for macOS traffic lights and is a drag region", async () => {
@@ -408,9 +447,10 @@ test("the repair view offers the three spec actions and never a force overwrite"
   assert.match(view, /重新检查/);
   assert.match(view, /恢复本机配置/);
   // restore 是整文件回滚，不是字段级撤销：二次确认必须说清接管后的改动会丢失。
-  assert.match(view, /还原到 Lumio 接管前的状态/);
+  assert.match(view, /还原到 BestCodex 接管前的状态/);
   assert.match(view, /接管之后你在这个文件里做的修改都会丢失/);
   assert.doesNotMatch(view, /你的其他本机设置不受影响/);
+  assert.doesNotMatch(view, /\bLumio\b/);
   assert.match(view, /导出诊断日志/);
   assert.match(view, /导出前会再次扫描并移除敏感内容/);
   assert.match(view, /问题仍未解决/);
@@ -446,6 +486,8 @@ test("the settings view keeps every approved row and its explanation", async () 
   assert.match(view, /所选应用无法识别为官方 Codex/);
   assert.match(view, /不可用的选项会保持禁用，不会修改本机配置。/);
   assert.doesNotMatch(view, /撤销 Lumio 管理的字段并保留其他本机设置/);
+  assert.match(view, /再次使用 BestCodex 连接/);
+  assert.doesNotMatch(view, /再次使用 Lumio 连接/);
   assert.match(view, /把配置文件还原到接管前的状态/);
   assert.match(view, /使用数据收集尚未开放/);
   assert.match(view, /TELEMETRY_NOTE/);

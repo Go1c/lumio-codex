@@ -34,6 +34,7 @@ test("4 canceling the destination sheet does not start the download", async () =
   assert.match(home, /取消不会开始安装/);
   assert.match(home, /onClick=\{\(\) => setDestinationOpen\(false\)\}/);
   assert.ok(home.includes("取消"));
+  assert.match(home, /cancelOfficialApp/);
 });
 
 test("5 switching away does not unmount HomeView or ClaudeWorkspace", async () => {

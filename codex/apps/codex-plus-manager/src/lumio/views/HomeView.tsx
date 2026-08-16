@@ -3,8 +3,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 import { greetingNameFromEmail } from "../greeting.ts";
+import { HELP_URL } from "../help.ts";
 import {
   LumioCommandError,
+  cancelOfficialApp,
   detectCodexApp,
   installOfficialApp,
   launchCodex,
@@ -22,6 +24,7 @@ import {
   installFailureCopy,
   installProgressCopy,
   installStageLabel,
+  resolveInstallDestination,
   toInstallProgress,
 } from "../install-progress.ts";
 import type {
@@ -37,7 +40,8 @@ const PAYMENT_POLL_MS = 10_000;
 const INSTALL_POLL_MS = 400;
 const INSTALL_AND_LAUNCH_COPY = "安装并启动官方 Codex";
 const INSTALLING_COPY = "正在安装官方 Codex…";
-const OFFLINE_NO_APP_NOTE = "安装官方应用需要网络";
+const RETRY_COPY = "重试";
+const OFFLINE_NO_APP_META = "安装官方应用需要网络。连上之后再回来装。";
 
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
@@ -218,6 +222,7 @@ export function HomeView({
 
   // D-23：首次安装先问装哪里（标准路线 or 自选目录），选择权交给用户。
   const [destinationOpen, setDestinationOpen] = useState(false);
+  const [installDestination, setInstallDestination] = useState<string | null>(null);
 
   const chooseDirectory = (): Promise<string | null> => {
     return open({ directory: true, multiple: false, title: "选择安装目录" }).then((picked) =>
@@ -227,6 +232,7 @@ export function HomeView({
 
   const installThenLaunch = (destination: string | null) => {
     setDestinationOpen(false);
+    setInstallDestination(resolveInstallDestination(destination, state.bootstrap?.platform ?? ""));
     setLaunching(true);
     void (async () => {
       try {
@@ -257,16 +263,18 @@ export function HomeView({
 
   const primaryDisabled = !actions.canLaunch || launching || isOfficialAppInstallInProgress(officialAppInstall);
   const stageLabel = installStageLabel(officialAppInstall.stage, officialAppInstall.phase);
-  const primaryLabel = isOfficialAppInstallInProgress(officialAppInstall)
+  const installInProgress = isOfficialAppInstallInProgress(officialAppInstall);
+  const installEnded =
+    officialAppInstall.phase === "failed" || officialAppInstall.phase === "cancelled";
+  const primaryLabel = installInProgress
     ? `${INSTALLING_COPY}${stageLabel ? ` ${stageLabel}` : ""}`
     : launching
       ? "正在启动…"
       : codexApp
         ? shellLabels.launch
-        : INSTALL_AND_LAUNCH_COPY;
-  const installInProgress = isOfficialAppInstallInProgress(officialAppInstall);
-  const installEnded =
-    officialAppInstall.phase === "failed" || officialAppInstall.phase === "cancelled";
+        : installEnded
+          ? RETRY_COPY
+          : INSTALL_AND_LAUNCH_COPY;
   const downloadPercentValue =
     officialAppInstall.phase === "downloading"
       ? downloadPercent(
@@ -274,10 +282,12 @@ export function HomeView({
           officialAppInstall.bytesTotal ?? null,
         )
       : null;
-  const progressCopy = installProgressCopy(officialAppInstall, downloadPercentValue);
+  const progressCopy = installProgressCopy(officialAppInstall, downloadPercentValue, installDestination);
   const failureCopy = installEnded ? installFailureCopy(officialAppInstall) : null;
   const greetingName = greetingNameFromEmail(account.email);
   const offlineMissing = offline && codexApp === null && !installInProgress;
+  const offlineBannerNote =
+    codexApp === null ? "安装官方应用需要网络。" : "你仍可以启动官方 Codex。";
 
   const cardTitle = installInProgress
     ? "正在安装官方 Codex"
@@ -304,7 +314,7 @@ export function HomeView({
   const cardMeta = installInProgress
     ? progressCopy
     : offlineMissing
-      ? OFFLINE_NO_APP_NOTE
+      ? OFFLINE_NO_APP_META
       : offline
         ? "本机配置还在。充值需要网络，启动不需要。"
         : codexApp
@@ -338,8 +348,8 @@ export function HomeView({
         <p className="lumio-notice" role="status">
           <CloudOff size={15} />
           {syncTimeUnknown
-            ? "无法连接服务，正在使用本机缓存，上次同步时间未知。你仍可以启动官方 Codex。"
-            : `无法连接服务，正在使用 ${formatSyncTime(state.cachedAt)} 的本机缓存。你仍可以启动官方 Codex。`}
+            ? `无法连接服务，正在使用本机缓存，上次同步时间未知。${offlineBannerNote}`
+            : `无法连接服务，正在使用 ${formatSyncTime(state.cachedAt)} 的本机缓存。${offlineBannerNote}`}
         </p>
       ) : null}
 
@@ -405,6 +415,34 @@ export function HomeView({
             <Rocket size={17} />
             {primaryLabel}
           </button>
+          {installInProgress ? (
+            <button
+              className="lumio-button is-secondary"
+              onClick={() => {
+                void cancelOfficialApp()
+                  .then((status) => onInstallProgress(toInstallProgress(status)))
+                  .catch((error: unknown) => {
+                    const code = errorCodeOf(error);
+                    onInstallProgress({ phase: "failed", stage: null, errorCode: code });
+                    pushToast(code);
+                  });
+              }}
+              type="button"
+            >
+              取消
+            </button>
+          ) : null}
+          {installEnded ? (
+            <button
+              className="lumio-button is-secondary"
+              onClick={() => {
+                void openInBrowser(HELP_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
+              }}
+              type="button"
+            >
+              打开帮助
+            </button>
+          ) : null}
         </div>
 
         {installInProgress ? (

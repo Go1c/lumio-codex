@@ -1,12 +1,13 @@
 import { useState } from "react";
 
 import { lumioErrorCopy, lumioErrorLabel } from "../errors.ts";
-import { LumioCommandError, checkTakeover, exportLogs, restoreConfig } from "../invoke.ts";
+import { HELP_URL } from "../help.ts";
+import { LumioCommandError, checkTakeover, exportLogs, openInBrowser, restoreConfig } from "../invoke.ts";
 import type { ToastTone } from "./Toast.tsx";
 
 /** 恢复写回的是接管前的整份快照，不是逐字段撤销，二次确认必须说清这个后果。 */
 export const RESTORE_CONFIRM_COPY =
-  "恢复会把本机的 Codex 配置文件整份还原到 Lumio 接管前的状态：接管之后你在这个文件里做的修改都会丢失，包括你自己新增或改过的设置。";
+  "恢复会把本机的 Codex 配置文件整份还原到 BestCodex 接管前的状态：接管之后你在这个文件里做的修改都会丢失，包括你自己新增或改过的设置。";
 const CREDENTIAL_CODES = ["AUTH_SESSION_EXPIRED", "KEY_STORAGE_UNAVAILABLE"];
 
 function errorCodeOf(error: unknown): string {
@@ -18,7 +19,7 @@ function explain(code: string | null): string {
     return "本机保存的登录凭据已失效，请重新登录。你的本机配置与官方 Codex 均未被修改。";
   }
   if (code === "CODEX_CONFIG_CONFLICT") {
-    return "检测到本机配置被其他工具修改过。为保护你的设置，Lumio 不会自动覆盖这些改动——你可以重新检查，或恢复到接管前的原始配置。";
+    return "检测到本机配置被其他工具修改过。为保护你的设置，BestCodex 不会自动覆盖这些改动——你可以重新检查，或恢复到接管前的原始配置。";
   }
   return `${lumioErrorCopy(code)}。本机配置尚未被修改，你可以重新检查或恢复到接管前的原始配置。`;
 }
@@ -120,6 +121,15 @@ export function RepairView({ errorCode, onResolved, onSignOut, pushToast }: Repa
             >
               {exporting ? "正在导出…" : "导出诊断日志"}
             </button>
+            <button
+              className="lumio-button is-secondary"
+              onClick={() => {
+                void openInBrowser(HELP_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
+              }}
+              type="button"
+            >
+              打开帮助
+            </button>
           </div>
 
           {unresolvedCode === null ? null : (
@@ -139,7 +149,7 @@ export function RepairView({ errorCode, onResolved, onSignOut, pushToast }: Repa
           <div className="lumio-modal">
             <h3>恢复本机配置？</h3>
             <p>{RESTORE_CONFIRM_COPY}</p>
-            <p>恢复后需要重新登录才能再次使用 Lumio 连接。</p>
+            <p>恢复后需要重新登录才能再次使用 BestCodex 连接。</p>
             <div className="lumio-modal-actions">
               <button
                 className="lumio-button is-secondary"

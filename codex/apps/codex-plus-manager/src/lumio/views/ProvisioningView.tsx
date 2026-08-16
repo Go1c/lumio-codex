@@ -107,7 +107,7 @@ export function ProvisioningView({
       <span className="lumio-app-icon is-card" aria-hidden="true">
         <img alt="" src="/lumio-icon.png" />
       </span>
-      <h1>正在准备官方 Codex</h1>
+      <h1>正在准备</h1>
       {email === null ? null : <p className="lumio-provision-lead">{email}</p>}
 
       <ol className="lumio-steps">
