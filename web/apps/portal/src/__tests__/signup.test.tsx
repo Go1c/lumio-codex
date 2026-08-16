@@ -21,6 +21,18 @@ afterEach(() => {
 });
 
 describe("注册页尊重 settings/public", () => {
+  it("交叉文案指向 BestCodex，不再写两个旧产品", async () => {
+    stubFetch({
+      "/settings/public": () => envelope(OPEN_SETTINGS),
+    });
+
+    renderApp("/signup");
+
+    expect((await screen.findAllByText(/BestCodex/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/CC避风港/)).not.toBeInTheDocument();
+  });
+
   it("注册关闭时不给表单，只说明原因", async () => {
     stubFetch({
       "/settings/public": () => envelope({ ...OPEN_SETTINGS, registration_enabled: false }),

@@ -37,6 +37,14 @@ describe("账户中心", () => {
       "href",
       "https://api.lumio.games/purchase",
     );
+    expect(
+      screen.getAllByRole("link", { name: "BestCodex" }).some(
+        (link) => link.getAttribute("href") === "https://bestcodex.app/codex",
+      ),
+    ).toBe(true);
+    expect(screen.getAllByText(/一个启动器/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Lumio Codex")).not.toBeInTheDocument();
+    expect(screen.queryByText("CC避风港")).not.toBeInTheDocument();
   });
 
   it("登出后清掉共享会话 Cookie", async () => {

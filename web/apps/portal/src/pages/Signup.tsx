@@ -18,7 +18,7 @@ export function Signup() {
     <div className="auth-page">
       <div className="auth-card wide">
         <h2>创建 Lumio 账号</h2>
-        <p className="sub">一个账号通用于 Lumio Codex 与 CC避风港。</p>
+        <p className="sub">一个账号用于 BestCodex。</p>
         {settings.status === "loading" && <LoadingBlock label="读取注册设置…" />}
         {settings.status === "error" && (
           <ErrorBlock message={settings.error ?? ""} onRetry={settings.reload} />

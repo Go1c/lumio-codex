@@ -72,8 +72,8 @@ export function Account() {
 
           <SectionCard title="在哪里使用" id="products">
             <p className="note">
-              同一个账号可直接用于 <a href={siteUrl("codex")}>Lumio Codex</a> 与{" "}
-              <a href={siteUrl("cc")}>CC避风港</a>，无需分别注册。
+              同一个账号用于 <a href={siteUrl("codex")}>BestCodex</a>
+              。一个启动器，一次下载，无需分别注册。
             </p>
           </SectionCard>
 

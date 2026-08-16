@@ -3,8 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { siteUrl } from "@lumio/ui";
-
 import { App } from "@/App";
 
 const MANIFEST = {
@@ -13,6 +11,10 @@ const MANIFEST = {
     {
       name: "LumioCodex-1.2.46-macos-arm64-internal-unsigned.dmg",
       url: "https://s3.example.com/arm64.dmg",
+    },
+    {
+      name: "LumioCodex-1.2.46-macos-x64-internal-unsigned.dmg",
+      url: "https://s3.example.com/x64.dmg",
     },
     {
       name: "LumioCodex-1.2.46-windows-x64-setup-internal-unsigned.exe",
@@ -30,37 +32,113 @@ function renderApp(path = "/") {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
-describe("Codex 产品站", () => {
-  it("品牌是 BestCodex，顶栏 Codex/Claude 是指向另一站的整页链接", () => {
+describe("BestCodex 单站", () => {
+  it("默认 / 渲染 Codex 落地页", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new Error("offline"))),
     );
 
-    renderApp();
+    renderApp("/");
 
     expect(screen.getByRole("link", { name: /^BestCodex$/ })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Codex" })).toHaveAttribute("href", siteUrl("codex"));
-    expect(screen.getByRole("link", { name: "Claude" })).toHaveAttribute("href", siteUrl("cc"));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("更快开始使用官方 Codex");
+    expect(screen.getByRole("heading", { name: "三步开始" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Codex" })).toHaveAttribute("aria-current", "page");
     expect(document.querySelector("[data-pane]")).toBeNull();
+    expect(screen.queryByText(/你好 Mary/)).not.toBeInTheDocument();
   });
 
-  it("首页讲清「不是官方应用」的定位，且没有禁止文案", () => {
+  it("顶栏 Claude 是站内路由，点击后换页且不整页跳转", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new Error("offline"))),
     );
 
-    renderApp();
+    renderApp("/");
+
+    const claude = screen.getByRole("link", { name: "Claude" });
+    expect(claude).toHaveAttribute("href", "/claude");
+    expect(screen.getByRole("link", { name: "Codex" })).toHaveAttribute("href", "/codex");
+
+    await userEvent.click(claude);
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("安心使用 Claude Code");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("不再担心封号");
+    expect(screen.getByRole("link", { name: "Claude" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Codex" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("Claude 页在下载区之后挂 FAQ", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    const downloads = document.getElementById("downloads");
+    const faqQuestion = screen.getByRole("button", { name: /有没有免费版/ });
+    expect(downloads).toBeTruthy();
+    expect(faqQuestion).toBeInTheDocument();
+    expect(
+      downloads!.compareDocumentPosition(faqQuestion) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("/pricing 站内落到 Claude 页定价锚点", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/pricing");
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("安心使用 Claude Code");
+    expect(document.getElementById("pricing")).toBeTruthy();
+    expect(screen.getByText("¥19.9")).toBeInTheDocument();
+  });
+
+  it("/download 站内落到共享下载区", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/download");
+
+    expect(document.getElementById("downloads")).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Mac · Apple 芯片" })).toBeInTheDocument();
+  });
+
+  it("/codex 与首页一样是 Codex 落地页", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/codex");
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("更快开始使用官方 Codex");
-    expect(screen.getByText(/你使用的始终是官方 Codex 应用/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "三步开始" })).toBeInTheDocument();
+  });
+});
+
+describe("Codex 页内容", () => {
+  it("讲清「不是官方应用」的定位，且没有禁止文案", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/");
+
+    expect(screen.getByText(/你使用的始终是官方 Codex 应用/)).toBeInTheDocument();
     expect(screen.queryByText(/向下滚动/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/你好 Mary/)).not.toBeInTheDocument();
     expect(screen.queryByText(/已就绪/)).not.toBeInTheDocument();
     expect(screen.queryByText(/在哪里注册和充值/)).not.toBeInTheDocument();
     expect(screen.queryByText(/当前为内测渠道/)).not.toBeInTheDocument();
@@ -74,7 +152,7 @@ describe("Codex 产品站", () => {
       vi.fn(() => Promise.reject(new Error("offline"))),
     );
 
-    renderApp();
+    renderApp("/");
 
     expect(screen.getByRole("article", { name: "Mac · Apple 芯片" })).toBeInTheDocument();
     expect(screen.getByRole("article", { name: "Mac · Intel" })).toBeInTheDocument();
@@ -88,7 +166,7 @@ describe("Codex 产品站", () => {
       vi.fn(() => Promise.reject(new Error("offline"))),
     );
 
-    renderApp();
+    renderApp("/");
 
     expect(screen.getByText(/与 OpenAI、Anthropic 无从属/)).toBeInTheDocument();
   });
@@ -182,6 +260,67 @@ describe("Codex 产品站", () => {
   });
 });
 
+describe("Claude 页内容", () => {
+  it("讲清防封与双向同步，且没有禁止文案", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    expect(screen.getByRole("heading", { name: "防封方案" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "双向安全同步" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "防封，以及同步" })).toBeInTheDocument();
+    expect(screen.queryByText(/向下滚动/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/主因是防封/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/一个价钱，功能全开/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/把 Claude Code 放到自己的服务器上/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/把 Claude Code 搬进避风港/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/你好 Mary/)).not.toBeInTheDocument();
+  });
+
+  it("简单定价 ¥19.9，邀请两行在订阅按钮下面", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    expect(screen.getByRole("heading", { name: "简单定价" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Claude 包月" })).toBeInTheDocument();
+    expect(screen.getByText("¥19.9")).toBeInTheDocument();
+    expect(screen.getByText(/\/ 月/)).toBeInTheDocument();
+
+    const subscribe = screen.getByRole("link", { name: "立即订阅" });
+    expect(subscribe).toHaveAttribute("href", "https://api.lumio.games/purchase");
+
+    const invite = screen.getByText(/经朋友邀请注册并登录 APP/);
+    const once = screen.getByText("首月免费（每个账号限一次）");
+    expect(subscribe.compareDocumentPosition(invite) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(invite.compareDocumentPosition(once) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(invite.textContent).not.toContain("首月免费（每个账号限一次）");
+  });
+
+  it("FAQ 手风琴同时只展开一项", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    const question = screen.getByRole("button", { name: /有没有免费版/ });
+    expect(question).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(question);
+
+    expect(question).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/免费试用一个月/)).toBeInTheDocument();
+  });
+});
+
 describe("帮助中心", () => {
   it("至少能渲染 5 个主题，并注明规范 URL", () => {
     vi.stubGlobal(
@@ -199,6 +338,16 @@ describe("帮助中心", () => {
     expect(within(topics).getByRole("link", { name: /修复/ })).toBeInTheDocument();
     expect(within(topics).getByRole("link", { name: /Claude 连服务器/ })).toBeInTheDocument();
     expect(screen.getByText("https://bestcodex.app/help")).toBeInTheDocument();
-    expect(screen.getByText("https://codex.bestcodex.app/help")).toBeInTheDocument();
+    expect(screen.queryByText("https://codex.bestcodex.app/help")).not.toBeInTheDocument();
+  });
+
+  it("顶栏帮助链到同一套内容", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/");
+    expect(screen.getByRole("link", { name: "帮助" }).getAttribute("href")).toMatch(/\/help$/);
   });
 });

@@ -34,3 +34,4 @@
 | [0004](0004-cchaven-desktop-union-merge-recovery.md) | CC避风港桌面端以引擎兼容的 P2 为骨架，把 P1 的产品外壳整段移植上去 | 生效 |
 | [0005](0005-lumio-first-official-app-install.md) | 首次允许在 Lumio 内下载原样官方桌面应用，镜像优先、客户端集中源常量 | 生效 |
 | [0006](0006-official-app-install-destination.md) | 官方应用首次安装允许用户选择安装目录，Windows 便携路线升为一等选项但默认仍走 MSIX | 生效 |
+| [0007](0007-bestcodex-apex-portal-coexistence.md) | 产品站占用 bestcodex.app 营销 apex，门户本期内保持独立部署 | 生效 |

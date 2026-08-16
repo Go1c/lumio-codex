@@ -28,10 +28,7 @@ function Shell() {
     <SiteShell
       site="portal"
       brand={{ name: "Lumio" }}
-      nav={[
-        { label: "Lumio Codex", href: siteUrl("codex") },
-        { label: "CC避风港", href: siteUrl("cc") },
-      ]}
+      nav={[{ label: "BestCodex", href: siteUrl("codex") }]}
       account={{ status: session.status, email: session.profile?.email }}
       accountLinks={{ login: "/login", signup: "/signup", account: "/account" }}
       footerExtra={

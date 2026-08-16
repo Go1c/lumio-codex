@@ -4,6 +4,7 @@ import {
   apiBaseUrl,
   ccControlBaseUrl,
   cookieDomainFor,
+  helpProductUrl,
   isAllowedNext,
   portalAccountLinks,
   portalUrl,
@@ -17,15 +18,31 @@ afterEach(() => {
 });
 
 describe("站点地址", () => {
-  it("三站默认落在 bestcodex.app 及其子域", () => {
+  it("产品站默认是单站 + 路由，不是子域", () => {
     expect(siteUrl("portal")).toBe("https://bestcodex.app");
-    expect(siteUrl("cc")).toBe("https://cc.bestcodex.app");
-    expect(siteUrl("codex")).toBe("https://codex.bestcodex.app");
+    expect(siteUrl("codex")).toBe("https://bestcodex.app/codex");
+    expect(siteUrl("cc")).toBe("https://bestcodex.app/claude");
   });
 
-  it("环境变量可整体覆盖，便于本地起三个端口联调", () => {
+  it("环境变量可整体覆盖，便于本地起两个端口联调", () => {
     vi.stubEnv("VITE_PORTAL_URL", "http://localhost:5280/");
+    vi.stubEnv("VITE_CODEX_URL", "http://localhost:5282/codex");
+    vi.stubEnv("VITE_CC_URL", "http://localhost:5282/claude");
     expect(siteUrl("portal")).toBe("http://localhost:5280");
+    expect(siteUrl("codex")).toBe("http://localhost:5282/codex");
+    expect(siteUrl("cc")).toBe("http://localhost:5282/claude");
+  });
+
+  it("根域覆盖会改默认产品站路由，不改 Sub2API", () => {
+    vi.stubEnv("VITE_ROOT_DOMAIN", "example.test");
+    expect(siteUrl("codex")).toBe("https://example.test/codex");
+    expect(siteUrl("cc")).toBe("https://example.test/claude");
+    expect(apiBaseUrl()).toBe("https://api.lumio.games");
+    expect(purchaseUrl()).toBe("https://api.lumio.games/purchase");
+  });
+
+  it("产品站帮助落在 apex /help，不拼到 /codex/help", () => {
+    expect(helpProductUrl()).toBe("https://bestcodex.app/help");
   });
 
   it("充值地址跟随 API base，默认是生产 Sub2API", () => {

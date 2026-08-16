@@ -61,8 +61,8 @@ describe("SiteShell · 产品站", () => {
 
     const codex = screen.getByRole("link", { name: "Codex" });
     const claude = screen.getByRole("link", { name: "Claude" });
-    expect(codex).toHaveAttribute("href", siteUrl("codex"));
-    expect(claude).toHaveAttribute("href", siteUrl("cc"));
+    expect(codex).toHaveAttribute("href", "/codex");
+    expect(claude).toHaveAttribute("href", "/claude");
     expect(codex).toHaveAttribute("aria-current", "page");
     expect(claude).not.toHaveAttribute("aria-current");
     expect(claude).not.toHaveAttribute("hidden");
@@ -172,10 +172,7 @@ describe("SiteShell · 门户", () => {
       <SiteShell
         brand={{ name: "Lumio" }}
         site="portal"
-        nav={[
-          { label: "Lumio Codex", href: siteUrl("codex") },
-          { label: "CC避风港", href: siteUrl("cc") },
-        ]}
+        nav={[{ label: "BestCodex", href: siteUrl("codex") }]}
         accountLinks={{ login: "/login", signup: "/signup", account: "/account" }}
       >
         <p>门户内容</p>
@@ -184,9 +181,11 @@ describe("SiteShell · 门户", () => {
 
     expect(screen.getByRole("link", { name: /^Lumio$/ })).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: "产品" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Lumio Codex" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "CC避风港" })).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("link", { name: "Lumio Codex" }).some(
-        (link) => link.getAttribute("href") === "https://codex.bestcodex.app",
+      screen.getAllByRole("link", { name: "BestCodex" }).some(
+        (link) => link.getAttribute("href") === "https://bestcodex.app/codex",
       ),
     ).toBe(true);
   });
