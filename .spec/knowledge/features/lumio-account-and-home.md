@@ -24,10 +24,10 @@ metadata:
 - **实现面**：
   - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch / official_app_install / autostart）
   - 开机启动（壳自身，非官方 Codex）：`autostart.rs` 默认开启（opt-out）——bootstrap 时对从未表达偏好的用户注册一次，用户关闭后偏好落 `state_dir()/launch-at-login.json` 永不自动重开；macOS 写 `~/Library/LaunchAgents/games.lumio.codex.plist`（launchd 拉起），Windows 经 `reg.exe` 写 HKCU Run（参数走 `Command::args`，无 shell 解析）；cargo 直跑（非 .app bundle / target 目录）不支持并报 `PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED`；系统现状为权威上报，用户从系统设置移除不自动恢复；零新依赖
-  - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI；缓存文件按平台带 `.msix`/`.dmg` 扩展名（裸名会让 Windows 签名/部署工具认不出包，D-21）；镜像 v5 起 sha 缺位时用 per-arch `contentLength` 做尺寸防线；Windows Authenticode 预检三态——钉选通过 / 确凿不匹配拒绝 / 预检不可用仅在侧载路线放行（`Add-AppxPackage` 系统级签名验证 + 装后包族钉选双兜底），便携路线无系统兜底必须硬失败（D-21）
+  - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI；缓存文件按平台带 `.msix`/`.dmg` 扩展名（裸名会让 Windows 签名/部署工具认不出包，D-21）；镜像 v5 起 sha 缺位时用 per-arch `contentLength` 做尺寸防线；Windows Authenticode 预检三态——钉选通过 / 确凿不匹配拒绝 / 预检不可用仅在侧载路线放行（`Add-AppxPackage` 系统级签名验证 + 装后包族钉选双兜底），便携路线无系统兜底必须硬失败（D-21）；**安装位置可选**（ADR-0006 / D-23）：主按钮先弹「选择安装位置」——Windows「标准安装（MSIX，默认）」与「选择安装目录（便携解压，钉选校验不降级）」并列，macOS 默认 /Applications 可任选；安装成功即删安装包（失败保留重试）；自选目录的最终安装路径持久化到 `state_dir()/official-app-path.json` 并优先于自动探测（失效回落，防重启后误判未安装重复装）
   - Tauri：仅 `lumio_` 命令白名单（含 `lumio_install_official_app` / `lumio_official_app_status` / `lumio_cancel_official_app`）；秘密不跨 IPC
   - 前端：`codex/apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair；安装进度挂在 ready 首页，不新增全屏阶段
-  - 配置接管以**快照存在性**判定首次，不以 manifest；敏感文件经 `secret_file::write_secret` 创建即 0600
+  - 配置接管以**快照存在性**判定首次，不以 manifest；敏感文件经 `secret_file::write_secret` 创建即 0600；接管产物里 provider 是**内联表**（`model_providers = { lumio = {...} }`），对它做字段增删必须同时覆盖 inline / 标准表两种形态——只认 `as_table_mut` 的移除是死代码（D-22）；bootstrap 对 Healthy 接管做 legacy `env_key` 愈合并同步 manifest 哈希（D-22：旧接管残留该字段时官方 Codex 聊天必报 Missing environment variable，Healthy 状态永不重接管，必须在启动编排前单独清）
   - 启动仍走 `launch::launch_official_codex`（macOS `open -a`，Windows 直接拉官方可执行文件），无注入 / CDP
 
 ## 待解决
