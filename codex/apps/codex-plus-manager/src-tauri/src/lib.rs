@@ -1,4 +1,11 @@
 mod claude_commands;
+mod claude_conflicts;
+mod claude_deploy;
+mod claude_files;
+mod claude_ssh;
+mod claude_sync;
+mod claude_terminal;
+mod claude_tunnel;
 #[allow(dead_code)]
 mod commands;
 #[allow(dead_code)]
@@ -26,6 +33,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(lumio_commands::LumioSession::new().map_err(|error| error.to_string())?);
+            app.manage(claude_sync::SyncEngine::new());
+            app.manage(claude_terminal::TerminalManager::new());
+            app.manage(claude_tunnel::TunnelManager::new());
             let mut main_window_builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -81,6 +91,15 @@ pub fn run() {
             claude_commands::lumio_claude_open_system_terminal,
             claude_commands::lumio_claude_run_remote,
             claude_commands::lumio_claude_list_local_files,
+            claude_commands::lumio_claude_list_files,
+            claude_commands::lumio_claude_preview_file,
+            claude_commands::lumio_claude_list_conflicts,
+            claude_commands::lumio_claude_resolve_conflict,
+            claude_commands::lumio_claude_conflict_diff,
+            claude_commands::lumio_claude_list_ssh_hosts,
+            claude_commands::lumio_claude_start_terminal,
+            claude_commands::lumio_claude_write_terminal,
+            claude_commands::lumio_claude_resize_terminal,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])

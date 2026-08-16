@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 
-import { hydrateClaudeWorkspace } from "../../claude/session.ts";
+import { ensureClaudeEngineBridge, hydrateClaudeWorkspace } from "../../claude/session.ts";
 import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
 import type { LumioAccountSummary } from "../../types.ts";
 import { ClaudeConnect } from "./ClaudeConnect.tsx";
@@ -24,6 +24,7 @@ export function ClaudeWorkspace({
   const state = useSyncExternalStore(subscribeClaudeStore, getClaudeState, getClaudeState);
 
   useEffect(() => {
+    ensureClaudeEngineBridge();
     void hydrateClaudeWorkspace(account);
   }, [account?.email, account?.planLabel]);
 

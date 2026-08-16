@@ -1,15 +1,26 @@
-//! Thin Claude/SSH helpers for the launcher tab.
+//! Claude Tab commands: probe, deploy, first-sync, PTY, files, conflicts.
 //!
-//! No `fns-*` crates and no new Cargo deps: TCP + `std::process` `ssh`.
-//! Passwords never go on argv and are never written to logs.
+//! No `fns-*` crates. The sidecar is spawned as a binary; passwords never go
+//! on argv and are never written to logs.
 
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::claude_conflicts::{self, ConflictStore, Resolution};
+use crate::claude_deploy;
+use crate::claude_files::{self, expand_local_root};
+use crate::claude_ssh::{
+    AskpassGuard, ResolvedSshTarget, SshHost, parse_ssh_config, resolve_from_user_config,
+    ssh_invocation_args,
+};
+use crate::claude_sync::{self, SYNC_PROGRESS_EVENT, SyncEngine, SyncProgress};
+use crate::claude_terminal::TerminalManager;
+use crate::claude_tunnel::TunnelManager;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const BANNER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -78,45 +89,20 @@ pub struct ClaudeRemoteOutput {
     pub code: i32,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeFileEntry {
-    pub path: String,
-    pub name: String,
-    pub kind: String,
-}
-
 pub(crate) fn ssh_base_args(
     host: &str,
     user: &str,
     port: u16,
     key_path: Option<&str>,
 ) -> Vec<String> {
-    let mut args = vec![
-        "-o".into(),
-        format!("ConnectTimeout={}", PROBE_TIMEOUT.as_secs()),
-        "-o".into(),
-        "StrictHostKeyChecking=accept-new".into(),
-        "-o".into(),
-        "NumberOfPasswordPrompts=1".into(),
-        "-p".into(),
-        port.to_string(),
-    ];
-    if let Some(key) = key_path.filter(|value| !value.is_empty()) {
-        args.push("-i".into());
-        args.push(key.to_string());
-        args.push("-o".into());
-        args.push("PreferredAuthentications=publickey".into());
-        args.push("-o".into());
-        args.push("BatchMode=yes".into());
-    } else {
-        args.push("-o".into());
-        args.push("PreferredAuthentications=password,keyboard-interactive".into());
-        args.push("-o".into());
-        args.push("PubkeyAuthentication=no".into());
-    }
-    args.push(format!("{user}@{host}"));
-    args
+    let target = ResolvedSshTarget {
+        host: host.to_string(),
+        user: user.to_string(),
+        port,
+        alias: None,
+        use_config: false,
+    };
+    ssh_invocation_args(&target, key_path, None)
 }
 
 fn classify_ssh_error(stderr: &str) -> &'static str {
@@ -162,80 +148,32 @@ fn probe_banner(host: &str, port: u16) -> Result<String, &'static str> {
     }
 }
 
-struct AskpassGuard {
-    script: PathBuf,
-}
-
-impl AskpassGuard {
-    fn start(password: &str) -> Result<Self, &'static str> {
-        let script = std::env::temp_dir().join(format!(
-            "bestcodex-askpass-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        #[cfg(windows)]
-        {
-            let path = script.with_extension("cmd");
-            std::fs::write(
-                &path,
-                "@echo off\r\n<nul set /p=%BESTCODEX_SSH_ASKPASS%\r\n",
-            )
-            .map_err(|_| "SSH_PROBE_FAILED")?;
-            let _ = password;
-            return Ok(Self { script: path });
-        }
-        #[cfg(not(windows))]
-        {
-            std::fs::write(&script, "#!/bin/sh\nprintf %s \"$BESTCODEX_SSH_ASKPASS\"\n")
-                .map_err(|_| "SSH_PROBE_FAILED")?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = std::fs::metadata(&script)
-                    .map_err(|_| "SSH_PROBE_FAILED")?
-                    .permissions();
-                perms.set_mode(0o700);
-                let _ = std::fs::set_permissions(&script, perms);
-            }
-            let _ = password;
-            Ok(Self { script })
-        }
-    }
-
-    fn configure(&self, command: &mut Command, password: &str) {
-        command.env("SSH_ASKPASS", &self.script);
-        command.env("SSH_ASKPASS_REQUIRE", "force");
-        command.env("DISPLAY", ":0");
-        command.env("BESTCODEX_SSH_ASKPASS", password);
-        command.stdin(Stdio::null());
-    }
-}
-
-impl Drop for AskpassGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.script);
-    }
-}
-
 fn run_ssh(
     host: &str,
     user: &str,
     port: u16,
     password: Option<&str>,
     key_path: Option<&str>,
+    host_alias: Option<&str>,
     remote: &str,
 ) -> Result<std::process::Output, &'static str> {
-    let mut args = ssh_base_args(host, user, port, key_path);
-    args.push(remote.to_string());
+    let target = resolve_from_user_config(host, Some(user), port, host_alias)?;
+    run_ssh_target(&target, password, key_path, remote)
+}
+
+fn run_ssh_target(
+    target: &ResolvedSshTarget,
+    password: Option<&str>,
+    key_path: Option<&str>,
+    remote: &str,
+) -> Result<std::process::Output, &'static str> {
+    let args = ssh_invocation_args(target, key_path, Some(remote));
     let mut command = Command::new("ssh");
     command.args(&args);
     command.env("LC_ALL", "C");
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let askpass = if key_path.map(|v| !v.is_empty()).unwrap_or(false) {
+    let askpass = if key_path.map(|v| !v.is_empty()).unwrap_or(false) || target.use_config {
         None
     } else if let Some(password) = password {
         let guard = AskpassGuard::start(password)?;
@@ -266,26 +204,25 @@ fn parse_system_info(stdout: &str) -> (Option<String>, Option<String>, Option<St
     (distro, cpu, memory)
 }
 
-fn expand_local_root(local_root: &str) -> PathBuf {
-    if let Some(rest) = local_root.strip_prefix("~/") {
-        let home = std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        home.join(rest)
-    } else {
-        PathBuf::from(local_root)
-    }
-}
-
 fn human_detail(code: &str, host: &str, port: u16) -> String {
     match code {
         "SSH_AUTH_FAILED" => format!("无法登录 {host}。"),
         "SSH_UNREACHABLE" => format!("连不上 {host}:{port}。"),
         "SSH_NOT_SSH" => format!("{host}:{port} 不是 SSH 服务。"),
         "SSH_CLIENT_MISSING" => "这台电脑还没有 ssh 命令。".into(),
+        "SSH_ALIAS_UNKNOWN" => "本机 SSH 配置里没有这个 Host 别名。".into(),
+        "DEPLOY_ARTIFACT_MISSING" => "这台电脑还没有同步组件，装不上服务器。".into(),
+        "SSH_PREPARE_FAILED" => "没能在服务器上装好同步组件。".into(),
         _ => "连不上这台服务器。".into(),
     }
+}
+
+fn conflict_dir() -> std::path::PathBuf {
+    let base = directories::BaseDirs::new()
+        .map(|dirs| dirs.config_dir().join("BestCodex").join("claude-conflicts"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".bestcodex-conflicts"));
+    let _ = std::fs::create_dir_all(&base);
+    base
 }
 
 #[tauri::command]
@@ -295,6 +232,7 @@ pub fn lumio_claude_probe_connection(
     port: u16,
     password: Option<String>,
     key_path: Option<String>,
+    host_alias: Option<String>,
 ) -> ClaudeCommandResult<ClaudeProbePayload> {
     let host = host.trim().to_string();
     let user = if user.trim().is_empty() {
@@ -303,21 +241,25 @@ pub fn lumio_claude_probe_connection(
         user.trim().to_string()
     };
     let port = if port == 0 { 22 } else { port };
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
 
-    if host.is_empty() {
-        return ClaudeCommandResult::ok(ClaudeProbePayload {
-            ok: false,
-            reachable: false,
-            authenticated: false,
-            distro: None,
-            cpu: None,
-            memory: None,
-            error_code: Some("SSH_HOST_REQUIRED".into()),
-            detail: Some("先填写公网 IP。".into()),
-        });
-    }
+    let target = match resolve_from_user_config(&host, Some(&user), port, alias) {
+        Ok(target) => target,
+        Err(code) => {
+            return ClaudeCommandResult::ok(ClaudeProbePayload {
+                ok: false,
+                reachable: false,
+                authenticated: false,
+                distro: None,
+                cpu: None,
+                memory: None,
+                error_code: Some(code.into()),
+                detail: Some(human_detail(code, &host, port)),
+            });
+        }
+    };
 
-    if let Err(code) = probe_banner(&host, port) {
+    if let Err(code) = probe_banner(&target.host, target.port) {
         return ClaudeCommandResult::ok(ClaudeProbePayload {
             ok: false,
             reachable: false,
@@ -326,19 +268,12 @@ pub fn lumio_claude_probe_connection(
             cpu: None,
             memory: None,
             error_code: Some(code.into()),
-            detail: Some(human_detail(code, &host, port)),
+            detail: Some(human_detail(code, &target.host, target.port)),
         });
     }
 
     let remote = ". /etc/os-release 2>/dev/null; echo DISTRO:${PRETTY_NAME:-unknown}; nproc >/tmp/.bc-nproc 2>/dev/null; echo CPU:$(nproc 2>/dev/null || echo ?); echo MEM:$(awk '/MemTotal/ {printf \"%.0f GB\", $2/1024/1024}' /proc/meminfo 2>/dev/null)";
-    match run_ssh(
-        &host,
-        &user,
-        port,
-        password.as_deref(),
-        key_path.as_deref(),
-        remote,
-    ) {
+    match run_ssh_target(&target, password.as_deref(), key_path.as_deref(), remote) {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let (distro, cpu, memory) = parse_system_info(&stdout);
@@ -364,7 +299,7 @@ pub fn lumio_claude_probe_connection(
                 cpu: None,
                 memory: None,
                 error_code: Some(code.into()),
-                detail: Some(human_detail(code, &host, port)),
+                detail: Some(human_detail(code, &target.host, target.port)),
             })
         }
         Err(code) => ClaudeCommandResult::ok(ClaudeProbePayload {
@@ -375,93 +310,165 @@ pub fn lumio_claude_probe_connection(
             cpu: None,
             memory: None,
             error_code: Some(code.into()),
-            detail: Some(human_detail(code, &host, port)),
+            detail: Some(human_detail(code, &target.host, target.port)),
         }),
     }
 }
 
 #[tauri::command]
 pub fn lumio_claude_prepare_remote(
+    app: AppHandle,
     host: String,
     user: String,
     port: u16,
     password: Option<String>,
     key_path: Option<String>,
+    host_alias: Option<String>,
     remote_root: String,
     local_root: String,
 ) -> ClaudeCommandResult<ClaudePreparePayload> {
-    let local = expand_local_root(&local_root);
-    if std::fs::create_dir_all(&local).is_err() {
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
+    let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
+        Ok(target) => target,
+        Err(code) => {
+            return ClaudeCommandResult::ok(ClaudePreparePayload {
+                ok: false,
+                error_code: Some(code.into()),
+                detail: Some(human_detail(code, host.trim(), port)),
+            });
+        }
+    };
+    let resource_dir = app.path().resource_dir().ok();
+    let artifacts = claude_deploy::find_artifacts(resource_dir.as_deref());
+    let planned = claude_deploy::prepare_components(
+        &target.host,
+        &target.user,
+        target.port,
+        alias,
+        &local_root,
+        artifacts.as_ref(),
+    );
+    if !planned.ok {
         return ClaudeCommandResult::ok(ClaudePreparePayload {
             ok: false,
-            error_code: Some("SSH_PREPARE_FAILED".into()),
-            detail: Some("没能创建本机项目目录。".into()),
+            error_code: planned.error_code,
+            detail: planned.detail,
         });
     }
-
-    let quoted = remote_root.replace('\'', "'\\''");
-    match run_ssh(
-        host.trim(),
-        user.trim(),
-        if port == 0 { 22 } else { port },
+    let Some(artifacts) = artifacts else {
+        return ClaudeCommandResult::ok(ClaudePreparePayload {
+            ok: false,
+            error_code: Some("DEPLOY_ARTIFACT_MISSING".into()),
+            detail: Some(human_detail(
+                "DEPLOY_ARTIFACT_MISSING",
+                &target.host,
+                target.port,
+            )),
+        });
+    };
+    let outcome = claude_deploy::deploy_remote(
+        &target,
         password.as_deref(),
         key_path.as_deref(),
-        &format!("mkdir -p '{quoted}'"),
-    ) {
-        Ok(output) if output.status.success() => ClaudeCommandResult::ok(ClaudePreparePayload {
-            ok: true,
-            error_code: None,
-            detail: None,
-        }),
-        Ok(_) | Err(_) => ClaudeCommandResult::ok(ClaudePreparePayload {
-            ok: false,
-            error_code: Some("SSH_PREPARE_FAILED".into()),
-            detail: Some("没能在服务器上建好项目目录。".into()),
-        }),
-    }
+        &remote_root,
+        &artifacts,
+        |remote| run_ssh_target(&target, password.as_deref(), key_path.as_deref(), remote),
+    );
+    ClaudeCommandResult::ok(ClaudePreparePayload {
+        ok: outcome.ok,
+        error_code: outcome.error_code,
+        detail: outcome.detail,
+    })
 }
 
 #[tauri::command]
 pub fn lumio_claude_first_sync(
+    app: AppHandle,
     host: String,
     user: String,
     port: u16,
     password: Option<String>,
     key_path: Option<String>,
+    host_alias: Option<String>,
     remote_root: String,
     local_root: String,
+    project_id: Option<String>,
 ) -> ClaudeCommandResult<ClaudeSyncPayload> {
-    let local = expand_local_root(&local_root);
-    let _ = std::fs::create_dir_all(&local);
-    let quoted = remote_root.replace('\'', "'\\''");
-    let remote_cmd = format!("mkdir -p '{quoted}' && find '{quoted}' -type f 2>/dev/null | wc -l");
-    match run_ssh(
-        host.trim(),
-        user.trim(),
-        if port == 0 { 22 } else { port },
-        password.as_deref(),
-        key_path.as_deref(),
-        &remote_cmd,
-    ) {
-        Ok(output) if output.status.success() => {
-            let total = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .parse::<u32>()
-                .unwrap_or(0);
-            ClaudeCommandResult::ok(ClaudeSyncPayload {
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
+    let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
+        Ok(target) => target,
+        Err(code) => {
+            return ClaudeCommandResult::ok(ClaudeSyncPayload {
                 ok: false,
                 files_done: 0,
-                files_total: total,
-                error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
-            })
+                files_total: 0,
+                error_code: Some(code.into()),
+            });
         }
-        _ => ClaudeCommandResult::ok(ClaudeSyncPayload {
-            ok: false,
-            files_done: 0,
-            files_total: 0,
-            error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
-        }),
+    };
+    let key = project_id
+        .clone()
+        .unwrap_or_else(|| format!("{}@{}", target.user, target.host));
+    let app_progress = app.clone();
+    let watch_progress = app.clone();
+    let engine = app.state::<SyncEngine>();
+    let outcome = engine.run_first_sync(&key, &local_root, None, move |progress: SyncProgress| {
+        let _ = app_progress.emit(SYNC_PROGRESS_EVENT, progress);
+    });
+    if outcome.ok {
+        return ClaudeCommandResult::ok(ClaudeSyncPayload {
+            ok: true,
+            files_done: outcome.files_done,
+            files_total: outcome.files_total,
+            error_code: None,
+        });
     }
+    if outcome.error_code.as_deref() != Some("SYNC_ENGINE_UNAVAILABLE") {
+        return ClaudeCommandResult::ok(ClaudeSyncPayload {
+            ok: false,
+            files_done: outcome.files_done,
+            files_total: outcome.files_total,
+            error_code: outcome.error_code,
+        });
+    }
+
+    if claude_sync::sidecar_command().is_some() {
+        if let Ok(local_port) =
+            app.state::<TunnelManager>()
+                .open(&key, &target, key_path.as_deref(), 9000)
+        {
+            let state_dir = expand_local_root(&local_root).join(".bestcodex-sync");
+            if let Ok(config) = claude_sync::write_agent_config(
+                &state_dir,
+                &expand_local_root(&local_root),
+                &format!("ws://127.0.0.1:{local_port}/api/user/workspace-sync/v2"),
+                &key,
+                &key,
+            ) {
+                if engine.adopt_sidecar(&key, &config).is_ok() {
+                    let _ = remote_root;
+                    let _ = password;
+                    engine.watch_local_files(&key, local_root.clone(), move |progress| {
+                        let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
+                    });
+                    let files = claude_sync::count_files(&expand_local_root(&local_root));
+                    return ClaudeCommandResult::ok(ClaudeSyncPayload {
+                        ok: true,
+                        files_done: files,
+                        files_total: files.max(1),
+                        error_code: None,
+                    });
+                }
+            }
+        }
+    }
+
+    ClaudeCommandResult::ok(ClaudeSyncPayload {
+        ok: false,
+        files_done: outcome.files_done,
+        files_total: outcome.files_total,
+        error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+    })
 }
 
 #[tauri::command]
@@ -537,6 +544,7 @@ pub fn lumio_claude_run_remote(
     port: u16,
     password: Option<String>,
     key_path: Option<String>,
+    host_alias: Option<String>,
     command: String,
 ) -> ClaudeCommandResult<ClaudeRemoteOutput> {
     match run_ssh(
@@ -545,6 +553,7 @@ pub fn lumio_claude_run_remote(
         if port == 0 { 22 } else { port },
         password.as_deref(),
         key_path.as_deref(),
+        host_alias.as_deref(),
         command.trim(),
     ) {
         Ok(output) => ClaudeCommandResult::ok(ClaudeRemoteOutput {
@@ -559,29 +568,231 @@ pub fn lumio_claude_run_remote(
 #[tauri::command]
 pub fn lumio_claude_list_local_files(
     local_root: String,
-) -> ClaudeCommandResult<Vec<ClaudeFileEntry>> {
+) -> ClaudeCommandResult<Vec<claude_files::FileNode>> {
     let root = expand_local_root(&local_root);
-    let mut entries = Vec::new();
-    if let Ok(read) = std::fs::read_dir(&root) {
-        for entry in read.flatten().take(200) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
-            let kind = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                "directory"
-            } else {
-                "file"
-            };
-            entries.push(ClaudeFileEntry {
-                path: entry.path().to_string_lossy().into_owned(),
-                name,
-                kind: kind.into(),
-            });
+    let entries = claude_files::read_tree(&root, "local", 8).unwrap_or_default();
+    ClaudeCommandResult::ok(entries)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeFileTrees {
+    pub local: Vec<claude_files::FileNode>,
+    pub remote: Vec<claude_files::FileNode>,
+}
+
+#[tauri::command]
+pub fn lumio_claude_list_files(
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    local_root: String,
+    remote_root: String,
+) -> ClaudeCommandResult<ClaudeFileTrees> {
+    let local =
+        claude_files::read_tree(&expand_local_root(&local_root), "local", 8).unwrap_or_default();
+    let quoted = remote_root.replace('\'', "'\\''");
+    let remote = match run_ssh(
+        host.trim(),
+        user.trim(),
+        if port == 0 { 22 } else { port },
+        password.as_deref(),
+        key_path.as_deref(),
+        host_alias.as_deref(),
+        &format!("find '{quoted}' -mindepth 1 2>/dev/null | sed 's|^{quoted}/||'"),
+    ) {
+        Ok(output) if output.status.success() => {
+            claude_files::parse_remote_listing(&String::from_utf8_lossy(&output.stdout), "remote")
+        }
+        _ => Vec::new(),
+    };
+    ClaudeCommandResult::ok(ClaudeFileTrees { local, remote })
+}
+
+#[tauri::command]
+pub fn lumio_claude_preview_file(
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    local_root: String,
+    remote_root: String,
+    path: String,
+    side: String,
+) -> ClaudeCommandResult<claude_files::FilePreview> {
+    if side == "remote" {
+        let quoted_root = remote_root.replace('\'', "'\\''");
+        let quoted_path = path.replace('\'', "'\\''");
+        match run_ssh(
+            host.trim(),
+            user.trim(),
+            if port == 0 { 22 } else { port },
+            password.as_deref(),
+            key_path.as_deref(),
+            host_alias.as_deref(),
+            &format!("head -c 1048576 '{quoted_root}/{quoted_path}'"),
+        ) {
+            Ok(output) => ClaudeCommandResult::ok(claude_files::FilePreview {
+                path,
+                side,
+                content: String::from_utf8_lossy(&output.stdout).into_owned(),
+                too_large: false,
+                binary: output.stdout.iter().take(512).any(|b| *b == 0),
+            }),
+            Err(code) => ClaudeCommandResult::failed(code),
+        }
+    } else {
+        match claude_files::read_preview(&expand_local_root(&local_root), &path, "local") {
+            Ok(preview) => ClaudeCommandResult::ok(preview),
+            Err(_) => ClaudeCommandResult::failed("SSH_PREPARE_FAILED"),
         }
     }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
-    ClaudeCommandResult::ok(entries)
+}
+
+#[tauri::command]
+pub fn lumio_claude_list_conflicts(
+    project_id: String,
+    local_root: String,
+) -> ClaudeCommandResult<Vec<claude_conflicts::ConflictView>> {
+    let store = match ConflictStore::new(&conflict_dir(), &project_id) {
+        Ok(store) => store,
+        Err(_) => return ClaudeCommandResult::ok(Vec::new()),
+    };
+    let _ = local_root;
+    ClaudeCommandResult::ok(
+        store
+            .list()
+            .into_iter()
+            .map(|conflict| claude_conflicts::ConflictView {
+                id: conflict.id,
+                path: conflict.path,
+                kind_label: conflict.kind_label,
+                local_content: conflict.local.content,
+                remote_content: conflict.remote.content,
+                can_resolve: conflict.can_resolve,
+            })
+            .collect(),
+    )
+}
+
+#[tauri::command]
+pub fn lumio_claude_resolve_conflict(
+    project_id: String,
+    local_root: String,
+    conflict_id: String,
+    resolution: String,
+) -> ClaudeCommandResult<claude_conflicts::ResolutionReceipt> {
+    let store = match ConflictStore::new(&conflict_dir(), &project_id) {
+        Ok(store) => store,
+        Err(_) => {
+            return ClaudeCommandResult {
+                ok: false,
+                error_code: Some("SYNC_FAILED".into()),
+                payload: None,
+            };
+        }
+    };
+    let parsed = match Resolution::parse(&resolution) {
+        Ok(parsed) => parsed,
+        Err(_) => return ClaudeCommandResult::failed("SYNC_FAILED"),
+    };
+    match store.resolve(&expand_local_root(&local_root), &conflict_id, parsed) {
+        Ok(receipt) => ClaudeCommandResult::ok(receipt),
+        Err(_) => ClaudeCommandResult::failed("SYNC_FAILED"),
+    }
+}
+
+#[tauri::command]
+pub fn lumio_claude_conflict_diff(
+    project_id: String,
+    local_root: String,
+    conflict_id: String,
+) -> ClaudeCommandResult<serde_json::Value> {
+    let store = match ConflictStore::new(&conflict_dir(), &project_id) {
+        Ok(store) => store,
+        Err(_) => return ClaudeCommandResult::failed("SYNC_FAILED"),
+    };
+    let _ = local_root;
+    let Some(conflict) = store.list().into_iter().find(|item| item.id == conflict_id) else {
+        return ClaudeCommandResult::failed("SYNC_FAILED");
+    };
+    ClaudeCommandResult::ok(serde_json::json!({
+        "path": conflict.path,
+        "local": conflict.local.content,
+        "remote": conflict.remote.content,
+    }))
+}
+
+#[tauri::command]
+pub fn lumio_claude_list_ssh_hosts() -> ClaudeCommandResult<Vec<SshHost>> {
+    ClaudeCommandResult::ok(parse_ssh_config().unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn lumio_claude_start_terminal(
+    app: AppHandle,
+    project_id: String,
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    remote_root: String,
+    cols: u16,
+    rows: u16,
+) -> ClaudeCommandResult<()> {
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
+    let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
+        Ok(target) => target,
+        Err(code) => return ClaudeCommandResult::failed(code),
+    };
+    match app.state::<TerminalManager>().start(
+        &project_id,
+        &target,
+        key_path.as_deref(),
+        password.as_deref(),
+        &remote_root,
+        cols.max(20),
+        rows.max(8),
+        &app,
+    ) {
+        Ok(()) => ClaudeCommandResult::ok(()),
+        Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
+    }
+}
+
+#[tauri::command]
+pub fn lumio_claude_write_terminal(
+    app: AppHandle,
+    project_id: String,
+    bytes: Vec<u8>,
+) -> ClaudeCommandResult<()> {
+    match app.state::<TerminalManager>().write(&project_id, &bytes) {
+        Ok(()) => ClaudeCommandResult::ok(()),
+        Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
+    }
+}
+
+#[tauri::command]
+pub fn lumio_claude_resize_terminal(
+    app: AppHandle,
+    project_id: String,
+    cols: u16,
+    rows: u16,
+) -> ClaudeCommandResult<()> {
+    match app
+        .state::<TerminalManager>()
+        .resize(&project_id, cols, rows)
+    {
+        Ok(()) => ClaudeCommandResult::ok(()),
+        Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
+    }
 }
 
 #[allow(dead_code)]

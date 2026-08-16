@@ -1,5 +1,5 @@
 import { initialClaudeState, persistableClaudeState, reduceClaudeState } from "./machine.ts";
-import type { ClaudeEvent, ClaudeState, PersistableClaudeState } from "./types.ts";
+import type { ClaudeEvent, ClaudeProject, ClaudeState, PersistableClaudeState } from "./types.ts";
 
 export const CLAUDE_STORE_KEY = "bestcodex.claude.v1";
 
@@ -25,13 +25,20 @@ function hydrateFromStorage(): ClaudeState {
     if (!parsed || typeof parsed !== "object") return initialClaudeState();
     return reduceClaudeState(initialClaudeState(), {
       type: "projects-hydrated",
-      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      projects: Array.isArray(parsed.projects) ? parsed.projects.map(normalizeProject) : [],
       activeProjectId: parsed.activeProjectId ?? null,
       entitlement: parsed.entitlement,
     });
   } catch {
     return initialClaudeState();
   }
+}
+
+function normalizeProject(project: ClaudeProject): ClaudeProject {
+  return {
+    ...project,
+    hostAlias: project.hostAlias ?? null,
+  };
 }
 
 function persist(next: ClaudeState): void {

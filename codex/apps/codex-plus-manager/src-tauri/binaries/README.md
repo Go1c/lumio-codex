@@ -1,0 +1,1 @@
+Stage real sidecar/remote artifacts with cchaven/scripts/stage-macos-arm64-sidecar.sh and copy into binaries/ and resources/remote/linux-x86_64/. These placeholders exist so Tauri can resolve externalBin/resources during cargo test.

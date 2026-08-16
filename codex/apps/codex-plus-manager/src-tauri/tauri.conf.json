@@ -34,6 +34,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": ["binaries/fns-agent"],
+    "resources": {
+      "resources/remote/linux-x86_64/fns-server": "remote/linux-x86_64/fns-server",
+      "resources/remote/linux-x86_64/fns-agent": "remote/linux-x86_64/fns-agent",
+      "resources/remote/linux-x86_64/release-provenance.json": "remote/linux-x86_64/release-provenance.json"
+    }
   }
 }
