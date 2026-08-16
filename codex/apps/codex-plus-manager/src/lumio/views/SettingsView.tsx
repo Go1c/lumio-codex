@@ -22,7 +22,7 @@ const DETECT_FLASH_MS = 1200;
 // Out-of-scope switches stay disabled with a stated reason rather than pretending
 // to take effect. Telemetry is in the same bucket: the backend only flips an
 // in-memory flag and never sends or persists anything.
-const AUTO_UPDATE_NOTE = "自动安装尚未开放；有新版本时会在首页提醒";
+const AUTO_UPDATE_NOTE = "不会在后台自动安装；有新版本时右下角会弹出提示、设置入口有绿色标记，点击即可下载更新";
 const TELEMETRY_NOTE = "使用数据收集尚未开放";
 const INVALID_APP_COPY = "所选应用无法识别为官方 Codex";
 
@@ -60,12 +60,16 @@ interface SettingsViewProps {
   autoUpdateEnabled: boolean;
   codexApp: LumioCodexApp | null;
   launchAtLoginEnabled: boolean;
+  /** 有新版本时为最新版本号（绿色标记的落点入口），无更新为 null。 */
+  latestVersion: string | null;
   officialAppInstall: LumioOfficialAppInstall;
   signedIn: boolean;
   telemetryEnabled: boolean;
+  updating: boolean;
   onCodexAppChanged: (app: LumioCodexApp) => void;
   onLaunchAtLoginChanged: (enabled: boolean) => void;
   onSignOut: () => void;
+  onUpdateRequested: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
 }
 
@@ -73,12 +77,15 @@ export function SettingsView({
   autoUpdateEnabled,
   codexApp,
   launchAtLoginEnabled,
+  latestVersion,
   officialAppInstall,
   signedIn,
   telemetryEnabled: _telemetryEnabled,
+  updating,
   onCodexAppChanged,
   onLaunchAtLoginChanged,
   onSignOut,
+  onUpdateRequested,
   pushToast,
 }: SettingsViewProps) {
   const [detecting, setDetecting] = useState(false);
@@ -200,6 +207,33 @@ export function SettingsView({
           </div>
           <Toggle checked={autoUpdateEnabled} disabled label={shellLabels.automaticUpdates} />
         </article>
+
+        {latestVersion !== null ? (
+          // 导航绿点的落点：设置里也能直接更新，不必回首页找入口。
+          <article className="lumio-setting-row">
+            <span className="lumio-setting-icon is-update">
+              <Download size={19} />
+            </span>
+            <div>
+              <strong>
+                发现新版本 {latestVersion}
+                <span className="lumio-tag is-success">可更新</span>
+              </strong>
+              <p>点击后下载平台安装包并打开安装向导，安装由你确认完成。</p>
+            </div>
+            <span className="lumio-setting-actions">
+              <button
+                className="lumio-small-button is-update"
+                disabled={updating}
+                onClick={onUpdateRequested}
+                type="button"
+              >
+                <Download size={15} />
+                {updating ? "正在下载…" : "立即更新"}
+              </button>
+            </span>
+          </article>
+        ) : null}
 
         <article className="lumio-setting-row is-path-row">
           <span className="lumio-setting-icon">

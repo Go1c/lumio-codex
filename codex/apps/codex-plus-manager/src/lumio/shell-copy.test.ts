@@ -22,6 +22,9 @@ test("the shell binds exactly the lumio command surface", () => {
     selectCodexApp: "lumio_select_codex_app",
     openBrowser: "lumio_open_browser",
     checkUpdate: "lumio_check_update",
+    downloadUpdate: "lumio_download_update",
+    dismissUpdate: "lumio_dismiss_update",
+    updateNoticeShown: "lumio_update_notice_shown",
     setTelemetry: "lumio_set_telemetry",
     setLaunchAtLogin: "lumio_set_launch_at_login",
     exportLogs: "lumio_export_logs",
@@ -411,13 +414,30 @@ test("the home surface opens payment in the browser when online", async () => {
   assert.doesNotMatch(view, /充值功能尚未开放/);
 });
 
-test("the shell checks for updates and can open the download page", async () => {
+test("the shell checks for updates and offers an in-app manual update", async () => {
   const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
   const view = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+  const settings = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
 
   assert.match(shell, /checkUpdate\(/);
-  assert.match(view, /updateReminder/);
-  assert.match(view, /查看更新/);
+  assert.match(shell, /downloadUpdate\(/);
+  // 右下角常驻弹窗：受频率闸门控制（忽略版本 + 每天一次），「稍后」持久忽略该版本。
+  assert.match(shell, /lumio-update-pop/);
+  assert.match(shell, /立即更新/);
+  assert.match(shell, /noticeMuted/);
+  assert.match(shell, /updateNoticeShown\(/);
+  assert.match(shell, /dismissUpdate\(/);
+  // 绿色标记：设置导航绿点 + footer 常驻入口，不受弹窗 dismiss 影响。
+  assert.match(shell, /lumio-nav-dot/);
+  assert.match(shell, /有新版本/);
+  assert.match(css, /\.lumio-update-pop/);
+  assert.match(css, /\.lumio-nav-dot/);
+  // 设置页是绿点的落点：自动更新行提供立即更新入口。
+  assert.match(settings, /立即更新/);
+  // 首页不再横幅：提示面收敛为弹窗 + 绿标。
+  assert.doesNotMatch(view, /updateReminder/);
+  assert.doesNotMatch(view, /onUpdateRequested/);
 });
 
 test("React entry renders only LumioApp", async () => {

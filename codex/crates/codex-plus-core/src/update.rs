@@ -370,21 +370,33 @@ fn is_macos_native_arch_asset(name: &str) -> bool {
         "aarch64" => "arm64",
         _ => return true, // unknown arch — accept anything
     };
-    // Modern filename shape: `...-macos-x64.dmg` or `...-macos-arm64.dmg`
-    if lower.contains(&format!("-{native_arch_token}.")) {
+    // Modern filename shape: `...-macos-x64.dmg` or `...-macos-arm64.dmg`;
+    // Lumio internal shape appends segments: `...-macos-arm64-internal-unsigned.dmg`.
+    let has_native = [
+        format!("-{native_arch_token}."),
+        format!("-{native_arch_token}-"),
+        format!("_{native_arch_token}."),
+    ]
+    .into_iter()
+    .any(|token| lower.contains(&token));
+    if has_native {
         return true;
     }
     // Old filename shape: `CodexPlusPlus_1.0.9_x64.dmg`
-    if lower.contains(&format!("_{native_arch_token}.")) {
-        return true;
-    }
     // Newer but alternative shape: `..._x64.dmg` (no `macos-` token)
     let other_token = if native_arch_token == "x64" {
         "arm64"
     } else {
         "x64"
     };
-    if lower.contains(&format!("_{other_token}.")) || lower.contains(&format!("-{other_token}.")) {
+    let has_other = [
+        format!("_{other_token}."),
+        format!("-{other_token}."),
+        format!("-{other_token}-"),
+    ]
+    .into_iter()
+    .any(|token| lower.contains(&token));
+    if has_other {
         return false;
     }
     // No arch token at all — assume it matches the current arch.
@@ -392,19 +404,17 @@ fn is_macos_native_arch_asset(name: &str) -> bool {
 }
 
 fn is_windows_installer_asset(name: &str) -> bool {
+    // Lumio CI: `LumioCodex-<ver>-windows-x64-setup-internal-unsigned.exe`;
+    // legacy Codex++: `CodexPlusPlus_1.0.9_x64-setup.exe` — both carry "codex"
+    // plus a setup/installer marker. Bare executables are not installers.
     name.contains("codex")
-        && name.contains("plus")
-        && (name.ends_with(".msi")
-            || name.ends_with("-setup.exe")
-            || name.ends_with("_setup.exe")
-            || name.ends_with("setup.exe")
-            || name.ends_with("installer.exe"))
+        && (name.ends_with(".msi") || name.contains("setup") || name.ends_with("installer.exe"))
 }
 
 fn is_macos_installer_asset(name: &str) -> bool {
     // Loose shape check; arch preference is handled by platform_asset_rank
     // via is_macos_native_arch_asset.
-    name.contains("codex") && name.contains("plus") && name.ends_with(".dmg")
+    name.contains("codex") && name.ends_with(".dmg")
 }
 
 pub fn launch_installer(path: &Path) -> anyhow::Result<()> {

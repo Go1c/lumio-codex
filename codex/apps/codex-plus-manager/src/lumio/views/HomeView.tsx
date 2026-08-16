@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   CloudOff,
-  Download,
   FolderOpen,
   RefreshCw,
   Rocket,
@@ -39,7 +38,6 @@ import type {
   LumioAccountSummary,
   LumioCodexApp,
   LumioOfficialAppInstall,
-  LumioUpdateReminder,
 } from "../types.ts";
 import type { ToastTone } from "./Toast.tsx";
 
@@ -78,25 +76,21 @@ function formatSyncTime(iso: string | null): string {
 
 interface HomeViewProps {
   state: LumioState;
-  updateReminder: LumioUpdateReminder | null;
   onRefreshed: (account: LumioAccountSummary, cachedAt: string) => void;
   onReconnected: (account: LumioAccountSummary, cachedAt: string) => void;
   onCodexAppChanged: (app: LumioCodexApp | null) => void;
   onInstallProgress: (status: LumioOfficialAppInstall) => void;
   onOpenSettings: () => void;
-  onDismissUpdate: () => void;
   pushToast: (input: string, tone?: ToastTone) => void;
 }
 
 export function HomeView({
   state,
-  updateReminder,
   onRefreshed,
   onReconnected,
   onCodexAppChanged,
   onInstallProgress,
   onOpenSettings,
-  onDismissUpdate,
   pushToast,
 }: HomeViewProps) {
   const { account, actionNotes, actions, codexApp, officialAppInstall } = state;
@@ -310,12 +304,6 @@ export function HomeView({
       .finally(() => setPaying(false));
   };
 
-  const openUpdatePage = () => {
-    const url = updateReminder?.downloadUrl;
-    if (!url) return;
-    void openInBrowser(url).catch((error: unknown) => pushToast(errorCodeOf(error)));
-  };
-
   return (
     <div className="lumio-dashboard">
       <section className="lumio-welcome-row">
@@ -329,21 +317,6 @@ export function HomeView({
           凭据由系统保护
         </span>
       </section>
-
-      {updateReminder?.updateAvailable ? (
-        <p className="lumio-notice is-update" role="status">
-          <Download size={15} />
-          <span>
-            发现新版本 {updateReminder.latestVersion ?? ""}（当前 v{updateReminder.currentVersion}）
-          </span>
-          <button className="lumio-small-button" onClick={openUpdatePage} type="button">
-            查看更新
-          </button>
-          <button className="lumio-link-button" onClick={onDismissUpdate} type="button">
-            稍后
-          </button>
-        </p>
-      ) : null}
 
       {reconnected ? (
         <p className="lumio-notice is-success" role="status">
@@ -380,6 +353,16 @@ export function HomeView({
             >
               <WalletCards size={12} />
               {paying ? "正在打开…" : shellLabels.payment}
+            </button>
+            <button
+              className="lumio-small-button is-inline"
+              disabled={!actions.canRefresh || refreshing}
+              onClick={refresh}
+              title={actions.canRefresh ? undefined : (actionNotes.refresh ?? undefined)}
+              type="button"
+            >
+              <RefreshCw size={12} />
+              {refreshing ? "刷新中…" : "刷新余额"}
             </button>
           </small>
         </article>

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Emitter, Manager, WindowEvent};
 
 const TRAY_ID: &str = "lumio_codex_tray";
 const TRAY_MENU_SHOW: &str = "lumio_tray_show";
@@ -58,6 +58,9 @@ pub fn run() {
             lumio_commands::lumio_select_codex_app,
             lumio_commands::lumio_open_browser,
             lumio_commands::lumio_check_update,
+            lumio_commands::lumio_download_update,
+            lumio_commands::lumio_dismiss_update,
+            lumio_commands::lumio_update_notice_shown,
             lumio_commands::lumio_set_telemetry,
             lumio_commands::lumio_set_launch_at_login,
             lumio_commands::lumio_export_logs,
@@ -165,6 +168,9 @@ fn show_main_window<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        // 托盘唤起是「回来看余额」的典型时机；前端监听后按距上次同步节流拉取
+        //（事件名与前端 account-refresh.ts 的 WINDOW_SHOWN_EVENT 逐字一致）。
+        let _ = window.emit("lumio://window-shown", ());
     }
 }
 

@@ -34,6 +34,8 @@ export const LUMIO_ERROR_COPY: Record<string, string> = {
   PREFERENCE_LAUNCH_AT_LOGIN_FAILED: "开机启动设置未生效，请稍后重试",
   PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED: "当前运行方式不支持开机启动",
   UPDATE_VERIFY_FAILED: "更新包校验未通过，已放弃安装",
+  UPDATE_ASSET_UNAVAILABLE: "当前版本没有可下载的更新包",
+  UPDATE_DOWNLOAD_FAILED: "下载更新包失败，请稍后重试",
   UNKNOWN: "出现未知问题，请稍后重试",
 };
 

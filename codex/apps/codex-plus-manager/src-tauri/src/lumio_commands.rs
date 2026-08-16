@@ -125,8 +125,17 @@ pub struct LumioUpdateReminderPayload {
     pub current_version: String,
     pub latest_version: Option<String>,
     pub update_available: bool,
+    /// 弹窗静默位：该版本已被忽略或今天已弹过（绿标入口不受影响）。
+    pub notice_muted: bool,
     pub download_url: String,
     pub release_summary: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioUpdateInstallPayload {
+    pub latest_version: String,
+    pub installer_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -286,8 +295,9 @@ fn result<T>(outcome: Result<T, String>) -> Result<LumioCommandResult<T>, ()> {
 pub fn lumio_bootstrap(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioBootstrapPayload>, ()> {
-    // 默认开机启动（opt-out）：只对从未表达过偏好的用户注册一次；结果以
-    // `current()` 的系统现状为准上报，注册动作本身失败不阻塞启动。
+    // 默认开机启动（opt-out）：只对从未表达过偏好的用户注册一次；偏好开着但
+    // 注册指向旧路径（应用被移动/重装）时重对齐到当前 exe。结果以 `current()`
+    // 的系统现状为准上报，注册动作本身失败不阻塞启动。
     codex_plus_core::lumio::autostart::ensure_default_enabled();
 
     // 旧构建的接管在 config.toml 里留下过 env_key，官方 Codex 因此只认环境变量、
@@ -640,9 +650,57 @@ pub async fn lumio_check_update(
                 current_version: reminder.current_version,
                 latest_version: reminder.latest_version,
                 update_available: reminder.update_available,
+                notice_muted: reminder.notice_muted,
                 download_url: reminder.download_url,
                 release_summary: reminder.release_summary,
             });
+    result(outcome)
+}
+
+/// 弹窗上的「稍后」：忽略这个版本（写本地偏好），下一个版本才恢复弹窗。
+#[tauri::command]
+pub fn lumio_dismiss_update(
+    _session: tauri::State<'_, LumioSession>,
+    version: String,
+) -> Result<LumioCommandResult<LumioEmptyPayload>, ()> {
+    let outcome = (|| {
+        let version = version.trim();
+        if version.is_empty() {
+            return Err("UPDATE_ASSET_UNAVAILABLE".to_string());
+        }
+        let state_dir =
+            product::state_dir().ok_or_else(|| "UPDATE_ASSET_UNAVAILABLE".to_string())?;
+        codex_plus_core::lumio::update_notice::dismiss_version(&state_dir, version)
+            .then_some(LumioEmptyPayload {})
+            .ok_or_else(|| "UPDATE_ASSET_UNAVAILABLE".to_string())
+    })();
+    result(outcome)
+}
+
+/// 弹窗真正渲染时上报：同一天不重复弹（偏好写失败静默，不打扰链路）。
+#[tauri::command]
+pub fn lumio_update_notice_shown(
+    _session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioEmptyPayload>, ()> {
+    if let Some(state_dir) = product::state_dir() {
+        let today = codex_plus_core::lumio::update_notice::today_day(std::time::SystemTime::now());
+        let _ = codex_plus_core::lumio::update_notice::mark_notice_shown(&state_dir, today);
+    }
+    result(Ok(LumioEmptyPayload {}))
+}
+
+/// 用户在「有新版本」提示上主动触发：下载平台安装包并打开安装向导，
+/// 安装本身由用户在向导里完成（不后台自动更新）。
+#[tauri::command]
+pub async fn lumio_download_update(
+    _session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioUpdateInstallPayload>, ()> {
+    let outcome = codex_plus_core::lumio::update_check::download_and_launch_update()
+        .await
+        .map(|install| LumioUpdateInstallPayload {
+            latest_version: install.release.version,
+            installer_path: install.installer_path.to_string_lossy().into_owned(),
+        });
     result(outcome)
 }
 

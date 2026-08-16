@@ -10,3 +10,4 @@ pub mod product;
 mod secret_file;
 pub mod session;
 pub mod update_check;
+pub mod update_notice;

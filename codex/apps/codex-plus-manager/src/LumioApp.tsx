@@ -1,18 +1,29 @@
-import { Home, RefreshCw, Settings } from "lucide-react";
+import { Download, Home, RefreshCw, Settings } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import {
+  ACCOUNT_AUTO_REFRESH_MS,
+  WINDOW_SHOWN_EVENT,
+  WINDOW_SHOWN_REFRESH_MIN_GAP_MS,
+  shouldAutoRefresh,
+} from "./lumio/account-refresh.ts";
 import { lumioErrorLabel } from "./lumio/errors.ts";
 import {
   LumioCommandError,
   SESSION_EXPIRED_ERROR_CODE,
   checkTakeover,
   checkUpdate,
+  dismissUpdate,
+  downloadUpdate,
   loadLumioBootstrap,
   loadPublicSettings,
   onSessionExpired,
   openInBrowser,
+  refreshAccount,
   shellLabels,
   signOut,
+  updateNoticeShown,
 } from "./lumio/invoke.ts";
 import { paymentUrl } from "./lumio/payment.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
@@ -109,6 +120,7 @@ export function LumioApp() {
   const [view, setView] = useState<View>("home");
   const [updateReminder, setUpdateReminder] = useState<LumioUpdateReminder | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const { toasts, pushToast, dismiss } = useToasts();
   // Read by callbacks that must keep a stable identity across renders.
   const stateRef = useRef(state);
@@ -265,6 +277,16 @@ export function LumioApp() {
     (enabled: boolean) => dispatch({ type: "launch-at-login-changed", enabled }),
     [],
   );
+  // 更新始终由用户在提示上主动触发：这里只下载平台安装包并打开安装向导，
+  // 安装本身留给向导（不做后台自动更新）。
+  const onUpdateRequested = useCallback(() => {
+    if (updating) return;
+    setUpdating(true);
+    void downloadUpdate()
+      .then(() => pushToast("已打开更新包，请按安装向导完成更新", "success"))
+      .catch((error: unknown) => pushToast(lumioErrorLabel(errorCodeOf(error))))
+      .finally(() => setUpdating(false));
+  }, [updating, pushToast]);
   const onInstallProgress = useCallback((status: LumioOfficialAppInstall) => {
     dispatch({ type: "official-app-install-progress", status });
   }, []);
@@ -272,6 +294,56 @@ export function LumioApp() {
   const online = state.phase === "ready-online";
   const offline = state.phase === "ready-offline";
   const ready = online || offline;
+
+  // 右下角弹窗的频率闸门：该版本没被忽略过（noticeMuted 由本地偏好跨重启
+  // 记住）且本次会话没点过「稍后」才出现；绿标三处入口不受它影响。
+  const updateNoticeVisible =
+    updateReminder?.updateAvailable === true && !updateReminder.noticeMuted && !updateDismissed;
+
+  // 弹窗真正出现才记「今天已弹过一次」；未表达忽略的版本第二天可再提示。
+  useEffect(() => {
+    if (updateNoticeVisible) void updateNoticeShown();
+  }, [updateNoticeVisible]);
+
+  // 余额是首页唯一会自己动的数值（充值在浏览器完成，应用常驻托盘）：在线时
+  // 定时轮询，窗口从托盘唤起时补刷一次；都走现成的 account-refreshed 事件。
+  useEffect(() => {
+    if (!online) return;
+    const timer = setInterval(() => {
+      void refreshAccount()
+        .then((fresh) => onRefreshed(fresh, new Date().toISOString()))
+        .catch(() => undefined);
+    }, ACCOUNT_AUTO_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [online, onRefreshed]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen(WINDOW_SHOWN_EVENT, () => {
+      if (!active || stateRef.current.phase !== "ready-online") return;
+      if (!shouldAutoRefresh(stateRef.current.cachedAt, Date.now(), WINDOW_SHOWN_REFRESH_MIN_GAP_MS)) {
+        return;
+      }
+      void refreshAccount()
+        .then((fresh) => onRefreshed(fresh, new Date().toISOString()))
+        .catch(() => undefined);
+    })
+      .then((stop) => {
+        // 卸载晚于 listen resolve 时立即注销，不留悬挂监听。
+        if (active) {
+          unlisten = stop;
+        } else {
+          stop();
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [onRefreshed]);
+
   // Stage pages own the whole main area: leaving them mid-flight would strand
   // the account in a half-configured state (interaction spec §4).
   const navLocked = !ready && state.phase !== "signed-out";
@@ -309,6 +381,8 @@ export function LumioApp() {
           >
             <Settings size={16} />
             {shellLabels.settings}
+            {/* 绿色小标记：有新版本时常驻在设置入口上，弹窗「稍后」不影响它。 */}
+            {updateReminder?.updateAvailable ? <span aria-hidden="true" className="lumio-nav-dot" /> : null}
           </button>
         </nav>
 
@@ -338,10 +412,13 @@ export function LumioApp() {
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
             launchAtLoginEnabled={state.launchAtLoginEnabled}
+            latestVersion={updateReminder?.updateAvailable ? updateReminder.latestVersion : null}
             officialAppInstall={state.officialAppInstall}
+            updating={updating}
             onCodexAppChanged={onCodexAppChanged}
             onLaunchAtLoginChanged={onLaunchAtLoginChanged}
             onSignOut={onSignOutRequested}
+            onUpdateRequested={onUpdateRequested}
             pushToast={pushToast}
             signedIn={state.account !== null}
             telemetryEnabled={state.telemetryEnabled}
@@ -400,14 +477,12 @@ export function LumioApp() {
         ) : (
           <HomeView
             onCodexAppChanged={onCodexAppChanged}
-            onDismissUpdate={() => setUpdateDismissed(true)}
             onInstallProgress={onInstallProgress}
             onOpenSettings={openSettings}
             onReconnected={onReconnected}
             onRefreshed={onRefreshed}
             pushToast={pushToast}
             state={state}
-            updateReminder={updateDismissed ? null : updateReminder}
           />
         )}
       </main>
@@ -417,7 +492,51 @@ export function LumioApp() {
         <span className="lumio-footer-separator" />
         <span>官方应用需单独安装</span>
         {state.bootstrap ? <span className="lumio-footer-version">v{state.bootstrap.version}</span> : null}
+        {updateReminder?.updateAvailable ? (
+          // 常驻绿色入口：弹窗的「稍后」只收弹窗，这里直到装上新版都在。
+          <button
+            className="lumio-small-button is-inline is-update"
+            disabled={updating}
+            onClick={onUpdateRequested}
+            type="button"
+          >
+            <Download size={12} />
+            {updating ? "正在下载…" : `有新版本 ${updateReminder.latestVersion ?? ""}`}
+          </button>
+        ) : null}
       </footer>
+
+      {updateNoticeVisible ? (
+        // 右下角常驻通知卡：检测到新版本时出现（覆盖首页/设置任意视图）。
+        // 「稍后」= 忽略这个版本（本地偏好持久化），下一个版本才再弹；
+        // 绿标（导航点 / footer / 设置行）不受影响。
+        <div aria-label="版本更新提醒" className="lumio-update-pop" role="status">
+          <span aria-hidden="true" className="lumio-update-pop-dot" />
+          <span className="lumio-update-pop-body">
+            <strong>发现新版本 {updateReminder.latestVersion ?? ""}</strong>
+            <small>当前 v{updateReminder.currentVersion} · 下载安装包并打开安装向导</small>
+          </span>
+          <button
+            className="lumio-small-button is-update"
+            disabled={updating}
+            onClick={onUpdateRequested}
+            type="button"
+          >
+            {updating ? "正在下载…" : "立即更新"}
+          </button>
+          <button
+            className="lumio-link-button"
+            onClick={() => {
+              setUpdateDismissed(true);
+              const version = updateReminder.latestVersion;
+              if (version) void dismissUpdate(version).catch(() => undefined);
+            }}
+            type="button"
+          >
+            稍后
+          </button>
+        </div>
+      ) : null}
 
       <ToastHost onDismiss={dismiss} toasts={toasts} />
     </div>

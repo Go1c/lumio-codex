@@ -11,6 +11,7 @@ import type {
   LumioServiceSettings,
   LumioTakeoverHealth,
   LumioTelemetryResult,
+  LumioUpdateInstallResult,
   LumioUpdateReminder,
   LumioVerifyCodeResult,
 } from "./types.ts";
@@ -32,6 +33,9 @@ export const LUMIO_COMMANDS = {
   selectCodexApp: "lumio_select_codex_app",
   openBrowser: "lumio_open_browser",
   checkUpdate: "lumio_check_update",
+  downloadUpdate: "lumio_download_update",
+  dismissUpdate: "lumio_dismiss_update",
+  updateNoticeShown: "lumio_update_notice_shown",
   setTelemetry: "lumio_set_telemetry",
   setLaunchAtLogin: "lumio_set_launch_at_login",
   exportLogs: "lumio_export_logs",
@@ -253,6 +257,20 @@ export async function openInBrowser(url: string): Promise<void> {
 
 export async function checkUpdate(): Promise<LumioUpdateReminder> {
   return runCommand<LumioUpdateReminder>(LUMIO_COMMANDS.checkUpdate);
+}
+
+export async function downloadUpdate(): Promise<LumioUpdateInstallResult> {
+  return runCommand<LumioUpdateInstallResult>(LUMIO_COMMANDS.downloadUpdate);
+}
+
+/** 弹窗「稍后」：忽略这个版本，下一个版本才恢复弹窗。 */
+export async function dismissUpdate(version: string): Promise<void> {
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.dismissUpdate, { version });
+}
+
+/** 弹窗已渲染：记录今天弹过一次（失败静默，不影响提醒链路）。 */
+export async function updateNoticeShown(): Promise<void> {
+  await runNullableCommand<unknown>(LUMIO_COMMANDS.updateNoticeShown).catch(() => undefined);
 }
 
 export async function setTelemetry(enabled: boolean): Promise<LumioTelemetryResult> {

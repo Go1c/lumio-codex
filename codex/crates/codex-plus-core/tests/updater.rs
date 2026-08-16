@@ -146,6 +146,48 @@ fn asset_selection_distinguishes_x64_and_arm64_macos_dmgs() {
     }
 }
 
+/// Lumio CI 的 Release 资产命名（pr-build.yml）：Windows
+/// `LumioCodex-<ver>-windows-x64-setup-internal-unsigned.exe`，macOS
+/// `LumioCodex-<ver>-macos-<arch>-internal-unsigned.dmg`——arch token 后跟
+/// 连字符（`-internal-unsigned` 段），与旧形态（token 后跟点）都要求命中。
+#[test]
+fn asset_selection_recognizes_lumio_internal_unsigned_names() {
+    let release = release_from_github_payload(&json!({
+        "tag_name": "v1.2.47",
+        "html_url": "https://github.com/Go1c/lumio-codex/releases/tag/v1.2.47",
+        "body": "internal build",
+        "assets": [
+            {"name": "source.zip", "browser_download_url": "https://example.test/source.zip"},
+            {"name": "lumio-codex.exe", "browser_download_url": "https://example.test/bare.exe"},
+            {"name": "LumioCodex-1.2.47-windows-x64-setup-internal-unsigned.exe", "browser_download_url": "https://example.test/win.exe"},
+            {"name": "LumioCodex-1.2.47-macos-arm64-internal-unsigned.dmg", "browser_download_url": "https://example.test/mac-arm64.dmg"},
+            {"name": "LumioCodex-1.2.47-macos-x64-internal-unsigned.dmg", "browser_download_url": "https://example.test/mac-x64.dmg"}
+        ]
+    }))
+    .unwrap();
+
+    if cfg!(windows) {
+        assert_eq!(
+            release.asset_name.as_deref(),
+            Some("LumioCodex-1.2.47-windows-x64-setup-internal-unsigned.exe"),
+            "裸 exe 不是安装包，必须选 setup 安装器"
+        );
+    } else if cfg!(target_os = "macos") {
+        let expected = match std::env::consts::ARCH {
+            "x86_64" => "LumioCodex-1.2.47-macos-x64-internal-unsigned.dmg",
+            "aarch64" => "LumioCodex-1.2.47-macos-arm64-internal-unsigned.dmg",
+            other => panic!("unexpected target arch in test: {other}"),
+        };
+        assert_eq!(
+            release.asset_name.as_deref(),
+            Some(expected),
+            "macOS 必须按当前 arch 选 DMG，不能拿错架构"
+        );
+    } else {
+        assert_eq!(release.asset_name.as_deref(), None);
+    }
+}
+
 #[test]
 fn safe_asset_name_rejects_path_traversal() {
     assert_eq!(safe_asset_name("pkg.zip").unwrap(), "pkg.zip");

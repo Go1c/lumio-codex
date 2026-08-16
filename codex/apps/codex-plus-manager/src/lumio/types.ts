@@ -93,8 +93,16 @@ export interface LumioUpdateReminder {
   currentVersion: string;
   latestVersion: string | null;
   updateAvailable: boolean;
+  /** 弹窗静默位：该版本已被忽略或今天已弹过（绿标入口不受影响）。 */
+  noticeMuted: boolean;
   downloadUrl: string;
   releaseSummary: string;
+}
+
+/** 手动触发的更新下载结果：安装包已落盘并打开安装向导。 */
+export interface LumioUpdateInstallResult {
+  latestVersion: string;
+  installerPath: string;
 }
 
 export interface LumioAuthResult {
