@@ -220,6 +220,59 @@ pub fn check_takeover(codex_home: &Path, state_dir: &Path) -> TakeoverHealth {
     TakeoverHealth::Healthy
 }
 
+/// 愈合 D-15 之前旧接管残留的 `env_key`：官方 Codex 对自定义 provider 只从环境变量
+/// 取 key，残留该字段时聊天必报 `Missing environment variable: 'OPENAI_API_KEY'`。
+/// D-15 只修了渲染器，而 `check_takeover` 哈希命中 Healthy 的老接管永远不会重写，
+/// 必须在这里单独清（QA D-22）。只在 Healthy 状态动这一个字段并同步 manifest 哈希；
+/// manifest 写不回去就原样写回配置，绝不让愈合自己制造冲突。返回是否真的愈合过。
+pub fn heal_legacy_env_key(codex_home: &Path, state_dir: &Path) -> bool {
+    if !matches!(
+        check_takeover(codex_home, state_dir),
+        TakeoverHealth::Healthy
+    ) {
+        return false;
+    }
+    let config_path = codex_home.join(CONFIG_FILE);
+    let Ok(original) = std::fs::read(&config_path) else {
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&original) else {
+        return false;
+    };
+    let Ok(mut doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    if !remove_provider_env_key(&mut doc["model_providers"][PROVIDER_ID]) {
+        return false;
+    }
+
+    let healed = doc.to_string();
+    if write_bytes(&config_path, healed.as_bytes(), WRITE_FAILED).is_err() {
+        return false;
+    }
+    let manifest_path = state_dir.join(TAKEOVER_DIR).join(MANIFEST_FILE);
+    let updated = std::fs::read(&manifest_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())
+        .map(|mut manifest| {
+            manifest.config_sha256 = sha256(healed.as_bytes());
+            manifest.applied_at = now_unix_seconds();
+            manifest
+        });
+    let manifest_written = match updated {
+        Some(manifest) => serde_json::to_vec(&manifest)
+            .map_err(|_| WRITE_FAILED.to_string())
+            .and_then(|encoded| write_bytes(&manifest_path, &encoded, WRITE_FAILED))
+            .is_ok(),
+        None => false,
+    };
+    if !manifest_written {
+        let _ = write_bytes(&config_path, &original, WRITE_FAILED);
+        return false;
+    }
+    true
+}
+
 /// 只依赖快照，不依赖 manifest：manifest 缺失或损坏时，只要原始字节还在就必须能恢复。
 pub fn restore(codex_home: &Path, state_dir: &Path) -> Result<(), String> {
     let takeover_dir = state_dir.join(TAKEOVER_DIR);
@@ -286,9 +339,22 @@ fn render_config(existing: Option<&[u8]>, request: &TakeoverRequest) -> Result<S
     // 不写 env_key：它会让官方 Codex 只从环境变量取 key、无视 auth.json 里那把
     // （实测 codex-cli 0.146 直接报 Missing environment variable，QA D-15）。key 的
     // 唯一落点是 auth.json。历史接管可能留下过这个字段，重复接管时必须移除。
-    provider.as_table_mut().map(|table| table.remove("env_key"));
+    remove_provider_env_key(provider);
 
     Ok(doc.to_string())
+}
+
+/// 移除 provider 上的 `env_key`。索引赋值造出来的是内联表，手写的可能是标准表——
+/// `as_table_mut` 对内联表返回 None，两种形态都必须覆盖（D-22：只认标准表的
+/// 移除是死代码，残留 env_key 让官方 Codex 聊天必报环境变量缺失）。返回是否移除了字段。
+fn remove_provider_env_key(provider: &mut toml_edit::Item) -> bool {
+    match provider {
+        toml_edit::Item::Table(table) => table.remove("env_key").is_some(),
+        toml_edit::Item::Value(toml_edit::Value::InlineTable(table)) => {
+            table.remove("env_key").is_some()
+        }
+        _ => false,
+    }
 }
 
 fn render_auth(existing: Option<&[u8]>, api_key: &str) -> Result<String, String> {
@@ -436,6 +502,23 @@ mod tests {
         );
         assert!(written.contains("base_url"));
         assert!(written.contains("wire_api"));
+    }
+
+    /// 渲染产出的是**内联表**（`model_providers = { lumio = {...} }`），`as_table_mut`
+    /// 对它返回 None——只认标准表的移除是死代码，D-15 宣称的「重复接管时移除」从未
+    /// 生效（D-22 复盘发现）。重复接管必须把残留真正清掉。
+    #[test]
+    fn a_repeated_takeover_strips_a_legacy_env_key_from_the_inline_provider() {
+        let fx = fixture();
+        rewrite_as_pre_d15_takeover(&fx);
+
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+
+        let written = std::fs::read_to_string(fx.codex_home.join(CONFIG_FILE)).unwrap();
+        assert!(
+            !written.contains("env_key"),
+            "a repeated takeover must remove the legacy env_key:\n{written}"
+        );
     }
 
     #[test]
@@ -769,6 +852,91 @@ mod tests {
         assert_eq!(
             restore(&fx.codex_home, &fx.state_dir).unwrap_err(),
             "CODEX_RESTORE_FAILED"
+        );
+    }
+
+    /// 把接管结果伪装成 D-15 之前旧构建留下的状态：provider 里多一个 env_key，
+    /// manifest 哈希与这份内容一致（即 check_takeover 视角下 Healthy）。
+    fn rewrite_as_pre_d15_takeover(fx: &Fixture) {
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        let text = std::fs::read_to_string(fx.codex_home.join(CONFIG_FILE)).unwrap();
+        let mut doc = text.parse::<toml_edit::DocumentMut>().unwrap();
+        doc["model_providers"][PROVIDER_ID]["env_key"] = toml_edit::value(AUTH_KEY_FIELD);
+        let stale = doc.to_string();
+        std::fs::write(fx.codex_home.join(CONFIG_FILE), &stale).unwrap();
+
+        let manifest_bytes = std::fs::read(fx.manifest_path()).unwrap();
+        let mut manifest: Manifest = serde_json::from_slice(&manifest_bytes).unwrap();
+        manifest.config_sha256 = sha256(stale.as_bytes());
+        write_bytes(
+            &fx.manifest_path(),
+            &serde_json::to_vec(&manifest).unwrap(),
+            WRITE_FAILED,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            check_takeover(&fx.codex_home, &fx.state_dir),
+            TakeoverHealth::Healthy
+        ));
+    }
+
+    /// D-22：D-15 只修了渲染器，老接管留下的 env_key 在 Healthy 状态下永远不会被
+    /// 重接管清掉——官方 Codex 只认环境变量，聊天必报 Missing environment variable。
+    /// 愈合必须只动这一个字段，且愈合后哈希仍须对得上（不再触发冲突修复页）。
+    #[test]
+    fn heal_strips_env_key_left_by_pre_d15_takeovers() {
+        let fx = fixture();
+        rewrite_as_pre_d15_takeover(&fx);
+
+        assert!(heal_legacy_env_key(&fx.codex_home, &fx.state_dir));
+
+        let written = std::fs::read_to_string(fx.codex_home.join(CONFIG_FILE)).unwrap();
+        assert!(
+            !written.contains("env_key"),
+            "the legacy env_key pin must be removed:\n{written}"
+        );
+        assert!(written.contains("base_url"));
+        assert!(written.contains("wire_api"));
+        assert!(written.contains("gpt-example"));
+        assert!(matches!(
+            check_takeover(&fx.codex_home, &fx.state_dir),
+            TakeoverHealth::Healthy
+        ));
+    }
+
+    #[test]
+    fn heal_is_a_noop_when_nothing_needs_healing() {
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        let config_before = std::fs::read(fx.codex_home.join(CONFIG_FILE)).unwrap();
+        let manifest_before = std::fs::read(fx.manifest_path()).unwrap();
+
+        assert!(!heal_legacy_env_key(&fx.codex_home, &fx.state_dir));
+
+        assert_eq!(
+            std::fs::read(fx.codex_home.join(CONFIG_FILE)).unwrap(),
+            config_before,
+            "a healthy takeover without env_key must not be rewritten"
+        );
+        assert_eq!(std::fs::read(fx.manifest_path()).unwrap(), manifest_before);
+    }
+
+    /// 冲突态归修复页管：愈合不得抢在用户看到冲突之前把外部改动悄悄洗白。
+    #[test]
+    fn heal_leaves_a_conflicted_takeover_alone() {
+        let fx = fixture();
+        rewrite_as_pre_d15_takeover(&fx);
+        std::fs::write(
+            fx.codex_home.join(CONFIG_FILE),
+            "model = \"someone-else\"\n",
+        )
+        .unwrap();
+
+        assert!(!heal_legacy_env_key(&fx.codex_home, &fx.state_dir));
+        assert_eq!(
+            std::fs::read_to_string(fx.codex_home.join(CONFIG_FILE)).unwrap(),
+            "model = \"someone-else\"\n"
         );
     }
 

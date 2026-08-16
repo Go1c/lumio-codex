@@ -290,6 +290,16 @@ pub fn lumio_bootstrap(
     // `current()` 的系统现状为准上报，注册动作本身失败不阻塞启动。
     codex_plus_core::lumio::autostart::ensure_default_enabled();
 
+    // 旧构建的接管在 config.toml 里留下过 env_key，官方 Codex 因此只认环境变量、
+    // 聊天必报 Missing environment variable（D-22）。Healthy 状态永远不会重接管，
+    // 必须在启动编排读到健康状态之前愈合；失败不阻塞 bootstrap，维持现状。
+    if let Some(state_dir) = product::state_dir() {
+        config_takeover::heal_legacy_env_key(
+            &codex_plus_core::codex_home::default_codex_home_dir(),
+            &state_dir,
+        );
+    }
+
     let codex_app = lock(&session.codex_app)
         .clone()
         .map(|path| codex_app_payload(&path, "manual"))
