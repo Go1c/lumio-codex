@@ -5,6 +5,10 @@
 //! Windows 经 `reg.exe` 写 HKCU Run 值（与仓库既有平台集成一致，全程无 shell
 //! 解析风险——参数走 `Command::args`）。开发直跑（cargo target 目录 / 非 .app
 //! bundle）不支持注册，如实报 `PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED`。
+//!
+//! 应用被移动/重装到新路径后，残留注册仍指向旧路径（登录时拉起失效目标）；
+//! bootstrap 对「偏好开着但注册失配」的机器重写注册指向当前 exe，注册被用户
+//! 从系统侧移除的则保持移除（系统现状权威，不自动恢复）。
 
 use std::path::{Path, PathBuf};
 
@@ -81,8 +85,22 @@ pub fn windows_exe_is_installed(exe: &Path) -> bool {
         .any(|component| component.eq_ignore_ascii_case("target"))
 }
 
-pub fn default_on_applies(persisted: Option<bool>) -> bool {
-    persisted.is_none()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultAction {
+    /// 从未表达过偏好：注册默认开启。
+    Register,
+    /// 偏好开着但注册指向旧路径（应用被移动/重装）：重写指向当前 exe。
+    Realign,
+    /// 偏好已关 / 注册与当前 exe 一致 / 注册被用户从系统侧移除：不动。
+    Leave,
+}
+
+pub fn default_action(persisted: Option<bool>, registration_stale: bool) -> DefaultAction {
+    match persisted {
+        None => DefaultAction::Register,
+        Some(true) if registration_stale => DefaultAction::Realign,
+        _ => DefaultAction::Leave,
+    }
 }
 
 fn preference_path(dir: &Path) -> PathBuf {
@@ -148,13 +166,14 @@ pub fn current() -> bool {
     }
 }
 
-/// bootstrap 钩子：从未表达过偏好（且当前运行方式支持）就注册一次默认开启。
-/// 注册失败不落偏好，下次启动重试；dev 构建不注册也不落偏好。
+/// bootstrap 钩子：从未表达过偏好（且当前运行方式支持）就注册一次默认开启；
+/// 偏好开着但注册指向旧路径（应用被移动/重装）时重对齐到当前 exe。注册失败
+/// 不落偏好，下次启动重试；dev 构建不注册也不落偏好。
 pub fn ensure_default_enabled() {
     let Some(state_dir) = product::state_dir() else {
         return;
     };
-    if !default_on_applies(read_pref(&state_dir)) {
+    if default_action(read_pref(&state_dir), registration_is_stale()) == DefaultAction::Leave {
         return;
     }
     let _ = set(true);
@@ -244,8 +263,47 @@ pub fn macos_enabled(agents_dir: &Path, exe: &Path) -> bool {
     content == plist_content(exe)
 }
 
+/// plist 存在但内容与当前 exe 不符 = 注册失配（应用被移动/重装，launchd 还在
+/// 拉旧路径）；plist 不存在（用户从系统侧移除）不算失配。
+#[cfg(target_os = "macos")]
+pub fn macos_registration_is_stale(agents_dir: &Path, exe: &Path) -> bool {
+    let Ok(content) =
+        std::fs::read_to_string(agents_dir.join(format!("{BUNDLE_IDENTIFIER}.plist")))
+    else {
+        return false;
+    };
+    content != plist_content(exe)
+}
+
+fn registration_is_stale() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let (Some(home), Ok(exe)) = (
+            directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf()),
+            std::env::current_exe(),
+        ) else {
+            return false;
+        };
+        macos_registration_is_stale(&launch_agents_dir(&home), &exe)
+    }
+    #[cfg(windows)]
+    {
+        windows_registration_is_stale()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        false
+    }
+}
+
 #[cfg(windows)]
 fn run_registry(mode: &str) -> bool {
+    run_registry_command(mode, false).is_some()
+}
+
+/// `mode=query` 时带出 stdout（解析值数据），其余模式丢弃输出只看退出码。
+#[cfg(windows)]
+fn run_registry_command(mode: &str, capture: bool) -> Option<String> {
     use std::os::windows::process::CommandExt;
     use std::process::Command;
 
@@ -253,13 +311,35 @@ fn run_registry(mode: &str) -> bool {
     let mut command = Command::new("reg.exe");
     command
         .args(registry_args(mode, &exe))
-        .creation_flags(crate::windows_create_no_window())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    command
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .creation_flags(crate::windows_create_no_window());
+    if !capture {
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+    }
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+#[cfg(windows)]
+fn windows_registration_is_stale() -> bool {
+    let Some(output) = run_registry_command("query", true) else {
+        return false;
+    };
+    let exe = std::env::current_exe().unwrap_or_default();
+    registry_query_indicates_stale(&output, &exe)
+}
+
+/// `reg query` 的 stdout 中本值的数据与当前 exe 不符 = 注册失配（应用被移动/
+/// 重装）；值不存在（退出码非 0，根本拿不到输出）不算失配。
+pub fn registry_query_indicates_stale(output: &str, exe: &Path) -> bool {
+    let has_value = output
+        .lines()
+        .any(|line| line.contains(BUNDLE_IDENTIFIER) && line.contains("REG_SZ"));
+    has_value && !output.contains(&registry_value_data(exe))
 }
 
 #[cfg(test)]
@@ -329,12 +409,24 @@ mod tests {
     }
 
     #[test]
-    fn default_on_only_applies_until_the_user_chooses() {
-        assert!(default_on_applies(None));
-        assert!(!default_on_applies(Some(false)), "用户关过就必须保持关");
-        assert!(
-            !default_on_applies(Some(true)),
-            "已开启过就不需要再自动注册"
+    fn default_action_registers_realigns_and_leaves() {
+        assert_eq!(default_action(None, false), DefaultAction::Register);
+        assert_eq!(default_action(None, true), DefaultAction::Register);
+        assert_eq!(default_action(Some(false), false), DefaultAction::Leave);
+        assert_eq!(
+            default_action(Some(false), true),
+            DefaultAction::Leave,
+            "用户关过就必须保持关，注册失配也不许自动重开"
+        );
+        assert_eq!(
+            default_action(Some(true), false),
+            DefaultAction::Leave,
+            "偏好与系统注册一致就不需要动"
+        );
+        assert_eq!(
+            default_action(Some(true), true),
+            DefaultAction::Realign,
+            "偏好开着但注册指向旧路径，要重写指向当前 exe"
         );
     }
 
@@ -385,6 +477,57 @@ mod tests {
             &agents,
             Path::new("/Applications/Lumio Codex.app/Contents/MacOS/Lumio Codex")
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_registration_is_stale_only_when_a_foreign_plist_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("LaunchAgents");
+        let exe = PathBuf::from("/Applications/Lumio Codex.app/Contents/MacOS/Lumio Codex");
+
+        assert!(
+            !macos_registration_is_stale(&agents, &exe),
+            "无 plist（用户从系统侧移除）失配为假，尊重现状"
+        );
+
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(
+            agents.join("games.lumio.codex.plist"),
+            plist_content(Path::new("/Applications/Old.app/Contents/MacOS/Old")),
+        )
+        .unwrap();
+        assert!(
+            macos_registration_is_stale(&agents, &exe),
+            "应用移动/重装后 plist 仍指向旧路径，需要重对齐"
+        );
+
+        std::fs::write(agents.join("games.lumio.codex.plist"), plist_content(&exe)).unwrap();
+        assert!(!macos_registration_is_stale(&agents, &exe));
+    }
+
+    #[test]
+    fn registry_query_output_signals_stale_only_when_the_data_differs() {
+        let exe = Path::new(r"C:\Apps\Lumio Codex\Lumio Codex.exe");
+
+        let stale = format!(
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n\
+             \x20   games.lumio.codex    REG_SZ    {}\n",
+            r#""C:\Old\Lumio Codex.exe""#
+        );
+        assert!(registry_query_indicates_stale(&stale, exe));
+
+        let current = format!(
+            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\n\
+             \x20   games.lumio.codex    REG_SZ    {}\n",
+            registry_value_data(exe)
+        );
+        assert!(!registry_query_indicates_stale(&current, exe));
+
+        assert!(
+            !registry_query_indicates_stale("系统找不到指定的注册表项或值。", exe),
+            "值不存在（用户从系统侧移除）失配为假"
+        );
     }
 
     #[test]
