@@ -81,7 +81,7 @@ interface HomeViewProps {
   updateReminder: LumioUpdateReminder | null;
   onRefreshed: (account: LumioAccountSummary, cachedAt: string) => void;
   onReconnected: (account: LumioAccountSummary, cachedAt: string) => void;
-  onCodexAppChanged: (app: LumioCodexApp) => void;
+  onCodexAppChanged: (app: LumioCodexApp | null) => void;
   onInstallProgress: (status: LumioOfficialAppInstall) => void;
   onOpenSettings: () => void;
   onDismissUpdate: () => void;
@@ -186,7 +186,16 @@ export function HomeView({
     setLaunching(true);
     void launchCodex()
       .then(() => pushToast("官方 Codex 已启动", "success"))
-      .catch((error: unknown) => pushToast(errorCodeOf(error)))
+      .catch(async (error: unknown) => {
+        const code = errorCodeOf(error);
+        pushToast(code);
+        if (code !== "CODEX_APP_NOT_FOUND") return;
+        // 应用被删/移后首页还留着安装时的旧状态（D-25）：重新检测一次，
+        // 没了就翻回「安装并启动官方 Codex」引导，别让用户困在
+        // 只会反复报错的「启动」上。
+        const detected = await detectCodexApp().catch(() => null);
+        onCodexAppChanged(detected);
+      })
       .finally(() => setLaunching(false));
   };
 

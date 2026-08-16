@@ -97,7 +97,7 @@ export type LumioEvent =
   | { type: "offline-ready"; cachedAt: string | null }
   // 设置页手动选择了官方应用：任何阶段都接受——离线/登出下自动检测失败时，
   // 这是用户唯一的补救路径（QA D-3），不能再被「仅在线」的守卫丢弃。
-  | { type: "codex-app-changed"; app: LumioCodexApp }
+  | { type: "codex-app-changed"; app: LumioCodexApp | null }
   | { type: "official-app-install-progress"; status: LumioOfficialAppInstall }
   | { type: "launch-at-login-changed"; enabled: boolean }
   | { type: "account-refreshed"; account: LumioAccountSummary; cachedAt: string }
@@ -416,7 +416,12 @@ export function reduceLumioState(state: LumioState, event: LumioEvent): LumioSta
 
     case "codex-app-changed": {
       const officialAppInstall = isOfficialAppInstallInProgress(state.officialAppInstall)
-        ? { phase: "succeeded" as const, stage: null, errorCode: null, path: event.app.path }
+        ? {
+            phase: "succeeded" as const,
+            stage: null,
+            errorCode: null,
+            path: event.app?.path ?? null,
+          }
         : state.officialAppInstall;
       const ready = state.phase === "ready-online" || state.phase === "ready-offline";
       if (!ready) {

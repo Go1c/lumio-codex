@@ -674,6 +674,25 @@ test("manually picking the app while signed out is remembered for the offline ho
   assert.equal(offline.actionNotes.launch, null);
 });
 
+test("a vanished app can be cleared back to the install guidance", () => {
+  // 用户删掉自选目录里的官方应用后（D-25），首页还留着安装时的旧状态，点「启动」
+  // 只会反复报 CODEX_APP_NOT_FOUND。事件必须能把 codexApp 清回 null，让首页
+  // 翻回「未检测到官方应用 / 安装并启动官方 Codex」。
+  const withApp = reduceLumioState(readyOnlineWithoutApp(), {
+    type: "codex-app-changed",
+    app: detectedApp(),
+  });
+  assert.notEqual(withApp.codexApp, null);
+
+  const cleared = reduceLumioState(withApp, { type: "codex-app-changed", app: null });
+
+  assert.equal(cleared.phase, "ready-online");
+  assert.equal(cleared.codexApp, null);
+  // canLaunch 在在线态恒为 true：它同时 gate「安装并启动官方 Codex」入口，
+  // 清空后按钮应从「启动」翻回「安装并启动」且保持可用。
+  assert.equal(cleared.actions.canLaunch, true);
+});
+
 function readyOnlineWithoutApp(): LumioState {
   return reduceLumioState(signedOut(), {
     type: "online-ready",

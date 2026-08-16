@@ -255,9 +255,10 @@ export function LumioApp() {
     }
     dispatch({ type: "authenticated", account: current.account });
   }, []);
-  const onCodexAppChanged = useCallback((app: LumioCodexApp) => {
+  const onCodexAppChanged = useCallback((app: LumioCodexApp | null) => {
     // 手选应用在任何阶段都有效（QA D-3）：离线/登出下自动检测失败时，
     // 这是用户唯一的补救入口，不能再按「仅在线」守卫丢弃。
+    // null 表示应用已消失（删/移目录），首页翻回安装引导（QA D-25）。
     dispatch({ type: "codex-app-changed", app });
   }, []);
   const onLaunchAtLoginChanged = useCallback(
