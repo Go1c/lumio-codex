@@ -129,7 +129,9 @@ pub struct OfficialAppInstallRequest<'a> {
     /// 带路由：Windows 预检不可用时只有侧载路线可以放行给系统部署验证（D-21）。
     pub verify: &'a dyn Fn(&Path, &PackageSource, InstallRoute) -> Result<(), String>,
     pub install: &'a mut dyn FnMut(&Path, InstallRoute) -> Result<PathBuf, String>,
-    pub write_config: &'a mut dyn FnMut(),
+    /// 成功上报前的收尾钩子（当前用途：持久化自选目录，D-24）。拿到的是最终
+    /// 安装路径；取消 / 半失败不进这里。
+    pub write_config: &'a mut dyn FnMut(&Path),
 }
 
 /// Injectable install pipeline. Production [`start_official_app_install`] wires the live adapters.
@@ -185,7 +187,7 @@ pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Resul
                             Ok(installed) => {
                                 progress::set_phase(InstallPhase::Detecting, Some("detect"));
                                 let path = (request.detect)().unwrap_or(installed);
-                                (request.write_config)();
+                                (request.write_config)(&path);
                                 // 安装包装完即删；失败路径不进这里，包留给重试。
                                 let _ = std::fs::remove_file(&package);
                                 progress::set_succeeded(path.clone());
@@ -238,7 +240,7 @@ pub async fn start_official_app_install_with(
     let mirror_payload = fetch_mirror_payload(platform, arch).await;
     let session_for_detect = session_app.clone();
 
-    let result = run_official_app_install(OfficialAppInstallRequest {
+    run_official_app_install(OfficialAppInstallRequest {
         plan: PlanInput {
             platform,
             arch,
@@ -251,16 +253,17 @@ pub async fn start_official_app_install_with(
         download: &mut |source| live_download(source, arch, mirror_payload.as_ref(), &cache),
         verify: &|path, source, route| live_verify(path, source, platform, route),
         install: &mut |path, route| live_install(path, route, destination.as_deref()),
-        write_config: &mut || {},
-    });
-    // 用户选了目录的安装只有这里记住落点（保存的是最终安装路径，平台无关），
-    // 重启后 detect 才找得到，不会误判未安装而重复安装。
-    if result.is_ok() && destination.is_some() {
-        if let (Some(state), Ok(path)) = (crate::lumio::product::state_dir(), result.as_ref()) {
-            let _ = install_path::save_install_path(&state, path);
-        }
-    }
-    result
+        write_config: &mut |path| {
+            // 用户选了目录的安装在这里记住落点（最终安装路径，平台无关），重启后
+            // detect 才找得到。必须在 succeeded 上报之前完成：前端一看到成功就
+            // 发起启动，晚于此的落盘会让启动撞上「还没记住」的窗口（D-24）。
+            if destination.is_some() {
+                if let Some(state) = crate::lumio::product::state_dir() {
+                    let _ = install_path::save_install_path(&state, path);
+                }
+            }
+        },
+    })
 }
 
 /// Start the install on the current Tokio runtime and return immediately.
@@ -564,7 +567,7 @@ mod tests {
                 installed.set(true);
                 Ok(PathBuf::from("/tmp/app"))
             },
-            write_config: &mut || panic!("must not write config.toml"),
+            write_config: &mut |_path| panic!("must not write config.toml"),
         })
         .expect("already-installed must succeed");
 
@@ -602,7 +605,7 @@ mod tests {
                 installed.set(true);
                 Ok(PathBuf::from("/tmp/app"))
             },
-            write_config: &mut || panic!("must not write config.toml"),
+            write_config: &mut |_path| panic!("must not write config.toml"),
         })
         .expect_err("verify failure must abort the pipeline");
 
@@ -642,7 +645,7 @@ mod tests {
                 installed_from.set(Some(path.to_path_buf()));
                 Ok(PathBuf::from("/Applications/Codex.app"))
             },
-            write_config: &mut || {},
+            write_config: &mut |_path| {},
         })
         .expect("official source must be tried after a mirror download miss");
 
@@ -674,7 +677,7 @@ mod tests {
             },
             verify: &|_path, _source, _route| Ok(()),
             install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
-            write_config: &mut || {
+            write_config: &mut |_path| {
                 wrote_config.set(true);
                 std::fs::write(&config, "model = \"overwritten\"\n").unwrap();
             },
@@ -704,7 +707,7 @@ mod tests {
             download: &mut |_source| Ok(package.clone()),
             verify: &|_path, _source, _route| Ok(()),
             install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
-            write_config: &mut || {},
+            write_config: &mut |_path| {},
         })
         .expect("install must succeed");
 
@@ -727,7 +730,7 @@ mod tests {
             download: &mut |_source| Ok(package.clone()),
             verify: &|_path, _source, _route| Ok(()),
             install: &mut |_path, _route| Err("CODEX_APP_INSTALL_FAILED".to_string()),
-            write_config: &mut || {},
+            write_config: &mut |_path| {},
         })
         .expect_err("install must fail");
 
@@ -758,6 +761,36 @@ mod tests {
             detect_existing_app_with(None, None),
             "an invalid saved destination must fall back to automatic detection"
         );
+    }
+
+    /// D-24：持久化自选目录必须在 succeeded 上报之前完成——前端轮询到成功即发起
+    /// 启动，晚于 set_succeeded 的落盘会让启动撞上「还没记住」的窗口。
+    #[test]
+    fn the_post_install_hook_sees_the_final_path_before_success_is_reported() {
+        let _guard = progress::reset_status_for_tests();
+        let seen = std::cell::RefCell::new(None);
+        let still_detecting_at_hook = std::cell::Cell::new(false);
+
+        let path = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |_source| Ok(PathBuf::from("/tmp/pkg")),
+            verify: &|_path, _source, _route| Ok(()),
+            install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
+            write_config: &mut |path: &Path| {
+                still_detecting_at_hook
+                    .set(matches!(current_status().phase, InstallPhase::Detecting));
+                *seen.borrow_mut() = Some(path.to_path_buf());
+            },
+        })
+        .expect("install must succeed");
+
+        assert_eq!(seen.into_inner().as_deref(), Some(path.as_path()));
+        assert!(
+            still_detecting_at_hook.get(),
+            "the hook must run before the succeeded phase is reported"
+        );
+        assert_eq!(current_status().phase, InstallPhase::Succeeded);
     }
 
     /// D-20：后台任务在进入主管线前提前出错（缓存目录不可写等）时，

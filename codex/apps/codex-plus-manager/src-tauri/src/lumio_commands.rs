@@ -304,7 +304,9 @@ pub fn lumio_bootstrap(
         .clone()
         .map(|path| codex_app_payload(&path, "manual"))
         .or_else(|| {
-            codex_plus_core::app_paths::resolve_codex_app_dir(None)
+            // 自选目录装的官方应用只有 detect_existing_app 认得（保存路径优先），
+            // 直连自动扫描会让重启后的首页误报「未检测到官方应用」（D-24）。
+            official_app_install::detect_existing_app(None)
                 .map(|path| codex_app_payload(&path, "automatic"))
         });
 
@@ -590,7 +592,7 @@ pub fn lumio_launch_codex(
 ) -> Result<LumioCommandResult<LumioEmptyPayload>, ()> {
     let app_dir = lock(&session.codex_app)
         .clone()
-        .or_else(|| codex_plus_core::app_paths::resolve_codex_app_dir(None));
+        .or_else(|| official_app_install::detect_existing_app(None));
     let outcome = match app_dir {
         Some(path) => launch::launch_official_codex(&path).map(|()| LumioEmptyPayload {}),
         None => Err(APP_NOT_FOUND.to_string()),
@@ -602,7 +604,7 @@ pub fn lumio_launch_codex(
 pub fn lumio_detect_codex_app(
     _session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<Option<LumioCodexAppPayload>>, ()> {
-    result(Ok(codex_plus_core::app_paths::resolve_codex_app_dir(None)
+    result(Ok(official_app_install::detect_existing_app(None)
         .map(|path| codex_app_payload(&path, "automatic"))))
 }
 

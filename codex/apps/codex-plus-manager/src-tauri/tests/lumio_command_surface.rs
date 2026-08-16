@@ -205,3 +205,32 @@ fn lumio_install_official_app_accepts_the_destination_argument() {
         "the destination must be forwarded to the install pipeline:\n{body}"
     );
 }
+
+#[test]
+fn app_surface_commands_detect_through_the_saved_destination() {
+    // 自选目录装的官方应用只有 detect_existing_app 认得（保存路径优先、自动扫描
+    // 兜底）。bootstrap / detect / launch 若直连 resolve_codex_app_dir，装完立刻
+    // 启动报 CODEX_APP_NOT_FOUND、重启后首页「未检测到官方应用」（QA D-24）。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("src/lumio_commands.rs")).expect("lumio_commands.rs");
+
+    for command in [
+        "pub fn lumio_bootstrap(",
+        "pub fn lumio_detect_codex_app(",
+        "pub fn lumio_launch_codex(",
+    ] {
+        let body = source
+            .split_once(command)
+            .and_then(|(_, rest)| rest.split_once("#[tauri::command]"))
+            .map(|(body, _)| body)
+            .unwrap_or_else(|| panic!("{command} body"));
+        assert!(
+            body.contains("official_app_install::detect_existing_app"),
+            "{command} must resolve the app through detect_existing_app:\n{body}"
+        );
+        assert!(
+            !body.contains("app_paths::resolve_codex_app_dir"),
+            "{command} bypasses the saved install destination:\n{body}"
+        );
+    }
+}
