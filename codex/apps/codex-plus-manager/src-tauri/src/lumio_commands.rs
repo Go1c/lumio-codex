@@ -674,7 +674,13 @@ pub fn lumio_export_logs(
 #[tauri::command]
 pub async fn lumio_install_official_app(
     session: tauri::State<'_, LumioSession>,
+    destination: Option<String>,
 ) -> Result<LumioCommandResult<LumioOfficialAppInstallPayload>, ()> {
+    // 空串视同未选择（走默认路线），不做其他猜测式归一。
+    let destination = destination
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
     let session_app = lock(&session.codex_app).clone();
     if let Some(path) = session_app.as_ref() {
         if official_app_install::manual_path_still_valid(path) {
@@ -687,7 +693,7 @@ pub async fn lumio_install_official_app(
         return result(Ok(official_app_status_payload(Some(false))));
     }
 
-    match official_app_install::begin_background_install(session_app) {
+    match official_app_install::begin_background_install(session_app, destination) {
         Ok(()) => result(Ok(official_app_status_payload(Some(true)))),
         Err(code) => result(Err(code)),
     }

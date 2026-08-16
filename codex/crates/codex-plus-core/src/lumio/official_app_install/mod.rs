@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 mod download;
+mod install_path;
 mod macos;
 mod plan;
 mod progress;
@@ -112,6 +113,9 @@ pub struct PlanInput<'a> {
     pub detected_app: Option<&'a Path>,
     pub online: bool,
     pub windows_sideload_ok: Option<bool>,
+    /// 用户选择的安装目录：Windows 上强制便携路线（MSIX 装哪由系统管，选目录只能
+    /// 兑现到便携解压），macOS 上作为 .app 拷贝目标由安装层消费。
+    pub destination: Option<&'a Path>,
 }
 
 const DOWNLOAD_FAILED: &str = "CODEX_APP_DOWNLOAD_FAILED";
@@ -144,6 +148,7 @@ pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Resul
         detected_app: detected.as_deref(),
         online: request.plan.online,
         windows_sideload_ok: request.plan.windows_sideload_ok,
+        destination: request.plan.destination,
     };
 
     match plan_official_app(plan)? {
@@ -181,6 +186,8 @@ pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Resul
                                 progress::set_phase(InstallPhase::Detecting, Some("detect"));
                                 let path = (request.detect)().unwrap_or(installed);
                                 (request.write_config)();
+                                // 安装包装完即删；失败路径不进这里，包留给重试。
+                                let _ = std::fs::remove_file(&package);
                                 progress::set_succeeded(path.clone());
                                 return Ok(path);
                             }
@@ -205,11 +212,12 @@ pub fn run_official_app_install(request: OfficialAppInstallRequest<'_>) -> Resul
 }
 
 pub async fn start_official_app_install() -> Result<PathBuf, String> {
-    start_official_app_install_with(None).await
+    start_official_app_install_with(None, None).await
 }
 
 pub async fn start_official_app_install_with(
     session_app: Option<PathBuf>,
+    destination: Option<PathBuf>,
 ) -> Result<PathBuf, String> {
     let detected = detect_existing_app(session_app.as_deref());
     let platform = current_host_platform()?;
@@ -230,24 +238,36 @@ pub async fn start_official_app_install_with(
     let mirror_payload = fetch_mirror_payload(platform, arch).await;
     let session_for_detect = session_app.clone();
 
-    run_official_app_install(OfficialAppInstallRequest {
+    let result = run_official_app_install(OfficialAppInstallRequest {
         plan: PlanInput {
             platform,
             arch,
             detected_app: detected.as_deref(),
             online: true,
             windows_sideload_ok,
+            destination: destination.as_deref(),
         },
         detect: &|| detect_existing_app(session_for_detect.as_deref()),
         download: &mut |source| live_download(source, arch, mirror_payload.as_ref(), &cache),
         verify: &|path, source, route| live_verify(path, source, platform, route),
-        install: &mut |path, route| live_install(path, route),
+        install: &mut |path, route| live_install(path, route, destination.as_deref()),
         write_config: &mut || {},
-    })
+    });
+    // 用户选了目录的安装只有这里记住落点（保存的是最终安装路径，平台无关），
+    // 重启后 detect 才找得到，不会误判未安装而重复安装。
+    if result.is_ok() && destination.is_some() {
+        if let (Some(state), Ok(path)) = (crate::lumio::product::state_dir(), result.as_ref()) {
+            let _ = install_path::save_install_path(&state, path);
+        }
+    }
+    result
 }
 
 /// Start the install on the current Tokio runtime and return immediately.
-pub fn begin_background_install(session_app: Option<PathBuf>) -> Result<(), String> {
+pub fn begin_background_install(
+    session_app: Option<PathBuf>,
+    destination: Option<PathBuf>,
+) -> Result<(), String> {
     if !progress::try_begin_job() {
         return Ok(());
     }
@@ -265,7 +285,7 @@ pub fn begin_background_install(session_app: Option<PathBuf>) -> Result<(), Stri
             }
         }
         let _guard = JobGuard;
-        let result = start_official_app_install_with(session_app).await;
+        let result = start_official_app_install_with(session_app, destination).await;
         if let Err(code) = result {
             note_background_failure(code);
         }
@@ -286,8 +306,23 @@ fn note_background_failure(code: String) {
 }
 
 pub fn detect_existing_app(session_app: Option<&Path>) -> Option<PathBuf> {
+    detect_existing_app_with(session_app, crate::lumio::product::state_dir().as_deref())
+}
+
+/// `state_dir` 注入仅为测试隔离；生产 wrapper 传真实状态目录。
+pub fn detect_existing_app_with(
+    session_app: Option<&Path>,
+    state_dir: Option<&Path>,
+) -> Option<PathBuf> {
     if let Some(path) = session_app {
         if let Some(valid) = valid_manual_app(path) {
+            return Some(valid);
+        }
+    }
+    // 用户自选目录优先于自动扫描；保存的是安装时的最终路径，失效（卸载/移动）则
+    // 原样回落自动探测，绝不比不保存时更糟（D-23）。
+    if let Some(saved) = state_dir.and_then(install_path::saved_install_path) {
+        if let Some(valid) = valid_manual_app(&saved) {
             return Some(valid);
         }
     }
@@ -412,14 +447,21 @@ fn live_verify(
     }
 }
 
-fn live_install(path: &Path, route: InstallRoute) -> Result<PathBuf, String> {
+fn live_install(
+    path: &Path,
+    route: InstallRoute,
+    destination: Option<&Path>,
+) -> Result<PathBuf, String> {
     match route {
         InstallRoute::WindowsSideload => install_windows_sideload(path),
         InstallRoute::WindowsPortable => {
-            let dest = windows_portable_dest()?;
+            let dest = match destination {
+                Some(dest) => dest.to_path_buf(),
+                None => windows_portable_dest()?,
+            };
             install_windows_portable(path, &dest)
         }
-        InstallRoute::MacosCopyApp => install_macos_from_dmg(path),
+        InstallRoute::MacosCopyApp => install_macos_from_dmg(path, destination),
     }
 }
 
@@ -484,6 +526,7 @@ mod tests {
             detected_app: detected,
             online: true,
             windows_sideload_ok: None,
+            destination: None,
         }
     }
 
@@ -645,6 +688,76 @@ mod tests {
             "model = \"keep-me\"\n"
         );
         assert_eq!(current_status().phase, InstallPhase::Cancelled);
+    }
+
+    #[test]
+    fn a_successful_install_deletes_the_downloaded_package() {
+        // 745MB 安装包装完即删（失败保留供重试）：C 盘峰值是下载瞬时，不常驻。
+        let _guard = progress::reset_status_for_tests();
+        let pkg = tempfile::tempdir().unwrap();
+        let package = pkg.path().join("win-x64.msix");
+        std::fs::write(&package, b"pkg").unwrap();
+
+        run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |_source| Ok(package.clone()),
+            verify: &|_path, _source, _route| Ok(()),
+            install: &mut |_path, _route| Ok(PathBuf::from("/tmp/app")),
+            write_config: &mut || {},
+        })
+        .expect("install must succeed");
+
+        assert!(
+            !package.exists(),
+            "the package must be removed after success"
+        );
+    }
+
+    #[test]
+    fn a_failed_install_keeps_the_package_for_retry() {
+        let _guard = progress::reset_status_for_tests();
+        let pkg = tempfile::tempdir().unwrap();
+        let package = pkg.path().join("win-x64.msix");
+        std::fs::write(&package, b"pkg").unwrap();
+
+        let _ = run_official_app_install(OfficialAppInstallRequest {
+            plan: ready_request(None),
+            detect: &|| None,
+            download: &mut |_source| Ok(package.clone()),
+            verify: &|_path, _source, _route| Ok(()),
+            install: &mut |_path, _route| Err("CODEX_APP_INSTALL_FAILED".to_string()),
+            write_config: &mut || {},
+        })
+        .expect_err("install must fail");
+
+        assert!(
+            package.exists(),
+            "a failed install must keep the package for retry"
+        );
+    }
+
+    /// 自选目录装的官方应用只有这里能被再次找到：保存的最终路径优先于自动扫描，
+    /// 失效（卸载/移动）则原样回落，绝不比不保存时更糟。
+    #[test]
+    fn detection_prefers_a_saved_destination_and_falls_back_when_stale() {
+        let state = tempfile::tempdir().unwrap();
+        let saved_app = state.path().join("MyApps").join("Codex.app");
+        std::fs::create_dir_all(&saved_app).unwrap();
+        install_path::save_install_path(state.path(), &saved_app).unwrap();
+
+        assert_eq!(
+            detect_existing_app_with(None, Some(state.path())),
+            Some(saved_app)
+        );
+
+        let stale = state.path().join("gone");
+        install_path::save_install_path(state.path(), &stale).unwrap();
+        assert_eq!(
+            detect_existing_app_with(None, Some(state.path())),
+            detect_existing_app_with(None, None),
+            "an invalid saved destination must fall back to automatic detection"
+        );
     }
 
     /// D-20：后台任务在进入主管线前提前出错（缓存目录不可写等）时，

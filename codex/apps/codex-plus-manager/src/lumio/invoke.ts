@@ -277,8 +277,12 @@ export interface LumioOfficialAppInstallStatus {
   started?: boolean;
 }
 
-export async function installOfficialApp(): Promise<LumioOfficialAppInstallStatus> {
-  return runCommand<LumioOfficialAppInstallStatus>(LUMIO_COMMANDS.installOfficialApp);
+export async function installOfficialApp(
+  destination: string | null = null,
+): Promise<LumioOfficialAppInstallStatus> {
+  return runCommand<LumioOfficialAppInstallStatus>(LUMIO_COMMANDS.installOfficialApp, {
+    destination,
+  });
 }
 
 export async function officialAppStatus(): Promise<LumioOfficialAppInstallStatus> {

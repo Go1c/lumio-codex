@@ -175,3 +175,33 @@ fn lumio_settings_payload_carries_the_invitation_switch() {
         "LumioServiceSettingsPayload must expose invitation_code_enabled:\n{payload}"
     );
 }
+
+#[test]
+fn lumio_install_official_app_accepts_the_destination_argument() {
+    // 前端选择目录后传 destination；命令签名一旦漏掉该参数，Tauri 会静默丢弃，
+    // 用户选的目录被无视、仍装到默认位置（D-23，同 D-1 的静默丢参坑）。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("src/lumio_commands.rs")).expect("lumio_commands.rs");
+
+    let signature = source
+        .split_once("pub async fn lumio_install_official_app(")
+        .and_then(|(_, rest)| {
+            rest.split_once(") -> Result<LumioCommandResult<LumioOfficialAppInstallPayload>")
+        })
+        .map(|(signature, _)| signature)
+        .expect("lumio_install_official_app signature");
+    assert!(
+        signature.contains("destination: Option<String>"),
+        "lumio_install_official_app must accept destination from the frontend:\n{signature}"
+    );
+
+    let body = source
+        .split_once("pub async fn lumio_install_official_app(")
+        .and_then(|(_, rest)| rest.split_once("pub fn lumio_official_app_status"))
+        .map(|(body, _)| body)
+        .expect("lumio_install_official_app body");
+    assert!(
+        body.contains("begin_background_install(session_app, destination)"),
+        "the destination must be forwarded to the install pipeline:\n{body}"
+    );
+}

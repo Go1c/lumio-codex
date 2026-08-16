@@ -12,6 +12,8 @@ pub fn plan_official_app(input: PlanInput<'_>) -> Result<InstallDecision, String
     }
 
     let route = match input.platform {
+        // 用户选了目录 → 便携解压是唯一能兑现目的地的路线（MSIX 装哪由 Windows 管）。
+        HostPlatform::Windows if input.destination.is_some() => InstallRoute::WindowsPortable,
         HostPlatform::Windows if input.windows_sideload_ok == Some(false) => {
             InstallRoute::WindowsPortable
         }
@@ -43,6 +45,7 @@ mod tests {
             detected_app: Some(Path::new(r"C:\Apps\ChatGPT.exe")),
             online: true,
             windows_sideload_ok: Some(true),
+            destination: None,
         })
         .unwrap();
         assert!(matches!(decision, InstallDecision::AlreadyInstalled { .. }));
@@ -56,6 +59,7 @@ mod tests {
             detected_app: None,
             online: false,
             windows_sideload_ok: None,
+            destination: None,
         })
         .unwrap();
         assert_eq!(decision, InstallDecision::NeedsNetwork);
@@ -69,6 +73,7 @@ mod tests {
             detected_app: None,
             online: true,
             windows_sideload_ok: Some(true),
+            destination: None,
         })
         .unwrap();
         let InstallDecision::Ready { sources, route, .. } = decision else {
@@ -89,6 +94,7 @@ mod tests {
             detected_app: None,
             online: true,
             windows_sideload_ok: Some(false),
+            destination: None,
         })
         .unwrap();
         let InstallDecision::Ready { route, sources, .. } = decision else {
@@ -106,6 +112,7 @@ mod tests {
             detected_app: None,
             online: true,
             windows_sideload_ok: None,
+            destination: None,
         })
         .unwrap();
         let InstallDecision::Ready { sources, route, .. } = decision else {
@@ -126,6 +133,7 @@ mod tests {
             detected_app: None,
             online: true,
             windows_sideload_ok: None,
+            destination: None,
         })
         .unwrap();
         let InstallDecision::Ready { sources, route, .. } = decision else {
@@ -150,11 +158,48 @@ mod tests {
             detected_app: None,
             online: true,
             windows_sideload_ok: None,
+            destination: None,
         })
         .unwrap();
         let InstallDecision::Ready { route, .. } = decision else {
             panic!()
         };
         assert_eq!(route, InstallRoute::WindowsSideload);
+    }
+
+    #[test]
+    fn a_windows_destination_forces_the_portable_route() {
+        // 用户选了目录就必须落进那个目录：MSIX 侧载装哪由 Windows 管，唯一能
+        // 兑现「选目录」的是便携解压（D-23）。侧载探测可用也不得改写该决定。
+        let decision = plan_official_app(PlanInput {
+            platform: HostPlatform::Windows,
+            arch: HostArch::X64,
+            detected_app: None,
+            online: true,
+            windows_sideload_ok: Some(true),
+            destination: Some(Path::new(r"D:\MyApps")),
+        })
+        .unwrap();
+        let InstallDecision::Ready { route, .. } = decision else {
+            panic!()
+        };
+        assert_eq!(route, InstallRoute::WindowsPortable);
+    }
+
+    #[test]
+    fn a_macos_destination_keeps_the_copy_route() {
+        let decision = plan_official_app(PlanInput {
+            platform: HostPlatform::Macos,
+            arch: HostArch::Arm64,
+            detected_app: None,
+            online: true,
+            windows_sideload_ok: None,
+            destination: Some(Path::new("/Volumes/D/Apps")),
+        })
+        .unwrap();
+        let InstallDecision::Ready { route, .. } = decision else {
+            panic!()
+        };
+        assert_eq!(route, InstallRoute::MacosCopyApp);
     }
 }

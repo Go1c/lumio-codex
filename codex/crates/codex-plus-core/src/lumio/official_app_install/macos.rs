@@ -62,14 +62,14 @@ pub fn verify_macos_team_id(app: &Path, team_id: &str) -> Result<(), String> {
     }
 }
 
-pub fn install_macos_from_dmg(dmg: &Path) -> Result<PathBuf, String> {
+pub fn install_macos_from_dmg(dmg: &Path, dest_root: Option<&Path>) -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
-        install_macos_from_dmg_live(dmg)
+        install_macos_from_dmg_live(dmg, dest_root)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = dmg;
+        let _ = (dmg, dest_root);
         Err(INSTALL_FAILED.to_string())
     }
 }
@@ -131,7 +131,7 @@ fn verify_macos_bundle(app: &Path, team_id: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn install_macos_from_dmg_live(dmg: &Path) -> Result<PathBuf, String> {
+fn install_macos_from_dmg_live(dmg: &Path, dest_root: Option<&Path>) -> Result<PathBuf, String> {
     if !dmg.is_file() {
         return Err(INSTALL_FAILED.to_string());
     }
@@ -148,7 +148,11 @@ fn install_macos_from_dmg_live(dmg: &Path) -> Result<PathBuf, String> {
     let source =
         find_official_app_in_mount(&guard.mount).ok_or_else(|| INSTALL_FAILED.to_string())?;
     let existing = crate::app_paths::find_macos_codex_app_default();
-    let dest = choose_macos_dest(existing.as_deref(), system_applications_writable());
+    // 用户选了目录：.app 落进该目录；否则沿用既有推断（已装位置 → /Applications → ~/Applications）。
+    let dest = match dest_root {
+        Some(root) => root.join(APP_BUNDLE_NAME),
+        None => choose_macos_dest(existing.as_deref(), system_applications_writable()),
+    };
     install_macos_app_with(
         &source,
         &dest,

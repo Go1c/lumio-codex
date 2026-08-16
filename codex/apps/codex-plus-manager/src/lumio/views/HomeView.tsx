@@ -4,12 +4,14 @@ import {
   CheckCircle2,
   CloudOff,
   Download,
+  FolderOpen,
   RefreshCw,
   Rocket,
   ShieldCheck,
   Star,
   WalletCards,
 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
 import {
@@ -23,6 +25,7 @@ import {
   shellLabels,
 } from "../invoke.ts";
 import type { LumioOfficialAppInstallStatus } from "../invoke.ts";
+import { destinationOptions } from "../install-destination.ts";
 import { paymentUrl } from "../payment.ts";
 import { isOfficialAppInstallInProgress, type LumioState } from "../state.ts";
 import {
@@ -221,11 +224,21 @@ export function HomeView({
     return false;
   };
 
-  const installThenLaunch = () => {
+  // D-23：首次安装先问装哪里（标准路线 or 自选目录），选择权交给用户。
+  const [destinationOpen, setDestinationOpen] = useState(false);
+
+  const chooseDirectory = (): Promise<string | null> => {
+    return open({ directory: true, multiple: false, title: "选择安装目录" }).then((picked) =>
+      typeof picked === "string" ? picked : null,
+    );
+  };
+
+  const installThenLaunch = (destination: string | null) => {
+    setDestinationOpen(false);
     setLaunching(true);
     void (async () => {
       try {
-        const started = await installOfficialApp();
+        const started = await installOfficialApp(destination);
         if (await applyInstallStatus(started)) return;
         for (;;) {
           await wait(INSTALL_POLL_MS);
@@ -247,7 +260,7 @@ export function HomeView({
       launch();
       return;
     }
-    installThenLaunch();
+    setDestinationOpen(true);
   };
 
   const primaryDisabled = !actions.canLaunch || launching || isOfficialAppInstallInProgress(officialAppInstall);
@@ -461,6 +474,44 @@ export function HomeView({
             {shellLabels.settings}
           </button>
         </p>
+      ) : null}
+
+      {destinationOpen ? (
+        <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">
+          <div className="lumio-modal">
+            <h3>选择安装位置</h3>
+            {destinationOptions(state.bootstrap?.platform ?? "").map((option) => (
+              <p className="lumio-settings-note" key={option.id}>
+                <button
+                  className="lumio-button is-secondary"
+                  onClick={() => {
+                    if (option.id === "standard") {
+                      installThenLaunch(null);
+                      return;
+                    }
+                    void chooseDirectory().then((dir) => {
+                      if (dir !== null) installThenLaunch(dir);
+                    });
+                  }}
+                  type="button"
+                >
+                  <FolderOpen size={16} />
+                  {option.label}
+                </button>
+                {option.note === null ? null : <small>{option.note}</small>}
+              </p>
+            ))}
+            <div className="lumio-modal-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => setDestinationOpen(false)}
+                type="button"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {paymentOpen ? (
