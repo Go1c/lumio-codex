@@ -11,6 +11,7 @@
 | 加 DNS 记录、配证书、旧域名 301、切换顺序与回滚 | [02-domains-and-dns.md](./02-domains-and-dns.md) |
 | Sub2API 侧 CORS、`/auth/me` 契约、充值页可达性等本仓做不了的事 | [03-service-prerequisites.md](./03-service-prerequisites.md) |
 | 三站上线后逐项验收 | [04-golive-checklist.md](./04-golive-checklist.md) |
+| Sub2API 邀请返利（affiliate）：注册归因字段、用户侧端点、规则配置与生产当前值 | [05-sub2api-affiliate-contract.md](./05-sub2api-affiliate-contract.md) |
 | Lumio Codex 桌面端编译、打内测包、发 Release、Sub2API 契约 | [`codex/docs/ops/`](../../codex/docs/ops/README.md) |
 | CCHaven 控制面部署、管理后台、桌面端打包、存量用户迁移 | [`cchaven/docs/ops/`](../../cchaven/docs/ops/README.md) |
 | 三站的本地开发、环境变量、收口命令 | [`web/README.md`](../../web/README.md) |
