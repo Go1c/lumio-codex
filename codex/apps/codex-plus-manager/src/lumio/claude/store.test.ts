@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { dispatchClaude, getClaudeState, resetClaudeStore, subscribeClaudeStore } from "./store.ts";
+import { persistableClaudeState } from "./machine.ts";
+import {
+  dispatchClaude,
+  getClaudeState,
+  rememberProjectPassword,
+  resetClaudeStore,
+  setDraftPassword,
+  subscribeClaudeStore,
+} from "./store.ts";
 
 test("the module store keeps an in-flight connect sheet after a consumer unmounts", () => {
   resetClaudeStore();
@@ -46,6 +54,7 @@ test("resetClaudeStore forgets the persisted snapshot", () => {
       port: 22,
       auth: "password",
       keyPath: null,
+      hostAlias: null,
       remoteRoot: "/root/bestcodex/my-project",
       localRoot: "~/BestCodex/my-project",
       createdAt: "2026-08-16T00:00:00.000Z",
@@ -59,6 +68,34 @@ test("resetClaudeStore forgets the persisted snapshot", () => {
   if (typeof localStorage !== "undefined") {
     assert.equal(localStorage.getItem("bestcodex.claude.v1"), null);
   }
+});
+
+test("persistable Claude JSON has no password or secret fields", () => {
+  resetClaudeStore();
+  setDraftPassword("hunter2-secret");
+  rememberProjectPassword("p1", "hunter2-secret");
+  dispatchClaude({ type: "entitlement-resolved", entitlement: { status: "active", source: "local" } });
+  dispatchClaude({
+    type: "sync-finished",
+    ok: true,
+    project: {
+      id: "p1",
+      name: "my-project",
+      host: "1.2.3.4",
+      user: "root",
+      port: 22,
+      auth: "password",
+      keyPath: null,
+      hostAlias: null,
+      remoteRoot: "/root/bestcodex/my-project",
+      localRoot: "~/BestCodex/my-project",
+      createdAt: "2026-08-16T00:00:00.000Z",
+    },
+  });
+  const json = JSON.stringify(persistableClaudeState(getClaudeState()));
+  assert.doesNotMatch(json, /"password"\s*:/);
+  assert.doesNotMatch(json, /secret/i);
+  assert.doesNotMatch(json, /hunter2/);
 });
 
 test("sync progress survives after every subscriber unsubscribes", () => {

@@ -1,11 +1,11 @@
-import { type ClipboardEvent, type FormEvent, useState } from "react";
+import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 
-import { probeErrorCopy } from "../../claude/api.ts";
+import { listClaudeSshHosts, prepareErrorCopy, probeErrorCopy, syncErrorCopy } from "../../claude/api.ts";
 import { CONNECT_STEPS } from "../../claude/machine.ts";
 import { localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
 import { cancelClaudeConnect, runConnectProbe, runConnectSetup, runConnectSync } from "../../claude/session.ts";
 import { dispatchClaude, setDraftPassword } from "../../claude/store.ts";
-import type { ClaudeConnectSheet, ClaudeConnectStep } from "../../claude/types.ts";
+import type { ClaudeConnectSheet, ClaudeConnectStep, ClaudeSshHost } from "../../claude/types.ts";
 
 const TROUBLESHOOTING = [
   { title: "IP 是否抄对", detail: "用控制台里的公网 IP，不要填内网地址。" },
@@ -25,6 +25,7 @@ export function ClaudeConnect({
   onBackToCodex: () => void;
 }) {
   const [password, setPassword] = useState("");
+  const [sshHosts, setSshHosts] = useState<ClaudeSshHost[]>([]);
   const draft = sheet.draft;
   const remote = remoteProjectRoot(draft.user, draft.projectName);
   const local = localProjectRoot(draft.projectName);
@@ -41,6 +42,10 @@ export function ClaudeConnect({
     event.preventDefault();
     dispatchClaude({ type: "ssh-pasted", text });
   };
+
+  useEffect(() => {
+    void listClaudeSshHosts().then(setSshHosts);
+  }, []);
 
   const onHostSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -117,6 +122,32 @@ export function ClaudeConnect({
                   }
                   value={String(draft.port)}
                 />
+                <label className="lumio-claude-note" htmlFor="lumio-claude-alias">
+                  本机 SSH 配置别名（Host）
+                </label>
+                <input
+                  className="lumio-claude-field"
+                  id="lumio-claude-alias"
+                  list="lumio-claude-alias-list"
+                  onChange={(event) =>
+                    dispatchClaude({
+                      type: "draft-updated",
+                      draft: {
+                        hostAlias: event.target.value,
+                        auth: event.target.value && !draft.keyPath ? "config" : draft.auth,
+                      },
+                    })
+                  }
+                  placeholder="例如 prod，读 ~/.ssh/config"
+                  value={draft.hostAlias}
+                />
+                <datalist id="lumio-claude-alias-list">
+                  {sshHosts.map((host) => (
+                    <option key={host.alias} value={host.alias}>
+                      {host.hostname ? `${host.alias} · ${host.hostname}` : host.alias}
+                    </option>
+                  ))}
+                </datalist>
                 <label className="lumio-claude-note" htmlFor="lumio-claude-key">
                   本机密钥（可选）
                 </label>
@@ -228,7 +259,7 @@ export function ClaudeConnect({
           </div>
         ) : null}
 
-        {sheet.step === "setup" ? (
+        {sheet.step === "setup" && sheet.setupStatus !== "fail" ? (
           <div>
             <h2 id="lumio-claude-connect-title">安装组件</h2>
             <p className="lumio-claude-lede">在服务器上准备同步环境和项目目录。不用你操作。</p>
@@ -256,7 +287,7 @@ export function ClaudeConnect({
               </button>
               <button
                 className="lumio-button is-primary"
-                disabled={sheet.setupStatus === "running"}
+                disabled={sheet.setupStatus !== "ok"}
                 onClick={() => void runConnectSync()}
                 type="button"
               >
@@ -266,7 +297,53 @@ export function ClaudeConnect({
           </div>
         ) : null}
 
-        {sheet.step === "sync" ? (
+        {sheet.step === "setup" && sheet.setupStatus === "fail" ? (
+          <div>
+            <h2 id="lumio-claude-connect-title">没能装好同步组件</h2>
+            <p className="lumio-claude-lede">先改连接信息，或再试一次。装不好就不能开始首次同步。</p>
+            <div className="lumio-claude-fail">
+              {sheet.setupDetail ?? prepareErrorCopy("SSH_PREPARE_FAILED", draft.host, draft.port)}
+              <span className="lumio-claude-fail-code">{sheet.setupErrorCode ?? "SSH_PREPARE_FAILED"}</span>
+            </div>
+            <div className="lumio-claude-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => dispatchClaude({ type: "back-to-host" })}
+                type="button"
+              >
+                返回修改
+              </button>
+              <button className="lumio-button is-primary" onClick={() => void runConnectSetup()} type="button">
+                重试
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {sheet.step === "sync" && sheet.sync.state === "fail" ? (
+          <div>
+            <h2 id="lumio-claude-connect-title">没能完成首次同步</h2>
+            <p className="lumio-claude-lede">文件还没拉到这台电脑。先改连接信息，或再试一次。</p>
+            <div className="lumio-claude-fail">
+              {syncErrorCopy(sheet.sync.errorCode)}
+              <span className="lumio-claude-fail-code">{sheet.sync.errorCode ?? "SYNC_FAILED"}</span>
+            </div>
+            <div className="lumio-claude-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => dispatchClaude({ type: "back-to-host" })}
+                type="button"
+              >
+                返回修改
+              </button>
+              <button className="lumio-button is-primary" onClick={() => void runConnectSync()} type="button">
+                重试
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {sheet.step === "sync" && sheet.sync.state !== "fail" ? (
           <div>
             <h2 id="lumio-claude-connect-title">首次同步</h2>
             <p className="lumio-claude-lede">把服务器上的项目拉到这台电脑。完成后右侧就是终端。</p>
@@ -293,9 +370,6 @@ export function ClaudeConnect({
             <div className="lumio-claude-actions">
               <button className="lumio-button is-secondary" onClick={onBackToCodex} type="button">
                 切到 Codex（同步继续）
-              </button>
-              <button className="lumio-button is-primary" onClick={() => void runConnectSync()} type="button">
-                当作完成
               </button>
             </div>
           </div>

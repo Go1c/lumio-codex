@@ -10,7 +10,7 @@ export type ClaudeEntitlementStatus = "none" | "active" | "trialing" | "expired"
 
 export type ClaudeEntitlementSource = "account" | "control-plane" | "local";
 
-export type ClaudeAuthMethod = "password" | "key";
+export type ClaudeAuthMethod = "password" | "key" | "config";
 
 export interface ClaudeEntitlement {
   status: ClaudeEntitlementStatus;
@@ -24,6 +24,7 @@ export interface ClaudeHostDraft {
   port: number;
   auth: ClaudeAuthMethod;
   keyPath: string;
+  hostAlias: string;
   projectName: string;
 }
 
@@ -62,6 +63,7 @@ export interface ClaudeProject {
   port: number;
   auth: ClaudeAuthMethod;
   keyPath: string | null;
+  hostAlias: string | null;
   remoteRoot: string;
   localRoot: string;
   createdAt: string;
@@ -74,6 +76,7 @@ export interface ClaudeConnectSheet {
   probe: ClaudeProbeResult | null;
   setupStatus: ClaudeSetupStatus;
   setupDetail: string | null;
+  setupErrorCode: string | null;
   sync: ClaudeSyncStatus;
 }
 
@@ -86,12 +89,41 @@ export interface ClaudeFileEntry {
   path: string;
   name: string;
   kind: "file" | "directory";
+  side?: "local" | "remote";
+  size?: number | null;
+  children?: ClaudeFileEntry[];
+}
+
+export interface ClaudeFilePreview {
+  path: string;
+  side: "local" | "remote";
+  content: string;
+  tooLarge: boolean;
+  binary: boolean;
 }
 
 export interface ClaudeConflictEntry {
   id: string;
   path: string;
   kindLabel: string;
+  localContent?: string;
+  remoteContent?: string;
+  canResolve?: boolean;
+}
+
+export interface ClaudeConflictDiff {
+  path: string;
+  local: string;
+  remote: string;
+}
+
+export type ClaudeConflictResolution = "keepLocal" | "keepRemote" | "keepBoth";
+
+export interface ClaudeSshHost {
+  alias: string;
+  hostname: string | null;
+  port: number | null;
+  user: string | null;
 }
 
 export interface ClaudeState {

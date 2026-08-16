@@ -159,6 +159,7 @@ test("13 selecting a project only changes the active id", () => {
     port: 22,
     auth: "password" as const,
     keyPath: null,
+    hostAlias: null,
     remoteRoot: "/root/bestcodex/my-project",
     localRoot: "~/BestCodex/my-project",
     createdAt: "2026-08-16T00:00:00.000Z",

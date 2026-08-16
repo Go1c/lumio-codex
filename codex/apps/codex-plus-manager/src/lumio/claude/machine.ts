@@ -46,6 +46,7 @@ export function emptyHostDraft(): ClaudeHostDraft {
     port: 22,
     auth: "password",
     keyPath: "",
+    hostAlias: "",
     projectName: "my-project",
   };
 }
@@ -58,6 +59,7 @@ function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
     probe: null,
     setupStatus: "idle",
     setupDetail: null,
+    setupErrorCode: null,
     sync: idleSync(),
   };
 }
@@ -118,6 +120,7 @@ export function createProjectFromDraft(
     port: draft.port || 22,
     auth: draft.auth,
     keyPath: draft.keyPath.trim() === "" ? null : draft.keyPath.trim(),
+    hostAlias: draft.hostAlias.trim() === "" ? null : draft.hostAlias.trim(),
     remoteRoot: remoteProjectRoot(draft.user, name),
     localRoot: localProjectRoot(name),
     createdAt,
@@ -204,10 +207,12 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
           ...state.sheet,
           setupStatus: event.ok ? "ok" : "fail",
           setupDetail: event.detail ?? event.errorCode ?? null,
+          setupErrorCode: event.ok ? null : (event.errorCode ?? "SSH_PREPARE_FAILED"),
         },
       };
     case "start-sync":
       if (state.sheet === null) return state;
+      if (state.sheet.setupStatus === "fail") return state;
       return {
         ...state,
         sheet: {

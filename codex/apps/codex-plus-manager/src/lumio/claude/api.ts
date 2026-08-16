@@ -1,11 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import {
   LumioCommandError,
   readRequiredCommandResult,
   type LumioCommandResult,
 } from "../invoke.ts";
-import type { ClaudeAuthMethod, ClaudeFileEntry, ClaudeProbeResult } from "./types.ts";
+import type {
+  ClaudeAuthMethod,
+  ClaudeConflictDiff,
+  ClaudeConflictEntry,
+  ClaudeConflictResolution,
+  ClaudeFileEntry,
+  ClaudeFilePreview,
+  ClaudeProbeResult,
+  ClaudeSshHost,
+} from "./types.ts";
 
 export const CLAUDE_COMMANDS = {
   probe: "lumio_claude_probe_connection",
@@ -14,7 +24,18 @@ export const CLAUDE_COMMANDS = {
   openTerminal: "lumio_claude_open_system_terminal",
   runRemote: "lumio_claude_run_remote",
   listFiles: "lumio_claude_list_local_files",
+  listTree: "lumio_claude_list_files",
+  previewFile: "lumio_claude_preview_file",
+  listConflicts: "lumio_claude_list_conflicts",
+  resolveConflict: "lumio_claude_resolve_conflict",
+  conflictDiff: "lumio_claude_conflict_diff",
+  listSshHosts: "lumio_claude_list_ssh_hosts",
+  startTerminal: "lumio_claude_start_terminal",
+  writeTerminal: "lumio_claude_write_terminal",
+  resizeTerminal: "lumio_claude_resize_terminal",
 } as const;
+
+export const CLAUDE_SYNC_PROGRESS_EVENT = "lumio://claude-sync-progress";
 
 export interface ClaudeSshArgs {
   host: string;
@@ -22,6 +43,7 @@ export interface ClaudeSshArgs {
   port: number;
   password?: string;
   keyPath?: string | null;
+  hostAlias?: string | null;
   auth?: ClaudeAuthMethod;
 }
 
@@ -41,6 +63,18 @@ function missingBackend(code: string): never {
   throw new LumioCommandError(code);
 }
 
+function sshPayload(input: ClaudeSshArgs): Record<string, unknown> {
+  return {
+    host: input.host,
+    user: input.user,
+    port: input.port,
+    password: input.password || null,
+    keyPath: input.keyPath || null,
+    hostAlias: input.hostAlias || null,
+    auth: input.auth ?? (input.keyPath ? "key" : input.hostAlias ? "config" : "password"),
+  };
+}
+
 export function probeErrorCopy(code: string | null, host: string, port: number): string {
   switch (code) {
     case "SSH_AUTH_FAILED":
@@ -53,8 +87,44 @@ export function probeErrorCopy(code: string | null, host: string, port: number):
       return "这台电脑还没有 ssh 命令。";
     case "SSH_HOST_REQUIRED":
       return "先填写公网 IP。";
+    case "SSH_PREPARE_FAILED":
+      return "没能在服务器上装好同步组件。";
+    case "DEPLOY_ARTIFACT_MISSING":
+      return "这台电脑还没有同步组件，装不上服务器。";
+    case "SSH_ALIAS_UNKNOWN":
+      return "本机 SSH 配置里没有这个 Host 别名。";
     default:
       return `连不上这台服务器。`;
+  }
+}
+
+export function prepareErrorCopy(code: string | null, host: string, port: number): string {
+  switch (code) {
+    case "SSH_PREPARE_FAILED":
+      return "没能在服务器上装好同步组件。";
+    case "DEPLOY_ARTIFACT_MISSING":
+      return "这台电脑还没有同步组件，装不上服务器。";
+    case "SSH_AUTH_FAILED":
+    case "SSH_UNREACHABLE":
+    case "SSH_NOT_SSH":
+    case "SSH_CLIENT_MISSING":
+    case "SSH_ALIAS_UNKNOWN":
+      return probeErrorCopy(code, host, port);
+    default:
+      return "没能在服务器上装好同步组件。";
+  }
+}
+
+export function syncErrorCopy(code: string | null): string {
+  switch (code) {
+    case "SYNC_ENGINE_UNAVAILABLE":
+      return "这台电脑还没有同步组件，暂时拉不了文件。";
+    case "SYNC_COPY_UNCONFIRMED":
+      return "还没把服务器上的文件拉到这台电脑。";
+    case "SSH_ALIAS_UNKNOWN":
+      return "本机 SSH 配置里没有这个 Host 别名。";
+    default:
+      return "没能把服务器上的文件拉到这台电脑。";
   }
 }
 
@@ -63,7 +133,7 @@ export async function probeClaudeConnection(input: ClaudeSshArgs): Promise<Claud
   const user = input.user.trim() || "root";
   const port = input.port || 22;
   const target = `${host}:${port}`;
-  if (host === "") {
+  if (host === "" && !input.hostAlias) {
     return {
       ok: false,
       reachable: false,
@@ -103,14 +173,7 @@ export async function probeClaudeConnection(input: ClaudeSshArgs): Promise<Claud
       memory: string | null;
       errorCode: string | null;
       detail: string | null;
-    }>(CLAUDE_COMMANDS.probe, {
-      host,
-      user,
-      port,
-      password: input.password || null,
-      keyPath: input.keyPath || null,
-      auth: input.auth ?? (input.keyPath ? "key" : "password"),
-    });
+    }>(CLAUDE_COMMANDS.probe, sshPayload({ ...input, host, user, port }));
     const errorCode = payload.ok ? null : (payload.errorCode ?? "SSH_PROBE_FAILED");
     return {
       ok: payload.ok,
@@ -146,42 +209,34 @@ export async function prepareClaudeRemote(input: ClaudeSshArgs & {
   localRoot: string;
 }): Promise<{ ok: boolean; errorCode: string | null; detail: string | null }> {
   if (!isTauri()) {
-    return { ok: true, errorCode: null, detail: "本机目录将在首次同步时创建。" };
+    return { ok: false, errorCode: "SSH_CLIENT_MISSING", detail: prepareErrorCopy("SSH_CLIENT_MISSING", input.host, input.port) };
   }
   try {
     return await runClaudeCommand(CLAUDE_COMMANDS.prepare, {
-      host: input.host,
-      user: input.user,
-      port: input.port,
-      password: input.password || null,
-      keyPath: input.keyPath || null,
-      auth: input.auth ?? "password",
+      ...sshPayload(input),
       remoteRoot: input.remoteRoot,
       localRoot: input.localRoot,
     });
   } catch (error: unknown) {
     const errorCode = error instanceof LumioCommandError ? error.errorCode : "SSH_PREPARE_FAILED";
-    return { ok: false, errorCode, detail: "没能在服务器上建好项目目录。" };
+    return { ok: false, errorCode, detail: prepareErrorCopy(errorCode, input.host, input.port) };
   }
 }
 
 export async function firstClaudeSync(input: ClaudeSshArgs & {
   remoteRoot: string;
   localRoot: string;
+  projectId?: string;
 }): Promise<{ ok: boolean; filesDone: number; filesTotal: number; errorCode: string | null }> {
   if (!isTauri()) {
-    return { ok: true, filesDone: 0, filesTotal: 0, errorCode: "SYNC_ENGINE_UNAVAILABLE" };
+    return { ok: false, filesDone: 0, filesTotal: 0, errorCode: "SYNC_ENGINE_UNAVAILABLE" };
   }
   try {
     return await runClaudeCommand(CLAUDE_COMMANDS.sync, {
-      host: input.host,
-      user: input.user,
-      port: input.port,
-      password: input.password || null,
-      keyPath: input.keyPath || null,
-      auth: input.auth ?? "password",
+      ...sshPayload(input),
       remoteRoot: input.remoteRoot,
       localRoot: input.localRoot,
+      projectId: input.projectId ?? null,
     });
   } catch (error: unknown) {
     const errorCode = error instanceof LumioCommandError ? error.errorCode : "SYNC_FAILED";
@@ -211,12 +266,7 @@ export async function runClaudeRemote(
     return { stdout: "", stderr: "需要启动器才能在服务器上执行命令。", code: 1 };
   }
   return runClaudeCommand(CLAUDE_COMMANDS.runRemote, {
-    host: input.host,
-    user: input.user,
-    port: input.port,
-    password: input.password || null,
-    keyPath: input.keyPath || null,
-    auth: input.auth ?? "password",
+    ...sshPayload(input),
     command: input.command,
   });
 }
@@ -228,4 +278,133 @@ export async function listClaudeLocalFiles(localRoot: string): Promise<ClaudeFil
   } catch {
     return [];
   }
+}
+
+export async function listClaudeFiles(input: ClaudeSshArgs & {
+  localRoot: string;
+  remoteRoot: string;
+}): Promise<{ local: ClaudeFileEntry[]; remote: ClaudeFileEntry[] }> {
+  if (!isTauri()) return { local: [], remote: [] };
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.listTree, {
+      ...sshPayload(input),
+      localRoot: input.localRoot,
+      remoteRoot: input.remoteRoot,
+    });
+  } catch {
+    return { local: [], remote: [] };
+  }
+}
+
+export async function previewClaudeFile(input: ClaudeSshArgs & {
+  localRoot: string;
+  remoteRoot: string;
+  path: string;
+  side: "local" | "remote";
+}): Promise<ClaudeFilePreview | null> {
+  if (!isTauri()) return null;
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.previewFile, {
+      ...sshPayload(input),
+      localRoot: input.localRoot,
+      remoteRoot: input.remoteRoot,
+      path: input.path,
+      side: input.side,
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function listClaudeConflicts(input: {
+  projectId: string;
+  localRoot: string;
+}): Promise<ClaudeConflictEntry[]> {
+  if (!isTauri()) return [];
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.listConflicts, {
+      projectId: input.projectId,
+      localRoot: input.localRoot,
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function resolveClaudeConflict(input: {
+  projectId: string;
+  localRoot: string;
+  conflictId: string;
+  resolution: ClaudeConflictResolution;
+}): Promise<{ remaining: number; copyPath: string | null }> {
+  if (!isTauri()) {
+    missingBackend("SSH_CLIENT_MISSING");
+  }
+  return runClaudeCommand(CLAUDE_COMMANDS.resolveConflict, input);
+}
+
+export async function diffClaudeConflict(input: {
+  projectId: string;
+  localRoot: string;
+  conflictId: string;
+}): Promise<ClaudeConflictDiff | null> {
+  if (!isTauri()) return null;
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.conflictDiff, input);
+  } catch {
+    return null;
+  }
+}
+
+export async function listClaudeSshHosts(): Promise<ClaudeSshHost[]> {
+  if (!isTauri()) return [];
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.listSshHosts, {});
+  } catch {
+    return [];
+  }
+}
+
+export async function startClaudeTerminal(input: ClaudeSshArgs & {
+  projectId: string;
+  remoteRoot: string;
+  cols: number;
+  rows: number;
+}): Promise<void> {
+  if (!isTauri()) {
+    missingBackend("SSH_CLIENT_MISSING");
+  }
+  await runClaudeCommand(CLAUDE_COMMANDS.startTerminal, {
+    ...sshPayload(input),
+    projectId: input.projectId,
+    remoteRoot: input.remoteRoot,
+    cols: input.cols,
+    rows: input.rows,
+  });
+}
+
+export async function writeClaudeTerminal(projectId: string, bytes: number[]): Promise<void> {
+  if (!isTauri()) return;
+  await runClaudeCommand(CLAUDE_COMMANDS.writeTerminal, { projectId, bytes });
+}
+
+export async function resizeClaudeTerminal(projectId: string, cols: number, rows: number): Promise<void> {
+  if (!isTauri()) return;
+  await runClaudeCommand(CLAUDE_COMMANDS.resizeTerminal, { projectId, cols, rows });
+}
+
+export function terminalOutputEvent(projectId: string): string {
+  return `lumio://claude-terminal-output-${projectId}`;
+}
+
+export function terminalClosedEvent(projectId: string): string {
+  return `lumio://claude-terminal-closed-${projectId}`;
+}
+
+export async function subscribeClaudeEvent<T>(
+  event: string,
+  handler: (payload: T) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => undefined;
+  return listen<T>(event, (incoming) => handler(incoming.payload));
 }

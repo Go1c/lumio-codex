@@ -59,6 +59,32 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /安全组是否放行 22/);
   assert.match(source, /\/root\/bestcodex\//);
   assert.match(source, /~\/BestCodex\//);
+  assert.match(source, /SSH 配置|Host 别名|配置别名/);
+  assert.match(source, /setupStatus === "fail"/);
+  assert.match(source, /sync\.state === "fail"/);
+  assert.doesNotMatch(source, /当作完成/);
+});
+
+test("user-visible Claude copy never says agent or tmux", async () => {
+  const names = (await readdir(new URL(".", import.meta.url))).filter(
+    (name) => (name.endsWith(".tsx") || name.endsWith(".ts")) && !name.endsWith(".test.ts"),
+  );
+  assert.ok(names.length > 0);
+  for (const name of names) {
+    const source = await readView(name);
+    assert.doesNotMatch(source, /\bagent\b/i, `${name} leaked agent`);
+    assert.doesNotMatch(source, /\btmux\b/i, `${name} leaked tmux`);
+  }
+  for (const rel of ["../../claude/session.ts", "../../claude/api.ts", "../../claude/machine.ts"]) {
+    const source = await readFile(new URL(rel, import.meta.url), "utf8");
+    const visible = source
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("//") && !line.trimStart().startsWith("*"))
+      .filter((line) => /["'`]/.test(line))
+      .join("\n");
+    assert.doesNotMatch(visible, /\bagent\b/i, `${rel} leaked agent`);
+    assert.doesNotMatch(visible, /\btmux\b/i, `${rel} leaked tmux`);
+  }
 });
 
 test("the workspace shows files and conflicts tabs next to the terminal", async () => {

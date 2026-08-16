@@ -25,6 +25,7 @@ function project(name = "my-project"): ClaudeProject {
     port: 22,
     auth: "password",
     keyPath: null,
+    hostAlias: null,
     remoteRoot: `/root/bestcodex/${name}`,
     localRoot: `~/BestCodex/${name}`,
     createdAt: "2026-08-16T00:00:00.000Z",
@@ -253,26 +254,61 @@ test("the next project name increments when my-project is taken", () => {
   assert.equal(nextProjectName(["my-project", "my-project-2"]), "my-project-3");
 });
 
-test("unavailable sync engine still creates the project as offline", () => {
-  const created = project("docs-site");
+test("prepare failure does not advance the sheet to sync", () => {
   const state = apply([
     { type: "entitlement-resolved", entitlement: entitled },
     { type: "open-connect" },
-    { type: "sync-finished", ok: true, project: created },
+    { type: "continue-setup" },
     {
-      type: "project-sync-updated",
-      projectId: created.id,
-      sync: {
-        state: "offline",
-        filesDone: 0,
-        filesTotal: 0,
-        errorCode: "SYNC_ENGINE_UNAVAILABLE",
-        conflicts: 0,
-      },
+      type: "setup-finished",
+      ok: false,
+      detail: "没能在服务器上装好同步组件。",
+      errorCode: "SSH_PREPARE_FAILED",
+    },
+    { type: "start-sync" },
+  ]);
+  assert.equal(state.sheet?.step, "setup");
+  assert.equal(state.sheet?.setupStatus, "fail");
+  assert.equal(state.sheet?.setupDetail, "没能在服务器上装好同步组件。");
+  assert.equal(state.projects.length, 0);
+});
+
+test("unconfirmed first-sync copy does not create a project", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "start-sync" },
+    {
+      type: "sync-finished",
+      ok: false,
+      project: project("docs-site"),
+      errorCode: "SYNC_COPY_UNCONFIRMED",
     },
   ]);
-  assert.equal(state.page, "workspace");
-  assert.equal(state.syncByProject[created.id].state, "offline");
+  assert.equal(state.page, "empty");
+  assert.equal(state.sheet?.step, "sync");
+  assert.equal(state.sheet?.sync.state, "fail");
+  assert.equal(state.sheet?.sync.errorCode, "SYNC_COPY_UNCONFIRMED");
+  assert.equal(state.projects.length, 0);
+});
+
+test("unavailable sync engine does not create a project", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "start-sync" },
+    {
+      type: "sync-finished",
+      ok: false,
+      project: project("docs-site"),
+      errorCode: "SYNC_ENGINE_UNAVAILABLE",
+    },
+  ]);
+  assert.equal(state.page, "empty");
+  assert.equal(state.sheet?.step, "sync");
+  assert.equal(state.sheet?.sync.state, "fail");
+  assert.equal(state.sheet?.sync.errorCode, "SYNC_ENGINE_UNAVAILABLE");
+  assert.equal(state.projects.length, 0);
 });
 
 test("createProjectFromDraft writes BestCodex directory presets", () => {
@@ -283,6 +319,7 @@ test("createProjectFromDraft writes BestCodex directory presets", () => {
       port: 22,
       auth: "password",
       keyPath: "",
+      hostAlias: "",
       projectName: "my-project",
     },
     "proj-1",
