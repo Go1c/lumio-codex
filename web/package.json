@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Lumio 统一官网门户：lumiogame.com 总站 + cc / codex 产品站 + 共享包",
+  "description": "Lumio 官网门户 + BestCodex 产品站 + 共享包",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -14,8 +14,7 @@
     "build": "npm run build --workspaces --if-present",
     "lint": "eslint .",
     "dev:portal": "npm run dev --workspace @lumio/portal",
-    "dev:cc": "npm run dev --workspace @lumio/cc",
-    "dev:codex": "npm run dev --workspace @lumio/codex"
+    "dev:bestcodex": "npm run dev --workspace @lumio/bestcodex"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

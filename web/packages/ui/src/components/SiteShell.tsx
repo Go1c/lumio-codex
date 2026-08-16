@@ -28,11 +28,10 @@ export interface SiteShellProps {
   children: ReactNode;
 }
 
-const SITE_LABELS: Record<SiteId, string> = {
-  portal: "Lumio 官网",
-  cc: "CC避风港",
-  codex: "Lumio Codex",
-};
+const PRODUCT_SWITCH = [
+  { id: "codex" as const, label: "Codex", to: "/codex" },
+  { id: "cc" as const, label: "Claude", to: "/claude" },
+];
 
 const PRODUCT_FOOTER =
   "BestCodex 是独立项目，与 OpenAI、Anthropic 无从属关系。OpenAI、ChatGPT、Codex、Claude、Anthropic 为其各自所有者的商标。官方应用需单独安装。开源软件，AGPL-3.0-only。";
@@ -102,7 +101,6 @@ export function SiteShell({
   children,
 }: SiteShellProps) {
   const product = isProductSite(site);
-  const siblings = (Object.keys(SITE_LABELS) as SiteId[]).filter((id) => id !== site);
 
   return (
     <div className={`site theme-${site ?? "portal"}${product ? " is-product" : ""}`}>
@@ -119,12 +117,15 @@ export function SiteShell({
         </SiteLink>
         {product ? (
           <nav className="product-switch" aria-label="产品">
-            <a href={siteUrl("codex")} aria-current={site === "codex" ? "page" : undefined}>
-              Codex
-            </a>
-            <a href={siteUrl("cc")} aria-current={site === "cc" ? "page" : undefined}>
-              Claude
-            </a>
+            {PRODUCT_SWITCH.map((item) => (
+              <Link
+                key={item.id}
+                to={item.to}
+                aria-current={site === item.id ? "page" : undefined}
+              >
+                {item.label}
+              </Link>
+            ))}
           </nav>
         ) : (
           nav.length > 0 && (
@@ -182,15 +183,11 @@ export function SiteShell({
                 Lumio
               </span>
               <p className="footer-tagline">
-                一个账号，两件趁手的 AI 开发利器。注册、登录与余额统一在 Lumio 官网完成。
+                一个账号，一个 BestCodex 启动器。注册、登录与余额统一在 Lumio 官网完成。
               </p>
             </div>
             <nav className="footer-links" aria-label="站点互链">
-              {siblings.map((id) => (
-                <a key={id} href={siteUrl(id)}>
-                  {SITE_LABELS[id]}
-                </a>
-              ))}
+              <a href={siteUrl("codex")}>BestCodex</a>
             </nav>
           </div>
           <div className="footer-meta">

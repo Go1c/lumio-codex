@@ -22,8 +22,16 @@ export function HelpIndex() {
         ))}
       </nav>
       <p className="help-canonical">
-        规范 URL 是 <span>{canonical}</span>
-        。若根域是门户，请打开产品站 <span>{product}</span>。
+        {canonical === product ? (
+          <>
+            规范 URL 是 <span>{canonical}</span>。
+          </>
+        ) : (
+          <>
+            规范 URL 是 <span>{canonical}</span>
+            。若根域是门户，请打开产品站 <span>{product}</span>。
+          </>
+        )}
       </p>
     </div>
   );
@@ -63,8 +71,16 @@ export function HelpArticle() {
         <p key={paragraph}>{paragraph}</p>
       ))}
       <p className="help-canonical">
-        规范 URL 是 <span>{canonical}</span>
-        。若根域是门户，请打开产品站 <span>{product}</span>。
+        {canonical === product ? (
+          <>
+            规范 URL 是 <span>{canonical}</span>。
+          </>
+        ) : (
+          <>
+            规范 URL 是 <span>{canonical}</span>
+            。若根域是门户，请打开产品站 <span>{product}</span>。
+          </>
+        )}
       </p>
     </article>
   );

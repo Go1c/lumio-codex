@@ -18,6 +18,15 @@ async function submitLogin() {
 }
 
 describe("登录页", () => {
+  it("交叉文案指向 BestCodex，不再写两个旧产品", async () => {
+    stubFetch({ "/auth/login": () => failure(401, "INVALID_CREDENTIALS") });
+    renderApp("/login");
+
+    expect((await screen.findAllByText(/BestCodex/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/CC避风港/)).not.toBeInTheDocument();
+  });
+
   it("凭据错误展示统一文案", async () => {
     stubFetch({ "/auth/login": () => failure(401, "INVALID_CREDENTIALS") });
 

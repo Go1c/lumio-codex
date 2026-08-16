@@ -1,7 +1,8 @@
 import { ProductDownloads, Reveal } from "@lumio/ui";
 
+import { Faq } from "@/components/Faq";
 import { PlanCard } from "@/components/PlanCard";
-import { TERMINAL_SHOT, VALUES } from "@/content";
+import { CLAUDE_FAQS, TERMINAL_SHOT, VALUES } from "@/content";
 
 function TerminalShot() {
   const lastIndex = TERMINAL_SHOT.length - 1;
@@ -35,7 +36,7 @@ function TerminalShot() {
   );
 }
 
-export function Home() {
+export function ClaudeHome() {
   return (
     <>
       <div className="hero-split">
@@ -60,7 +61,7 @@ export function Home() {
               <a className="btn btn-primary btn-lg" href="#downloads">
                 下载 BestCodex
               </a>
-              <a className="btn btn-secondary btn-lg" href="#price">
+              <a className="btn btn-secondary btn-lg" href="#pricing">
                 查看定价
               </a>
             </div>
@@ -88,7 +89,7 @@ export function Home() {
         </div>
       </section>
 
-      <section className="mk-section" id="price" aria-labelledby="price-title">
+      <section className="mk-section" id="pricing" aria-labelledby="price-title">
         <Reveal>
           <span className="section-kicker">Pricing</span>
           <h2 className="section-title" id="price-title">
@@ -101,6 +102,8 @@ export function Home() {
       </section>
 
       <ProductDownloads />
+
+      <Faq items={CLAUDE_FAQS} />
     </>
   );
 }

@@ -1,4 +1,4 @@
-/** Claude 站文案。价格改动需要同步这里与 Sub2API 收银台。 */
+/** Claude 页文案。价格改动需要同步这里与 Sub2API 收银台。 */
 
 export const TERMINAL_SHOT = [
   "BestCodex · Claude · my-project",
@@ -33,7 +33,7 @@ export const PLAN = {
   inviteOnce: "首月免费（每个账号限一次）",
 };
 
-export const FAQS: Array<[string, string]> = [
+export const CLAUDE_FAQS: Array<[string, string]> = [
   [
     "有没有免费版？",
     "没有免费版。经朋友的邀请链接注册并登录后，可免费试用一个月，功能与正式订阅一样。",
@@ -44,4 +44,15 @@ export const FAQS: Array<[string, string]> = [
     "文件只在你的电脑和你的服务器之间同步。我们只存账号与工作区元数据。",
   ],
   ["可以随时取消吗？", "可以。订阅维持到本期结束，之后不再扣款。你的文件不会被删除。"],
+];
+
+export const CODEX_FAQS: Array<[string, string]> = [
+  [
+    "BestCodex 是官方 Codex 吗？",
+    "不是。它是独立的辅助接入工具，仅为了让你更快用上官方 Codex、减少安装配置步骤。完成连接后，你日常使用的就是官方 Codex 本身。",
+  ],
+  [
+    "它会修改官方 Codex 吗？",
+    "不会。官方应用保持原样；本工具只写入自己管理的连接配置，写入前先备份，随时可一键恢复。",
+  ],
 ];

@@ -155,8 +155,15 @@ describe("POST /user/aff/transfer", () => {
 
 describe("register 的 aff 归因码", () => {
   it("携带 aff_code；未提供时不带该键", async () => {
-    fetchMock.mockResolvedValue(
-      envelope({ access_token: "at", refresh_token: "rt", expires_in: 3600, user: {} }),
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        envelope({
+          access_token: "at",
+          refresh_token: "rt",
+          expires_in: 3600,
+          user: { id: 1, email: "a@b.com", balance: 0, status: "active" },
+        }),
+      ),
     );
 
     await register({ email: "a@b.com", password: "pw123456", affCode: "abc123" });

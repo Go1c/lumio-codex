@@ -1,9 +1,9 @@
 {
-  "name": "@lumio/cc",
+  "name": "@lumio/bestcodex",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "cc.lumiogame.com：CC避风港产品站（介绍 / 定价 / 下载）",
+  "description": "bestcodex.app：BestCodex 产品站（Codex / Claude 站内换页）",
   "scripts": {
     "dev": "vite",
     "check": "tsc -b",

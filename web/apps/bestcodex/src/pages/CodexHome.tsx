@@ -1,6 +1,7 @@
-import { useId, useState } from "react";
-
 import { ProductDownloads, Reveal } from "@lumio/ui";
+
+import { Faq } from "@/components/Faq";
+import { CODEX_FAQS } from "@/content";
 
 const STEPS = [
   {
@@ -20,18 +21,7 @@ const STEPS = [
   },
 ];
 
-const FAQS: Array<[string, string]> = [
-  [
-    "BestCodex 是官方 Codex 吗？",
-    "不是。它是独立的辅助接入工具，仅为了让你更快用上官方 Codex、减少安装配置步骤。完成连接后，你日常使用的就是官方 Codex 本身。",
-  ],
-  [
-    "它会修改官方 Codex 吗？",
-    "不会。官方应用保持原样；本工具只写入自己管理的连接配置，写入前先备份，随时可一键恢复。",
-  ],
-];
-
-export function Home() {
+export function CodexHome() {
   return (
     <>
       <section className="hero" id="top">
@@ -84,43 +74,7 @@ export function Home() {
 
       <ProductDownloads />
 
-      <Faq />
+      <Faq items={CODEX_FAQS} defaultOpen={0} />
     </>
-  );
-}
-
-function Faq() {
-  const [open, setOpen] = useState<number | null>(0);
-  const baseId = useId();
-
-  return (
-    <section className="faq mk-section" id="faq" aria-label="常见问题">
-      <Reveal>
-        <span className="section-kicker">FAQ</span>
-        <h2 className="section-title">常见问题</h2>
-      </Reveal>
-      {FAQS.map(([question, answer], index) => {
-        const panelId = `${baseId}-faq-${index}`;
-        const expanded = open === index;
-        return (
-          <div className="faq-item" key={question}>
-            <button
-              type="button"
-              aria-expanded={expanded}
-              aria-controls={panelId}
-              onClick={() => setOpen(expanded ? null : index)}
-            >
-              {question}
-              <span aria-hidden="true">{expanded ? "−" : "+"}</span>
-            </button>
-            {expanded && (
-              <div className="a" id={panelId}>
-                {answer}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </section>
   );
 }

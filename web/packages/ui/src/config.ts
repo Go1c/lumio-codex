@@ -1,7 +1,7 @@
 /**
- * 三站共用的域名 / 接口配置。
+ * 门户与产品站共用的域名 / 接口配置。
  *
- * 所有跨站地址只在这里定义一次：门户、两个产品站、Sub2API 与充值页。
+ * 所有跨站地址只在这里定义一次：门户、产品站路由、Sub2API 与充值页。
  * 一律读环境变量再回落到生产默认值，本地联调只需改 `.env`，代码里不出现第二处硬编码。
  */
 
@@ -25,6 +25,11 @@ export function rootDomain(): string {
   return env("VITE_ROOT_DOMAIN") ?? DEFAULT_ROOT_DOMAIN;
 }
 
+const PRODUCT_PATH: Record<Exclude<SiteId, "portal">, string> = {
+  codex: "/codex",
+  cc: "/claude",
+};
+
 export function siteUrl(site: SiteId): string {
   const overrides: Record<SiteId, string | undefined> = {
     portal: env("VITE_PORTAL_URL"),
@@ -35,7 +40,21 @@ export function siteUrl(site: SiteId): string {
   if (override) return trimSlash(override);
 
   const root = rootDomain();
-  return site === "portal" ? `https://${root}` : `https://${site}.${root}`;
+  if (site === "portal") return `https://${root}`;
+  return `https://${root}${PRODUCT_PATH[site]}`;
+}
+
+/** 产品站 origin（默认营销 apex）。覆盖变量若带 /codex 或 /claude，只取主机。 */
+export function productSiteOrigin(): string {
+  const override = env("VITE_CODEX_URL") ?? env("VITE_CC_URL");
+  if (override) {
+    try {
+      return new URL(trimSlash(override)).origin;
+    } catch {
+      return trimSlash(override);
+    }
+  }
+  return `https://${rootDomain()}`;
 }
 
 export function apiBaseUrl(): string {
@@ -75,7 +94,7 @@ export function helpCanonicalUrl(): string {
 
 export function helpProductUrl(path = ""): string {
   const suffix = path ? `/${path.replace(/^\/+/, "")}` : "";
-  return `${siteUrl("codex")}/help${suffix}`;
+  return `${productSiteOrigin()}/help${suffix}`;
 }
 
 export function portalAccountLinks(next?: string | null): AccountLinks {
