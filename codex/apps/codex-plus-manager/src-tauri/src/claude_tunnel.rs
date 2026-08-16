@@ -43,7 +43,8 @@ impl TunnelManager {
             .port();
         drop(listener);
 
-        let mut args = ssh_invocation_args(target, key_path, None);
+        let key = crate::claude_ssh::effective_key_path(key_path, target);
+        let mut args = ssh_invocation_args(target, key, None);
         let dest = args
             .pop()
             .ok_or_else(|| "没能打开本机同步通道。".to_string())?;
@@ -56,7 +57,7 @@ impl TunnelManager {
         command.stdin(Stdio::null());
         command.stdout(Stdio::null());
         command.stderr(Stdio::null());
-        let askpass = attach_askpass(&mut command, password, key_path, target.use_config)
+        let askpass = attach_askpass(&mut command, password, key, target.use_config)
             .map_err(|_| "无法准备安全凭据通道。".to_string())?;
         let child = command
             .spawn()

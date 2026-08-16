@@ -204,6 +204,116 @@ pub fn conflict_copy_path(path: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineConflictRecord {
+    pub id: String,
+    pub path: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub local: ConflictSide,
+    pub remote: ConflictSide,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct EngineConflictFile {
+    #[serde(default)]
+    conflicts: Vec<EngineConflictRecord>,
+}
+
+fn parse_engine_kind(value: Option<&str>) -> ConflictKind {
+    match value.unwrap_or_default() {
+        "remoteDeleted" | "RemoteDeleted" | "remote_deleted" => ConflictKind::RemoteDeleted,
+        "localDeleted" | "LocalDeleted" | "local_deleted" => ConflictKind::LocalDeleted,
+        _ => ConflictKind::BothModified,
+    }
+}
+
+pub fn records_to_conflicts(records: Vec<EngineConflictRecord>) -> Vec<Conflict> {
+    records
+        .into_iter()
+        .map(|record| {
+            let kind = parse_engine_kind(record.kind.as_deref());
+            Conflict {
+                id: record.id,
+                path: record.path,
+                kind,
+                kind_label: kind.label().into(),
+                local: record.local,
+                remote: record.remote,
+                can_resolve: true,
+            }
+        })
+        .collect()
+}
+
+pub fn ingest_engine_conflicts(
+    store: &ConflictStore,
+    records: Vec<EngineConflictRecord>,
+) -> Result<usize, String> {
+    let conflicts = records_to_conflicts(records);
+    let n = conflicts.len();
+    store.replace(conflicts)?;
+    Ok(n)
+}
+
+pub fn ingest_sidecar_conflicts(store: &ConflictStore, state_dir: &Path) -> Result<usize, String> {
+    let path = state_dir.join("conflicts.json");
+    let Ok(bytes) = std::fs::read(&path) else {
+        return Ok(0);
+    };
+    let file: EngineConflictFile =
+        serde_json::from_slice(&bytes).map_err(|e| format!("无法读取同步冲突：{e}"))?;
+    ingest_engine_conflicts(store, file.conflicts)
+}
+
+pub fn write_sidecar_conflicts(
+    state_dir: &Path,
+    records: &[EngineConflictRecord],
+) -> Result<(), String> {
+    std::fs::create_dir_all(state_dir).map_err(|e| format!("无法写入同步冲突：{e}"))?;
+    let bytes = serde_json::to_vec_pretty(&EngineConflictFile {
+        conflicts: records.to_vec(),
+    })
+    .map_err(|e| format!("无法写入同步冲突：{e}"))?;
+    std::fs::write(state_dir.join("conflicts.json"), bytes)
+        .map_err(|e| format!("无法写入同步冲突：{e}"))
+}
+
+pub fn detect_content_conflicts(
+    local_root: &Path,
+    remote_files: &[(String, String)],
+) -> Vec<EngineConflictRecord> {
+    let mut found = Vec::new();
+    for (path, remote_content) in remote_files {
+        if path.is_empty() || path.contains("..") {
+            continue;
+        }
+        let local_path = local_root.join(path);
+        let Ok(local_content) = std::fs::read_to_string(&local_path) else {
+            continue;
+        };
+        if local_content == *remote_content {
+            continue;
+        }
+        found.push(EngineConflictRecord {
+            id: format!("conflict-{}", path.replace(['/', '\\'], "-")),
+            path: path.clone(),
+            kind: Some("bothModified".into()),
+            local: ConflictSide {
+                content: local_content,
+                deleted: false,
+            },
+            remote: ConflictSide {
+                content: remote_content.clone(),
+                deleted: false,
+            },
+        });
+    }
+    found
+}
+
 pub fn sample_conflicts() -> Vec<Conflict> {
     vec![
         Conflict {
@@ -318,5 +428,96 @@ mod tests {
                 .expect("read")
                 .contains("VecDeque")
         );
+    }
+
+    #[test]
+    fn engine_ingest_writes_conflicts_the_store_already_reads() {
+        let records = tempfile::tempdir().expect("records");
+        let store = ConflictStore::new(records.path(), "project-ingest").expect("store");
+        assert!(store.list().is_empty());
+        let ingested = ingest_engine_conflicts(
+            &store,
+            vec![EngineConflictRecord {
+                id: "c-readme".into(),
+                path: "README.md".into(),
+                kind: Some("bothModified".into()),
+                local: ConflictSide {
+                    content: "local readme\n".into(),
+                    deleted: false,
+                },
+                remote: ConflictSide {
+                    content: "remote readme\n".into(),
+                    deleted: false,
+                },
+            }],
+        )
+        .expect("ingest");
+        assert_eq!(ingested, 1);
+        let listed = store.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "c-readme");
+        assert_eq!(listed[0].path, "README.md");
+        assert_eq!(listed[0].local.content, "local readme\n");
+        assert_eq!(listed[0].remote.content, "remote readme\n");
+    }
+
+    #[test]
+    fn ingest_from_sidecar_state_file_feeds_the_store() {
+        let state = tempfile::tempdir().expect("state");
+        let records = tempfile::tempdir().expect("records");
+        std::fs::write(
+            state.path().join("conflicts.json"),
+            r#"{"conflicts":[{"id":"c-1","path":"src/a.rs","kind":"bothModified","local":{"content":"aaa\n","deleted":false},"remote":{"content":"bbb\n","deleted":false}}]}"#,
+        )
+        .expect("write");
+        let store = ConflictStore::new(records.path(), "project-sidecar").expect("store");
+        let n = ingest_sidecar_conflicts(&store, state.path()).expect("ingest");
+        assert_eq!(n, 1);
+        assert_eq!(store.list()[0].path, "src/a.rs");
+    }
+
+    #[test]
+    fn ingested_keep_local_still_does_not_overwrite() {
+        let root = tempfile::tempdir().expect("root");
+        let records = tempfile::tempdir().expect("records");
+        std::fs::write(root.path().join("notes.txt"), "keep me\n").expect("write");
+        let store = ConflictStore::new(records.path(), "project-keep").expect("store");
+        ingest_engine_conflicts(
+            &store,
+            vec![EngineConflictRecord {
+                id: "c-notes".into(),
+                path: "notes.txt".into(),
+                kind: Some("bothModified".into()),
+                local: ConflictSide {
+                    content: "keep me\n".into(),
+                    deleted: false,
+                },
+                remote: ConflictSide {
+                    content: "server notes\n".into(),
+                    deleted: false,
+                },
+            }],
+        )
+        .expect("ingest");
+        store
+            .resolve(root.path(), "c-notes", Resolution::KeepLocal)
+            .expect("resolve");
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("notes.txt")).expect("read"),
+            "keep me\n"
+        );
+        assert!(!root.path().join("notes.服务器版本.txt").exists());
+    }
+
+    #[test]
+    fn both_modified_pairs_become_engine_records() {
+        let local = tempfile::tempdir().expect("local");
+        std::fs::write(local.path().join("same.txt"), "local\n").expect("write");
+        let found =
+            detect_content_conflicts(local.path(), &[("same.txt".into(), "remote\n".into())]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path, "same.txt");
+        assert_eq!(found[0].local.content, "local\n");
+        assert_eq!(found[0].remote.content, "remote\n");
     }
 }

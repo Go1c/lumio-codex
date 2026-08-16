@@ -177,7 +177,8 @@ fn scp_file(
     source: &Path,
     destination: &str,
 ) -> Result<(), &'static str> {
-    let mut args = ssh_invocation_args(target, key_path, None);
+    let key = crate::claude_ssh::effective_key_path(key_path, target);
+    let mut args = ssh_invocation_args(target, key, None);
     // ssh_invocation_args ends with the destination host; scp wants host:path.
     let host = args.pop().ok_or("SSH_PREPARE_FAILED")?;
     args.push(source.to_string_lossy().into_owned());
@@ -188,7 +189,7 @@ fn scp_file(
     command.stdout(Stdio::null());
     command.stderr(Stdio::null());
     let askpass =
-        crate::claude_ssh::attach_askpass(&mut command, password, key_path, target.use_config)?;
+        crate::claude_ssh::attach_askpass(&mut command, password, key, target.use_config)?;
     let status = command.status().map_err(|_| "SSH_CLIENT_MISSING")?;
     drop(askpass);
     if status.success() {

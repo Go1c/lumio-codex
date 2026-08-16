@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 pub const SYNC_PROGRESS_EVENT: &str = "lumio://claude-sync-progress";
 
@@ -32,22 +33,117 @@ pub struct SyncProgress {
 }
 
 pub fn count_files(root: &Path) -> u32 {
-    fn walk(path: &Path, total: &mut u32) {
+    count_files_filtered(root, false)
+}
+
+pub fn count_project_files(root: &Path) -> u32 {
+    count_files_filtered(root, true)
+}
+
+fn count_files_filtered(root: &Path, skip_sync_state: bool) -> u32 {
+    fn walk(path: &Path, total: &mut u32, skip_sync_state: bool) {
         let Ok(read) = std::fs::read_dir(path) else {
             return;
         };
         for entry in read.flatten() {
+            let name = entry.file_name();
+            if skip_sync_state && name == ".bestcodex-sync" {
+                continue;
+            }
             let path = entry.path();
             if path.is_dir() {
-                walk(&path, total);
+                walk(&path, total, skip_sync_state);
             } else {
                 *total += 1;
             }
         }
     }
     let mut total = 0;
-    walk(root, &mut total);
+    walk(root, &mut total, skip_sync_state);
     total
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FirstSyncConfirmation {
+    pub files_done: u32,
+    pub files_total: u32,
+    pub confirmed: bool,
+}
+
+pub fn confirm_copy_from_counts(
+    local_after: u32,
+    remote_total: Option<u32>,
+    local_before: u32,
+) -> FirstSyncConfirmation {
+    let transferred = local_after.saturating_sub(local_before);
+    let files_total = remote_total.unwrap_or(local_after);
+    let confirmed = match remote_total {
+        Some(0) => true,
+        Some(total) => transferred > 0 && local_after >= total,
+        None => transferred > 0,
+    };
+    FirstSyncConfirmation {
+        files_done: if confirmed { local_after } else { transferred },
+        files_total,
+        confirmed,
+    }
+}
+
+pub fn first_sync_from_sidecar(
+    sidecar_available: bool,
+    confirmation: FirstSyncConfirmation,
+) -> SyncOutcome {
+    if !sidecar_available {
+        return SyncOutcome {
+            ok: false,
+            files_done: 0,
+            files_total: 0,
+            error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+        };
+    }
+    if confirmation.confirmed {
+        return SyncOutcome {
+            ok: true,
+            files_done: confirmation.files_done,
+            files_total: confirmation.files_total.max(confirmation.files_done),
+            error_code: None,
+        };
+    }
+    SyncOutcome {
+        ok: false,
+        files_done: confirmation.files_done,
+        files_total: confirmation.files_total,
+        error_code: Some("SYNC_COPY_UNCONFIRMED".into()),
+    }
+}
+
+pub fn confirm_timeout() -> Duration {
+    let ms = std::env::var("BESTCODEX_CLAUDE_SYNC_CONFIRM_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(60_000);
+    Duration::from_millis(ms)
+}
+
+pub fn wait_for_confirmed_copy(
+    local_root: &Path,
+    baseline: u32,
+    remote_total: Option<u32>,
+    timeout: Duration,
+    poll: Duration,
+) -> FirstSyncConfirmation {
+    if matches!(remote_total, Some(0)) {
+        return confirm_copy_from_counts(count_project_files(local_root), remote_total, baseline);
+    }
+    let started = Instant::now();
+    loop {
+        let confirmation =
+            confirm_copy_from_counts(count_project_files(local_root), remote_total, baseline);
+        if confirmation.confirmed || started.elapsed() >= timeout {
+            return confirmation;
+        }
+        thread::sleep(poll);
+    }
 }
 
 pub fn copy_tree_with_progress(
@@ -188,14 +284,14 @@ struct JobSlot {
 
 pub struct SyncEngine {
     jobs: Mutex<HashMap<String, Arc<Mutex<JobSlot>>>>,
-    sidecars: Mutex<HashMap<String, std::process::Child>>,
+    sidecars: Arc<Mutex<HashMap<String, std::process::Child>>>,
 }
 
 impl SyncEngine {
     pub fn new() -> Self {
         Self {
             jobs: Mutex::new(HashMap::new()),
-            sidecars: Mutex::new(HashMap::new()),
+            sidecars: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -206,6 +302,14 @@ impl SyncEngine {
             let _ = previous.kill();
         }
         Ok(())
+    }
+
+    fn sidecar_running(sidecars: &Mutex<HashMap<String, std::process::Child>>, key: &str) -> bool {
+        let mut guard = sidecars.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.get_mut(key) {
+            Some(child) => child.try_wait().ok().flatten().is_none(),
+            None => false,
+        }
     }
 
     pub fn watch_local_files(
@@ -220,11 +324,12 @@ impl SyncEngine {
         }
         let slot = Arc::new(Mutex::new(JobSlot::default()));
         let key_owned = key.to_string();
+        let sidecars = Arc::clone(&self.sidecars);
         let handle = thread::spawn(move || {
             let root = expand_local_root(&local_root);
             let mut last = 0u32;
-            for _ in 0..120 {
-                let files = count_files(&root);
+            loop {
+                let files = count_project_files(&root);
                 if files != last {
                     last = files;
                     on_progress(SyncProgress {
@@ -233,7 +338,10 @@ impl SyncEngine {
                         project_id: Some(key_owned.clone()),
                     });
                 }
-                thread::sleep(std::time::Duration::from_millis(500));
+                if !Self::sidecar_running(&sidecars, &key_owned) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(500));
             }
         });
         if let Ok(mut guard) = slot.lock() {
@@ -362,5 +470,68 @@ mod tests {
             Some("SYNC_ENGINE_UNAVAILABLE")
         );
         assert_eq!(outcome.files_done, 0);
+    }
+
+    #[test]
+    fn sidecar_spawn_without_confirmed_copy_is_not_success() {
+        let outcome = first_sync_from_sidecar(
+            true,
+            FirstSyncConfirmation {
+                files_done: 0,
+                files_total: 0,
+                confirmed: false,
+            },
+        );
+        assert!(!outcome.ok);
+        assert_ne!(
+            outcome.error_code.as_deref(),
+            Some("SYNC_ENGINE_UNAVAILABLE")
+        );
+        assert_eq!(outcome.files_done, 0);
+    }
+
+    #[test]
+    fn existing_local_files_are_not_a_confirmed_remote_copy() {
+        let confirmation = confirm_copy_from_counts(3, None, 3);
+        assert!(!confirmation.confirmed);
+        let outcome = first_sync_from_sidecar(true, confirmation);
+        assert!(!outcome.ok);
+    }
+
+    #[test]
+    fn confirmed_remote_to_local_copy_is_success() {
+        let confirmation = confirm_copy_from_counts(2, Some(2), 0);
+        assert!(confirmation.confirmed);
+        assert_eq!(confirmation.files_done, 2);
+        let outcome = first_sync_from_sidecar(true, confirmation);
+        assert!(outcome.ok);
+        assert_eq!(outcome.files_done, 2);
+        assert!(outcome.error_code.is_none());
+    }
+
+    #[test]
+    fn missing_sidecar_stays_engine_unavailable() {
+        let outcome = first_sync_from_sidecar(
+            false,
+            FirstSyncConfirmation {
+                files_done: 0,
+                files_total: 0,
+                confirmed: false,
+            },
+        );
+        assert!(!outcome.ok);
+        assert_eq!(
+            outcome.error_code.as_deref(),
+            Some("SYNC_ENGINE_UNAVAILABLE")
+        );
+    }
+
+    #[test]
+    fn project_file_count_ignores_sync_state_dir() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".bestcodex-sync")).unwrap();
+        std::fs::write(root.path().join(".bestcodex-sync/agent.json"), "{}\n").unwrap();
+        std::fs::write(root.path().join("readme.md"), "hi\n").unwrap();
+        assert_eq!(count_project_files(root.path()), 1);
     }
 }

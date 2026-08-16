@@ -273,6 +273,25 @@ test("prepare failure does not advance the sheet to sync", () => {
   assert.equal(state.projects.length, 0);
 });
 
+test("unconfirmed first-sync copy does not create a project", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "start-sync" },
+    {
+      type: "sync-finished",
+      ok: false,
+      project: project("docs-site"),
+      errorCode: "SYNC_COPY_UNCONFIRMED",
+    },
+  ]);
+  assert.equal(state.page, "empty");
+  assert.equal(state.sheet?.step, "sync");
+  assert.equal(state.sheet?.sync.state, "fail");
+  assert.equal(state.sheet?.sync.errorCode, "SYNC_COPY_UNCONFIRMED");
+  assert.equal(state.projects.length, 0);
+});
+
 test("unavailable sync engine does not create a project", () => {
   const state = apply([
     { type: "entitlement-resolved", entitlement: entitled },

@@ -100,6 +100,7 @@ pub(crate) fn ssh_base_args(
         port,
         alias: None,
         use_config: false,
+        identity_file: None,
     };
     ssh_invocation_args(&target, key_path, None)
 }
@@ -166,21 +167,19 @@ fn run_ssh_target(
     key_path: Option<&str>,
     remote: &str,
 ) -> Result<std::process::Output, &'static str> {
-    let args = ssh_invocation_args(target, key_path, Some(remote));
+    let key = crate::claude_ssh::effective_key_path(key_path, target);
+    let args = ssh_invocation_args(target, key, Some(remote));
     let mut command = Command::new("ssh");
     command.args(&args);
     command.env("LC_ALL", "C");
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let plan = crate::claude_ssh::password_auth_plan(password, key_path, target.use_config);
-    if plan.batch_mode
-        && !target.use_config
-        && key_path.map(|value| value.is_empty()).unwrap_or(true)
-    {
+    let plan = crate::claude_ssh::password_auth_plan(password, key, target.use_config);
+    if plan.batch_mode {
         command.arg("-o").arg("BatchMode=yes");
     }
     let askpass =
-        crate::claude_ssh::attach_askpass(&mut command, password, key_path, target.use_config)?;
+        crate::claude_ssh::attach_askpass(&mut command, password, key, target.use_config)?;
     let output = command.output().map_err(|_| "SSH_CLIENT_MISSING")?;
     drop(askpass);
     Ok(output)
@@ -211,6 +210,7 @@ fn human_detail(code: &str, host: &str, port: u16) -> String {
         "SSH_ALIAS_UNKNOWN" => "本机 SSH 配置里没有这个 Host 别名。".into(),
         "DEPLOY_ARTIFACT_MISSING" => "这台电脑还没有同步组件，装不上服务器。".into(),
         "SSH_PREPARE_FAILED" => "没能在服务器上装好同步组件。".into(),
+        "SYNC_COPY_UNCONFIRMED" => "还没把服务器上的文件拉到这台电脑。".into(),
         _ => "连不上这台服务器。".into(),
     }
 }
@@ -221,6 +221,91 @@ fn conflict_dir() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from(".bestcodex-conflicts"));
     let _ = std::fs::create_dir_all(&base);
     base
+}
+
+fn count_remote_project_files(
+    target: &ResolvedSshTarget,
+    password: Option<&str>,
+    key_path: Option<&str>,
+    remote_root: &str,
+) -> Option<u32> {
+    let quoted = remote_root.replace('\'', "'\\''");
+    let output = run_ssh_target(
+        target,
+        password,
+        key_path,
+        &format!("find '{quoted}' -type f ! -path '*/.bestcodex-sync/*' 2>/dev/null | wc -l"),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .and_then(|value| value.parse().ok())
+}
+
+fn ingest_detected_conflicts(
+    project_id: &str,
+    local: &std::path::Path,
+    target: &ResolvedSshTarget,
+    password: Option<&str>,
+    key_path: Option<&str>,
+    remote_root: &str,
+) {
+    let Ok(store) = ConflictStore::new(&conflict_dir(), project_id) else {
+        return;
+    };
+    let state_dir = local.join(".bestcodex-sync");
+    let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &state_dir);
+    let quoted = remote_root.replace('\'', "'\\''");
+    let Ok(output) = run_ssh_target(
+        target,
+        password,
+        key_path,
+        &format!(
+            "find '{quoted}' -type f ! -path '*/.bestcodex-sync/*' -printf '%P\\n' 2>/dev/null"
+        ),
+    ) else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let remote_paths: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('.'))
+        .map(str::to_string)
+        .take(40)
+        .collect();
+    let mut pairs = Vec::new();
+    for path in remote_paths {
+        let local_file = local.join(&path);
+        if !local_file.is_file() {
+            continue;
+        }
+        let quoted_path = path.replace('\'', "'\\''");
+        let Ok(preview) = run_ssh_target(
+            target,
+            password,
+            key_path,
+            &format!("head -c 1048576 '{quoted}/{quoted_path}'"),
+        ) else {
+            continue;
+        };
+        if !preview.status.success() || preview.stdout.iter().take(512).any(|b| *b == 0) {
+            continue;
+        }
+        pairs.push((path, String::from_utf8_lossy(&preview.stdout).into_owned()));
+    }
+    let detected = claude_conflicts::detect_content_conflicts(local, &pairs);
+    if detected.is_empty() {
+        return;
+    }
+    let _ = claude_conflicts::write_sidecar_conflicts(&state_dir, &detected);
+    let _ = claude_conflicts::ingest_engine_conflicts(&store, detected);
 }
 
 #[tauri::command]
@@ -430,37 +515,72 @@ pub fn lumio_claude_first_sync(
         });
     }
 
-    if claude_sync::sidecar_command().is_some() {
-        if let Ok(local_port) = app.state::<TunnelManager>().open(
+    if claude_sync::sidecar_command().is_none() {
+        return ClaudeCommandResult::ok(ClaudeSyncPayload {
+            ok: false,
+            files_done: outcome.files_done,
+            files_total: outcome.files_total,
+            error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+        });
+    }
+
+    let local = expand_local_root(&local_root);
+    let baseline = claude_sync::count_project_files(&local);
+    let remote_total = count_remote_project_files(
+        &target,
+        password.as_deref(),
+        key_path.as_deref(),
+        &remote_root,
+    );
+    let spawned = if let Ok(local_port) = app.state::<TunnelManager>().open(
+        &key,
+        &target,
+        key_path.as_deref(),
+        password.as_deref(),
+        9000,
+    ) {
+        let state_dir = local.join(".bestcodex-sync");
+        if let Ok(config) = claude_sync::write_agent_config(
+            &state_dir,
+            &local,
+            &format!("ws://127.0.0.1:{local_port}/api/user/workspace-sync/v2"),
             &key,
-            &target,
-            key_path.as_deref(),
-            password.as_deref(),
-            9000,
+            &key,
         ) {
-            let state_dir = expand_local_root(&local_root).join(".bestcodex-sync");
-            if let Ok(config) = claude_sync::write_agent_config(
-                &state_dir,
-                &expand_local_root(&local_root),
-                &format!("ws://127.0.0.1:{local_port}/api/user/workspace-sync/v2"),
-                &key,
-                &key,
-            ) {
-                if engine.adopt_sidecar(&key, &config).is_ok() {
-                    let _ = remote_root;
-                    engine.watch_local_files(&key, local_root.clone(), move |progress| {
-                        let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
-                    });
-                    let files = claude_sync::count_files(&expand_local_root(&local_root));
-                    return ClaudeCommandResult::ok(ClaudeSyncPayload {
-                        ok: true,
-                        files_done: files,
-                        files_total: files.max(1),
-                        error_code: None,
-                    });
-                }
-            }
+            engine.adopt_sidecar(&key, &config).is_ok()
+        } else {
+            false
         }
+    } else {
+        false
+    };
+
+    if spawned {
+        engine.watch_local_files(&key, local_root.clone(), move |progress| {
+            let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
+        });
+        let confirmation = claude_sync::wait_for_confirmed_copy(
+            &local,
+            baseline,
+            remote_total,
+            claude_sync::confirm_timeout(),
+            std::time::Duration::from_millis(250),
+        );
+        let finished = claude_sync::first_sync_from_sidecar(true, confirmation);
+        ingest_detected_conflicts(
+            &key,
+            &local,
+            &target,
+            password.as_deref(),
+            key_path.as_deref(),
+            &remote_root,
+        );
+        return ClaudeCommandResult::ok(ClaudeSyncPayload {
+            ok: finished.ok,
+            files_done: finished.files_done,
+            files_total: finished.files_total,
+            error_code: finished.error_code,
+        });
     }
 
     ClaudeCommandResult::ok(ClaudeSyncPayload {
@@ -611,6 +731,39 @@ pub fn lumio_claude_list_files(
         }
         _ => Vec::new(),
     };
+    let root = expand_local_root(&local_root);
+    let local_paths = claude_files::flatten_file_paths(&local);
+    let remote_paths = claude_files::flatten_file_paths(&remote);
+    let overlap: Vec<String> = remote_paths
+        .into_iter()
+        .filter(|path| local_paths.iter().any(|local_path| local_path == path))
+        .take(40)
+        .collect();
+    if !overlap.is_empty() {
+        let quoted = remote_root.replace('\'', "'\\''");
+        let mut pairs = Vec::new();
+        for path in overlap {
+            let quoted_path = path.replace('\'', "'\\''");
+            if let Ok(preview) = run_ssh(
+                host.trim(),
+                user.trim(),
+                if port == 0 { 22 } else { port },
+                password.as_deref(),
+                key_path.as_deref(),
+                host_alias.as_deref(),
+                &format!("head -c 1048576 '{quoted}/{quoted_path}'"),
+            ) {
+                if preview.status.success() && !preview.stdout.iter().take(512).any(|b| *b == 0) {
+                    pairs.push((path, String::from_utf8_lossy(&preview.stdout).into_owned()));
+                }
+            }
+        }
+        let detected = claude_conflicts::detect_content_conflicts(&root, &pairs);
+        if !detected.is_empty() {
+            let _ =
+                claude_conflicts::write_sidecar_conflicts(&root.join(".bestcodex-sync"), &detected);
+        }
+    }
     ClaudeCommandResult::ok(ClaudeFileTrees { local, remote })
 }
 
@@ -665,7 +818,8 @@ pub fn lumio_claude_list_conflicts(
         Ok(store) => store,
         Err(_) => return ClaudeCommandResult::ok(Vec::new()),
     };
-    let _ = local_root;
+    let local = expand_local_root(&local_root);
+    let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &local.join(".bestcodex-sync"));
     ClaudeCommandResult::ok(
         store
             .list()

@@ -14,6 +14,8 @@ pub struct SshHost {
     pub hostname: Option<String>,
     pub port: Option<u16>,
     pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,6 +25,7 @@ pub struct ResolvedSshTarget {
     pub port: u16,
     pub alias: Option<String>,
     pub use_config: bool,
+    pub identity_file: Option<String>,
 }
 
 impl ResolvedSshTarget {
@@ -61,6 +64,7 @@ pub fn parse_ssh_config_text(content: &str) -> Vec<SshHost> {
                         hostname: None,
                         port: None,
                         user: None,
+                        identity_file: None,
                     });
                 }
             }
@@ -77,6 +81,11 @@ pub fn parse_ssh_config_text(content: &str) -> Vec<SshHost> {
             "user" => {
                 if let Some(host) = current.as_mut() {
                     host.user = Some(value);
+                }
+            }
+            "identityfile" => {
+                if let Some(host) = current.as_mut() {
+                    host.identity_file = Some(value);
                 }
             }
             _ => {}
@@ -149,6 +158,7 @@ pub fn resolve_ssh_target(
             port: resolved_port,
             alias: Some(alias.to_string()),
             use_config: true,
+            identity_file: found.identity_file.clone(),
         });
     }
 
@@ -166,6 +176,7 @@ pub fn resolve_ssh_target(
         port: if port == 0 { 22 } else { port },
         alias: None,
         use_config: false,
+        identity_file: None,
     })
 }
 
@@ -185,12 +196,22 @@ pub struct PasswordAuthPlan {
     pub batch_mode: bool,
 }
 
+pub fn effective_key_path<'a>(
+    key_path: Option<&'a str>,
+    target: &'a ResolvedSshTarget,
+) -> Option<&'a str> {
+    key_path.filter(|value| !value.is_empty()).or(target
+        .identity_file
+        .as_deref()
+        .filter(|value| !value.is_empty()))
+}
+
 pub fn password_auth_plan(
     password: Option<&str>,
     key_path: Option<&str>,
-    use_config: bool,
+    _use_config: bool,
 ) -> PasswordAuthPlan {
-    if key_path.map(|value| !value.is_empty()).unwrap_or(false) || use_config {
+    if key_path.map(|value| !value.is_empty()).unwrap_or(false) {
         return PasswordAuthPlan {
             use_askpass: false,
             batch_mode: true,
@@ -237,10 +258,8 @@ pub fn ssh_invocation_args(
         "-o".into(),
         "NumberOfPasswordPrompts=1".into(),
     ];
-    if target.use_config && key_path.map(|v| v.is_empty()).unwrap_or(true) {
-        args.push("-o".into());
-        args.push("BatchMode=yes".into());
-    } else if let Some(key) = key_path.filter(|value| !value.is_empty()) {
+    let effective_key = effective_key_path(key_path, target);
+    if let Some(key) = effective_key {
         args.push("-i".into());
         args.push(key.to_string());
         args.push("-o".into());
@@ -251,15 +270,16 @@ pub fn ssh_invocation_args(
             args.push("-p".into());
             args.push(target.port.to_string());
         }
+    } else if target.use_config {
+        // Host alias without IdentityFile: do not force BatchMode so an
+        // in-memory password can still be attached via askpass.
     } else {
         args.push("-o".into());
         args.push("PreferredAuthentications=password,keyboard-interactive".into());
         args.push("-o".into());
         args.push("PubkeyAuthentication=no".into());
-        if !target.use_config {
-            args.push("-p".into());
-            args.push(target.port.to_string());
-        }
+        args.push("-p".into());
+        args.push(target.port.to_string());
     }
     args.push(target.ssh_destination());
     if let Some(command) = remote_command {
@@ -375,7 +395,34 @@ mod tests {
         let key = password_auth_plan(Some("hunter2"), Some("/tmp/id_ed25519"), false);
         assert!(!key.use_askpass);
         assert!(key.batch_mode);
-        let config = password_auth_plan(Some("hunter2"), None, true);
-        assert!(!config.use_askpass);
+    }
+
+    #[test]
+    fn host_alias_without_identity_uses_in_memory_password() {
+        let plan = password_auth_plan(Some("hunter2"), None, true);
+        assert!(
+            plan.use_askpass,
+            "alias + typed password must still use askpass when the config has no key"
+        );
+        assert!(!plan.batch_mode);
+        let resolved = resolve_ssh_target("", None, 22, Some("prod"), CONFIG).expect("alias");
+        assert!(resolved.identity_file.is_none());
+        let args = ssh_invocation_args(&resolved, None, None);
+        assert!(
+            !args.iter().any(|arg| arg == "BatchMode=yes"),
+            "BatchMode would drop the in-memory password"
+        );
+        assert!(args.iter().all(|arg| !arg.contains("hunter2")));
+        assert!(args.iter().all(|arg| !arg.contains("password=")));
+    }
+
+    #[test]
+    fn host_alias_with_identity_file_stays_batch_mode() {
+        let config = "Host bastion\n  HostName 10.0.0.9\n  IdentityFile ~/.ssh/id_ed25519\n";
+        let resolved = resolve_ssh_target("", None, 22, Some("bastion"), config).expect("alias");
+        assert_eq!(resolved.identity_file.as_deref(), Some("~/.ssh/id_ed25519"));
+        let plan = password_auth_plan(Some("hunter2"), resolved.identity_file.as_deref(), true);
+        assert!(!plan.use_askpass);
+        assert!(plan.batch_mode);
     }
 }

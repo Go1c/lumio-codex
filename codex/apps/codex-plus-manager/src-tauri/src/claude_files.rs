@@ -240,6 +240,22 @@ pub fn parse_remote_listing(stdout: &str, side: &str) -> Vec<FileNode> {
     flatten(&root.children, "", side)
 }
 
+pub fn flatten_file_paths(nodes: &[FileNode]) -> Vec<String> {
+    let mut paths = Vec::new();
+    fn walk(nodes: &[FileNode], paths: &mut Vec<String>) {
+        for node in nodes {
+            if node.kind == "file" {
+                paths.push(node.path.clone());
+            }
+            if let Some(children) = &node.children {
+                walk(children, paths);
+            }
+        }
+    }
+    walk(nodes, &mut paths);
+    paths
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

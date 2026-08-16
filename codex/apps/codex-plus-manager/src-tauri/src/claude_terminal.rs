@@ -91,10 +91,13 @@ impl TerminalManager {
             return Ok(());
         }
 
-        let askpass = if key_path.map(|v| !v.is_empty()).unwrap_or(false) || target.use_config {
+        let key = crate::claude_ssh::effective_key_path(key_path, target);
+        let plan = crate::claude_ssh::password_auth_plan(password, key, target.use_config);
+        let askpass = if plan.use_askpass {
+            let secret = password.ok_or_else(|| "缺少服务器密码，请重新填写。".to_string())?;
+            Some(AskpassGuard::start(secret).map_err(|_| "无法准备安全凭据通道。".to_string())?)
+        } else if key.is_some() || target.use_config {
             None
-        } else if let Some(password) = password {
-            Some(AskpassGuard::start(password).map_err(|_| "无法准备安全凭据通道。".to_string())?)
         } else {
             return Err("缺少服务器密码，请重新填写。".into());
         };
@@ -115,7 +118,7 @@ impl TerminalManager {
         cmd.arg("ServerAliveInterval=30");
         for arg in ssh_invocation_args(
             target,
-            key_path,
+            key,
             Some(&Self::remote_command(project_id, remote_root)),
         ) {
             cmd.arg(arg);

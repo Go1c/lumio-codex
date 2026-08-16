@@ -119,6 +119,8 @@ export function syncErrorCopy(code: string | null): string {
   switch (code) {
     case "SYNC_ENGINE_UNAVAILABLE":
       return "这台电脑还没有同步组件，暂时拉不了文件。";
+    case "SYNC_COPY_UNCONFIRMED":
+      return "还没把服务器上的文件拉到这台电脑。";
     case "SSH_ALIAS_UNKNOWN":
       return "本机 SSH 配置里没有这个 Host 别名。";
     default:
