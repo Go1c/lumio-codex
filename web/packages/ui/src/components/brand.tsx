@@ -10,6 +10,20 @@ export interface BrandMarkProps {
   className?: string;
 }
 
+/** 产品站品牌标：方裁折纸小人，不走 OpenAI 花瓣 / Claude 星芒。 */
+export function BestCodexMark({ size = 24, className }: BrandMarkProps) {
+  return (
+    <img
+      src="/bestcodex-icon.jpg"
+      width={size}
+      height={size}
+      alt=""
+      className={className}
+      draggable={false}
+    />
+  );
+}
+
 /** OpenAI 花瓣 mark（官方 logo 路径）。 */
 export function OpenAIMark({ size = 24, className }: BrandMarkProps) {
   return (

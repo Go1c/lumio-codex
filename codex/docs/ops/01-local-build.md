@@ -40,7 +40,7 @@ npm run dev            # 终端 B：tauri dev（会起桌面窗）
 
 ## 3. Rust 校验（推荐范围）
 
-全量 `cargo test -p codex-plus-core` 可能撞上**遗留** launcher lifecycle 超时（与 Lumio 账户功能无关）。发版前用：
+全量 `cargo test -p codex-plus-core` 可能撞上**遗留** launcher lifecycle 超时（与 BestCodex 账户功能无关）。发版前用：
 
 ```bash
 # 在仓库根目录
@@ -108,7 +108,8 @@ BINARY_DIR="$PWD/target/x86_64-apple-darwin/release" \
   bash scripts/installer/macos/package-dmg.sh "1.2.46" "x64"
 ```
 
-输出：`dist/macos/LumioCodex-<version>-macos-<arch>-internal-unsigned.dmg`
+输出：`dist/macos/LumioCodex-<version>-macos-<arch>-internal-unsigned.dmg`  
+（**文件名**第一期可不动；安装包**显示名** BestCodex。）
 
 ### 5.3 Windows 便携 ZIP + NSIS
 
@@ -133,7 +134,7 @@ Pop-Location
 - `dist/windows/LumioCodex-<version>-windows-x64-portable-internal-unsigned.zip`
 - `dist/windows/LumioCodex-<version>-windows-x64-setup-internal-unsigned.exe`
 
-安装目录约定：`%LOCALAPPDATA%\Programs\Lumio Codex`（当前用户，不要求管理员）。
+安装目录：`%LOCALAPPDATA%\Programs\BestCodex`（当前用户，不要求管理员）。安装包显示名 BestCodex。
 
 ## 6. 用 GitHub Actions 打包（推荐）
 
@@ -149,8 +150,9 @@ Pop-Location
 
 - [ ] 冷启动进入未登录 / 或凭据续跑  
 - [ ] 注册或登录 → provisioning → 首页在线  
-- [ ] 「启动 Codex」能拉起官方应用  
-- [ ] 「充值」打开浏览器到 `https://api.lumio.games/purchase` 
+- [ ] Codex 首页是问候 + 一行余额 + 一张启动卡；「启动 Codex」能拉起官方应用  
+- [ ] 「充值」打开浏览器到 `https://api.lumio.games/purchase`  
+- [ ] 帮助入口打开 `https://bestcodex.app/help` 
 - [ ] 断网后若本机配置健康，可进离线首页并仍能启动  
 - [ ] 设置页：官方应用路径检测、配置恢复二次确认文案诚实  
 - [ ] 有 GitHub Release 且版本更高时，首页出现更新提醒  
@@ -164,4 +166,4 @@ Pop-Location
 | DMG 脚本报 binary not found | 设对 `BINARY_DIR`，确认 `lumio-codex` 与 `lumio-codex-launcher` 可执行 |
 | macOS「已损坏」/ 无法打开 | 未签名内测包：图标上 **右键 → 打开** |
 | Windows SmartScreen | 未签名预期行为；内测核对哈希后继续 |
-| `cargo test` 全量挂在 launcher | 用 §3 的过滤命令，勿据此阻断 Lumio 发版 |
+| `cargo test` 全量挂在 launcher | 用 §3 的过滤命令，勿据此阻断 BestCodex 发版 |

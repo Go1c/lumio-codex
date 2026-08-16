@@ -16,14 +16,15 @@
 
 - 功能开发在 `publish`（或短命 feature 分支 → PR → `publish`）  
 - 验证命令见 [01](./01-local-build.md) §3  
-- 用户可见文案变更要对照 UX 规格；禁词见 `shell-copy.test.ts`  
+- 用户可见文案变更要对照 UX 规格与 BestCodex 品牌口径；禁词见 `shell-copy.test.ts`  
 - 发版才打 tag / Release  
 
-### 2.2 官网（本仓 `site/`）
+### 2.2 官网（用户可见 `https://bestcodex.app`）
 
-- 小改文案可直接 PR；结构勿偏离 UX §3  
-- 部署见 [02](./02-website-deploy.md)  
+- 新站在 `web/`；旧 `site/` 只做过渡，勿再加功能  
+- 部署见 [02](./02-website-deploy.md) 与根 `docs/ops/`  
 - `https://api.lumio.games/purchase` 故障当作 **P0**（充值入口）  
+- 帮助页 `https://bestcodex.app/help` 不可用当作 **P1**  
 
 ### 2.3 后台（Sub2API）
 
@@ -52,7 +53,8 @@
 | 对象 | 怎么盯 |
 |------|--------|
 | `api.lumio.games` | 外部 HTTP 探测 + Sub2API 日志 |
-| `lumio.games` | Pages / CDN 可用性 |
+| `bestcodex.app`（含 `/help`） | 新站 / CDN 可用性；CORS / DNS 仍待运维 |
+| `lumio.games` | 旧站 301 到 `https://bestcodex.app` |
 | GitHub Actions | `publish` 推送后内部构建失败邮件/通知 |
 | 支付 | 支付商后台成功率；`https://api.lumio.games/purchase` 拨测 |
 | 客户端崩溃 | 待遥测正式接入前：内测群收集 + 诊断日志导出 |
@@ -73,7 +75,7 @@ docs/specs/                       ← 产品与交互定稿
 docs/plans/                       ← 历史实现计划（不是运维手册）
 .spec/                            ← Agent 规则、知识、ADR
 README.md                         ← 用户向总览 + 链到 ops
-site/                             ← 官网源码
+site/                             ← 旧官网源码（用户可见站点已是 bestcodex.app）
 .github/workflows/                ← CI 打包与公开发布闸门
 ```
 

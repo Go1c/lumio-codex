@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex · 已就绪 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Codex · 已就绪</h1>
+          <p>余额一行 + 启动卡。没有仪表盘墙</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home-install.html">未安装</a>
+          <a class="note" href="home-offline.html">离线</a>
+          <a class="note" href="cc-home.html">Claude</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a class="is-on" href="home.html">Codex</a>
+            <a href="cc-home.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <main class="win-main home">
+          <div class="home-top">
+            <div>
+              <h2>你好，Mary</h2>
+              <p class="note balance">
+                mary@example.com · 余额 <strong>128.50</strong>
+                <a href="#">充值</a>
+              </p>
+            </div>
+            <span class="chip"><i></i>服务正常</span>
+          </div>
+          <section class="launch-card">
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <p class="eyebrow">官方应用</p>
+            <header>
+              <h3>Codex 已就绪</h3>
+              <span class="pill-ok">可启动</span>
+            </header>
+            <p class="meta">本机配置已写好。启动后进入官方 Codex，这个窗口留在这里。</p>
+            <a class="btn is-blue" href="#">启动 Codex</a>
+            <p class="quiet" style="margin: 12px 0 0">/Applications/Codex.app</p>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

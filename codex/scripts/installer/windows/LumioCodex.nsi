@@ -8,7 +8,7 @@
 !define PRODUCT_REGISTRY_KEY "Software\Lumio\Lumio Codex"
 !define UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Lumio Codex"
 
-Name "Lumio Codex"
+Name "BestCodex"
 OutFile "${ROOT}\dist\windows\LumioCodex-${VERSION}-windows-x64-setup-internal-unsigned.exe"
 InstallDir "$LOCALAPPDATA\Programs\Lumio Codex"
 InstallDirRegKey HKCU "${PRODUCT_REGISTRY_KEY}" "InstallDir"
@@ -41,12 +41,12 @@ Section "Install"
   File "${ROOT}\dist\windows\app\lumio-codex-launcher.exe"
 
   SetOutPath "$INSTDIR"
-  CreateShortcut "$DESKTOP\Lumio Codex.lnk" "$INSTDIR\lumio-codex.exe" "" "$INSTDIR\lumio-codex.exe"
+  CreateShortcut "$DESKTOP\BestCodex.lnk" "$INSTDIR\lumio-codex.exe" "" "$INSTDIR\lumio-codex.exe"
   CreateDirectory "$SMPROGRAMS\Lumio Codex"
-  CreateShortcut "$SMPROGRAMS\Lumio Codex\Lumio Codex.lnk" "$INSTDIR\lumio-codex.exe" "" "$INSTDIR\lumio-codex.exe"
+  CreateShortcut "$SMPROGRAMS\Lumio Codex\BestCodex.lnk" "$INSTDIR\lumio-codex.exe" "" "$INSTDIR\lumio-codex.exe"
 
   WriteRegStr HKCU "${PRODUCT_REGISTRY_KEY}" "InstallDir" "$INSTDIR"
-  WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayName" "Lumio Codex"
+  WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayName" "BestCodex"
   WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "Publisher" "Lumio"
   WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}" "DisplayIcon" "$INSTDIR\lumio-codex.exe"
@@ -60,8 +60,8 @@ Section "Uninstall"
   nsExec::ExecToLog 'taskkill /IM lumio-codex-launcher.exe /F'
   Pop $0
 
-  Delete "$DESKTOP\Lumio Codex.lnk"
-  Delete "$SMPROGRAMS\Lumio Codex\Lumio Codex.lnk"
+  Delete "$DESKTOP\BestCodex.lnk"
+  Delete "$SMPROGRAMS\Lumio Codex\BestCodex.lnk"
   RMDir "$SMPROGRAMS\Lumio Codex"
 
   Delete "$INSTDIR\Helpers\lumio-codex-launcher.exe"

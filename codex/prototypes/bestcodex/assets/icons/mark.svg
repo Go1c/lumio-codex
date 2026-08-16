@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+  <path
+    fill="currentColor"
+    fill-opacity=".16"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linejoin="round"
+    d="M20.15 15.5V8.5c0-.64-.35-1.24-.91-1.56l-6.2-3.52a1.95 1.95 0 0 0-1.98 0l-6.2 3.52c-.56.32-.91.92-.91 1.56v7c0 .64.35 1.24.91 1.56l6.2 3.52c.61.35 1.37.35 1.98 0l6.2-3.52c.56-.32.91-.92.91-1.56Z"
+  />
+  <circle cx="9.45" cy="11.9" r=".95" fill="currentColor"/>
+  <circle cx="14.55" cy="11.9" r=".95" fill="currentColor"/>
+</svg>

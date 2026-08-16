@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude · my-project · BestCodex</title>
+    <meta http-equiv="refresh" content="0; url=cc-home.html" />
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+    <style>
+      .ws {
+        display: grid;
+        grid-template-rows: 40px 1fr 28px;
+        height: 100%;
+        background: #0e0e10;
+        color: #e8e8ed;
+      }
+      .ws-tabs {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        background: #161618;
+        font-size: 13px;
+      }
+      .ws-tabs a {
+        padding: 6px 10px;
+        border-radius: 8px;
+        color: #98989d;
+      }
+      .ws-tabs a.is-on {
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        text-decoration: none;
+      }
+      .ws-term {
+        padding: 18px 20px;
+        font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #d2d2d7;
+      }
+      .ws-term .dim { color: #6e6e73; }
+      .ws-bar {
+        display: flex;
+        justify-content: space-between;
+        padding: 0 14px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        background: #161618;
+        color: #8e8e93;
+        font-size: 11px;
+        line-height: 28px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Claude Tab · 工作区</h1>
+          <p>外层仍是 Codex | Claude。切去 Codex，这个会话不断</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-home.html">项目列表</a>
+          <a class="note" href="home.html">切到 Codex</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-home.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="cc-home.html" aria-label="项目">☰</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="ws">
+            <nav class="ws-tabs">
+              <a class="is-on" href="#">终端</a>
+              <a href="#">文件</a>
+              <a href="#">冲突</a>
+            </nav>
+            <div class="ws-term">
+              <div class="dim">my-project · Attached to session cc-my-project</div>
+              <div>&nbsp;</div>
+              <div>&gt; claude</div>
+              <div>Claude Code · my-project</div>
+              <div>How can I help you today?</div>
+              <div>&nbsp;</div>
+              <div>&gt; _</div>
+            </div>
+            <div class="ws-bar">
+              <span>已同步</span>
+              <span>dev-server · tmux</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

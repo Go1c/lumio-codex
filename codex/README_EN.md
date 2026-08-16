@@ -1,7 +1,7 @@
-# Lumio Codex
+# BestCodex
 
 <p align="center">
-  <img src="assets/brand/lumio-icon.png" alt="Lumio Codex icon" width="160">
+  <img src="assets/brand/bestcodex-icon.jpg" alt="BestCodex icon" width="160">
 </p>
 
 <p align="center">
@@ -14,9 +14,9 @@
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB">
 </p>
 
-Lumio Codex is a lightweight desktop client for LumioAPI users. It detects an already installed official Codex or ChatGPT desktop app, handles Lumio account onboarding, shows balance and plan status, configures the Responses endpoint, and hands off to the official app so users keep the native Codex model picker.
+**BestCodex** is a launcher: download once, sign in once, two tabs in one window — **Codex** (configure and launch official Codex) and **Claude** (run Claude on your own server; the repo may still say cchaven / CC). The Codex tab is a greeting, one line for email · balance · top-up, and a single launch card — not a dashboard wall. Users never enter a Base URL or API key.
 
-The production API is fixed at `https://api.lumio.games/`; the marketing site is `https://lumio.games/`. Users never need to enter a Base URL or API key manually.
+The production API is fixed at `https://api.lumio.games/`. The site is [`https://bestcodex.app`](https://bestcodex.app); help is [`https://bestcodex.app/help`](https://bestcodex.app/help). Top-up still opens `https://api.lumio.games/purchase`. The desktop key name is `BestCodex Desktop`. The bundle id remains `games.lumio.codex`. The installer display name and install paths are BestCodex (`BestCodex.app` / `%LOCALAPPDATA%\Programs\BestCodex`). Artifact **filenames** remain `LumioCodex-*.dmg`.
 
 **Ops / release manuals (Chinese):** start at [docs/ops/README.md](docs/ops/README.md) (local build, website deploy, GitHub releases, Sub2API backend, maintenance).
 
@@ -29,13 +29,13 @@ The production flow is intentionally fixed:
 1. Detect the official Codex or ChatGPT app, with manual path selection as a fallback.
 2. Display current terms of service, privacy policy, usage policy, and regional notice.
 3. Use Sub2API email verification, password registration or login, and 2FA.
-4. Reuse or create the account-scoped `Lumio Codex Desktop` API key.
-5. Configure LumioAPI, the Responses protocol, the model catalog, and the server default model.
-6. Show balance, trial credit, and plan status.
+4. Reuse or create the account-scoped `BestCodex Desktop` API key.
+5. Configure the Responses protocol, model catalog, and server default model (zero-config; users never see the key or Base URL).
+6. The Codex home shows one line: email · balance · top-up. Top-up opens `https://api.lumio.games/purchase`.
 7. Launch the official Codex app and keep its native model selector for later switches.
-8. Open `https://api.lumio.games/purchase` in the system browser (website handoff; a one-time secure sign-in handoff can follow later).
+8. The second tab, **Claude**, hosts existing CC capabilities (projects, terminal, sync). There is no separate Claude installer.
 
-Lumio Codex **does not download, modify, or bundle the official Codex or ChatGPT application**. Install a supported desktop app from an official OpenAI channel first.
+BestCodex **does not download, modify, or bundle the official Codex or ChatGPT application**. Install a supported desktop app from an official OpenAI channel first.
 
 ## Supported platforms
 
@@ -45,7 +45,7 @@ Lumio Codex **does not download, modify, or bundle the official Codex or ChatGPT
 | macOS | Apple Silicon arm64 | DMG |
 | macOS | Intel x64 | DMG |
 
-Windows installs per user under `%LOCALAPPDATA%\Programs\Lumio Codex` without administrator privileges. The macOS DMG exposes one `Lumio Codex.app`; its launch helper stays inside the app bundle.
+The installer display name is BestCodex. Windows installs per user under `%LOCALAPPDATA%\Programs\BestCodex` without administrator privileges. The macOS DMG exposes `BestCodex.app`. Artifact **filenames** remain `LumioCodex-*`. The launch helper stays inside the app bundle.
 
 ## Internal test artifacts
 
@@ -62,14 +62,14 @@ After production release is enabled, [GitHub Releases](https://github.com/Go1c/l
 
 ## Product boundaries
 
-Lumio compact mode exposes no Provider, Base URL, key, protocol, multi-provider, script, session-enhancement, Stepwise, Goals, MCP, Skill, Plugin, or injection configuration. The first version also contains no embedded payment UI, third-party OAuth, invitation system, or device-management system.
+BestCodex compact mode exposes no Provider, Base URL, key, protocol, multi-provider, script, session-enhancement, Stepwise, Goals, MCP, Skill, Plugin, or injection configuration. The first version also contains no embedded payment UI, third-party OAuth, invitation system, or device-management system.
 
-Reusable upstream implementation may remain in the source tree for synchronization, but the Lumio entry point registers only the compact command surface. Hidden legacy modules are not part of the user-facing product contract.
+Reusable upstream implementation may remain in the source tree for synchronization, but the BestCodex entry point registers only the compact command surface. Hidden legacy modules are not part of the user-facing product contract.
 
 ## Security and privacy
 
-- Tokens and API keys are stored in macOS Keychain or Windows Credential Manager. Logs, crash reports, and UI copy only show redacted values.
-- Before first takeover, Lumio snapshots Codex configuration and later merges only Lumio-owned provider fields. Signing out removes credentials and restores that snapshot.
+- Tokens and API keys stay in the existing local data directory (phase 1 does not rename those paths). Logs, crash reports, and UI copy only show redacted values.
+- Before first takeover, BestCodex snapshots Codex configuration and later merges only BestCodex-owned provider fields. Signing out removes credentials and restores that snapshot.
 - Telemetry is off by default. If explicitly enabled, it is limited to version, platform, launch stage, and redacted error codes.
 - Email addresses, API keys, prompts, source code, file paths, and request content are not telemetry fields.
 - During a service outage, a signed-in user with valid cached local configuration may still launch Codex; registration, account refresh, and payment are reported unavailable.
@@ -104,11 +104,11 @@ npm run build
 Repository layout:
 
 ```text
-apps/codex-plus-manager/       Lumio Codex Tauri and React client
+apps/codex-plus-manager/       BestCodex Tauri and React launcher
 apps/codex-plus-launcher/      Internal launch helper
 crates/codex-plus-core/        Cross-platform detection, config, and launch foundations
 crates/codex-plus-data/        Local data layer
-assets/brand/                  Brand source and transparent-padded derivative
+assets/brand/                  Brand source (canonical icon `bestcodex-icon.jpg`)
 scripts/installer/windows/     Windows NSIS internal packaging
 scripts/installer/macos/       macOS DMG internal packaging
 ```
@@ -117,6 +117,6 @@ scripts/installer/macos/       macOS DMG internal packaging
 
 This repository is published under `AGPL-3.0-only`; see [LICENSE](LICENSE) for the complete terms. If you distribute a modified version or offer it to users over a network, you must provide corresponding source code as required by GNU AGPL v3.0.
 
-Lumio Codex is an AGPL fork of [`BigPizzaV3/CodexPlusPlus`](https://github.com/BigPizzaV3/CodexPlusPlus), with upstream attribution and synchronization preserved. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party code and asset notices. Rebranding does not remove upstream license or attribution obligations.
+BestCodex is an AGPL fork of [`BigPizzaV3/CodexPlusPlus`](https://github.com/BigPizzaV3/CodexPlusPlus), with upstream attribution and synchronization preserved. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party code and asset notices. Rebranding does not remove upstream license or attribution obligations.
 
-Lumio Codex is an independent project and is not affiliated with, sponsored by, or endorsed by OpenAI. OpenAI, ChatGPT, Codex, and related names and marks are trademarks of their respective owners. This project grants no rights to the official application, those trademarks, or third-party content.
+BestCodex is an independent project and is not affiliated with, sponsored by, or endorsed by OpenAI or Anthropic. OpenAI, ChatGPT, Codex, Claude, Anthropic, and related names and marks are trademarks of their respective owners. This project grants no rights to the official application, those trademarks, or third-party content.

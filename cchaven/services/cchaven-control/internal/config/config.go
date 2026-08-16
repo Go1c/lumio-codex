@@ -19,7 +19,7 @@ const (
 	// 终端用户的邮箱、口令与账号状态全部由它保管。
 	DefaultSub2APIBase = "https://api.lumio.games"
 	// DefaultPortalURL 是统一门户，注册 / 登录 / 找回密码都在这里完成。
-	DefaultPortalURL = "https://lumiogame.com"
+	DefaultPortalURL = "https://bestcodex.app"
 	// DefaultSub2APICacheTTL 是身份校验结果的缓存时长。
 	DefaultSub2APICacheTTL = time.Minute
 	// purchasePath 是 Sub2API 的充值页路径；CC 与 Codex 共用同一个收银入口。
@@ -70,11 +70,11 @@ type Config struct {
 // TrustedOrigins 返回允许跨源访问控制面的前端来源。
 //
 // 三个，因为本系统面向三套独立部署、互不相干的前端：
-//   - PublicURL —— CC 产品站（cc.lumiogame.com）
+//   - PublicURL —— CC 产品站（cc.bestcodex.app）
 //   - AdminURL  —— 管理后台 apps/admin（admin.cchaven.cn）。交互设计第 7 章要求后台
 //     与官网、APP 完全隔离，它不是官网的子路径，因此必须单独列为可信来源，
 //     否则后台在生产环境会被 CORS 与写操作的同源校验一起挡死。
-//   - PortalURL —— 统一门户 / 账号中心（lumiogame.com）。它拿 Sub2API 令牌来读 CC 的
+//   - PortalURL —— 统一门户 / 账号中心（bestcodex.app）。它拿 Sub2API 令牌来读 CC 的
 //     权益与邀请数据，不在这里放行的话生产环境会被 CORS 全量挡下。
 //
 // CORS 响应头与 cookie 写操作的 CSRF 校验都读这一处，两者永远一致。

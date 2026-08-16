@@ -267,9 +267,9 @@ fn lumio_desktop_metadata_uses_branded_contract() {
     assert!(manager_manifest.contains("name = \"lumio-codex\""));
     assert!(launcher_manifest.contains("name = \"lumio-codex-launcher\""));
     for expected in [
-        "\"productName\": \"Lumio Codex\"",
+        "\"productName\": \"BestCodex\"",
         "\"identifier\": \"games.lumio.codex\"",
-        "\"title\": \"Lumio Codex\"",
+        "\"title\": \"BestCodex\"",
         "icons/icon.icns",
         "icons/icon.ico",
     ] {
@@ -287,11 +287,24 @@ fn lumio_windows_installer_is_branded_current_user_and_internal_unsigned() {
         std::fs::read_to_string(repository.join("scripts/installer/windows/LumioCodex.nsi"))
             .expect("read Lumio Windows installer");
 
-    assert!(windows_installer.contains("Name \"Lumio Codex\""));
+    assert!(windows_installer.contains("Name \"BestCodex\""));
+    assert!(windows_installer.contains("DisplayName\" \"BestCodex\""));
     assert!(
         windows_installer.contains("LumioCodex-${VERSION}-windows-x64-setup-internal-unsigned.exe")
     );
+    // First period: keep the existing install tree; only the shortcut label changes.
     assert!(windows_installer.contains("InstallDir \"$LOCALAPPDATA\\Programs\\Lumio Codex\""));
+    assert!(!windows_installer.contains("InstallDir \"$LOCALAPPDATA\\Programs\\BestCodex\""));
+    assert!(windows_installer.contains("Software\\Lumio\\Lumio Codex"));
+    assert!(
+        windows_installer
+            .contains("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Lumio Codex")
+    );
+    assert!(windows_installer.contains("CreateShortcut \"$DESKTOP\\BestCodex.lnk\""));
+    assert!(
+        windows_installer.contains("CreateShortcut \"$SMPROGRAMS\\Lumio Codex\\BestCodex.lnk\"")
+    );
+    assert!(!windows_installer.contains("CreateShortcut \"$DESKTOP\\Lumio Codex.lnk\""));
     assert!(windows_installer.contains("RequestExecutionLevel user"));
     assert!(windows_installer.contains("lumio-codex.exe"));
     assert!(windows_installer.contains("Helpers\\lumio-codex-launcher.exe"));
@@ -318,7 +331,10 @@ fn lumio_macos_packager_creates_one_visible_internal_unsigned_app() {
         std::fs::read_to_string(repository.join("scripts/installer/macos/package-dmg.sh"))
             .expect("read Lumio macOS packager");
 
-    assert!(macos_installer.contains("Lumio Codex.app"));
+    // First period: keep Lumio Codex.app on disk; CFBundleDisplayName is BestCodex.
+    assert!(macos_installer.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
+    assert!(!macos_installer.contains("APP_DIR=\"$STAGE/BestCodex.app\""));
+    assert!(macos_installer.contains("<string>BestCodex</string>"));
     assert!(macos_installer.contains("games.lumio.codex"));
     assert!(macos_installer.contains("LumioCodex-${VERSION}-macos-${ARCH}-internal-unsigned.dmg"));
     assert!(macos_installer.contains("Contents/Helpers/lumio-codex-launcher"));

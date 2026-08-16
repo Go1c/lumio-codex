@@ -66,7 +66,7 @@ func TestCodeInvalidCarriesRemainingAttempts(t *testing.T) {
 // 410 表示资源永久消失（区别于 404 的「可能拼错了」），reason 稳定供机器分支，
 // portal_url 让前端能直接把用户送到账号中心。
 func TestAuthMigratedPointsAtTheAccountCentre(t *testing.T) {
-	err := AuthMigrated("https://lumiogame.com/login")
+	err := AuthMigrated("https://bestcodex.app/login")
 
 	if err.Status != http.StatusGone {
 		t.Errorf("状态码 = %d, want 410", err.Status)
@@ -74,13 +74,13 @@ func TestAuthMigratedPointsAtTheAccountCentre(t *testing.T) {
 	if err.Code != "auth_migrated" {
 		t.Errorf("错误码 = %q, want auth_migrated", err.Code)
 	}
-	if got := err.Details["portal_url"]; got != "https://lumiogame.com/login" {
+	if got := err.Details["portal_url"]; got != "https://bestcodex.app/login" {
 		t.Errorf("details.portal_url = %v", got)
 	}
 	if got := err.Details["reason"]; got != "identity_moved_to_lumio" {
 		t.Errorf("details.reason = %v, want identity_moved_to_lumio", got)
 	}
-	want := "账号体系已统一到 Lumio 账号中心，请前往 https://lumiogame.com/login 登录。"
+	want := "账号体系已统一到 Lumio 账号中心，请前往 https://bestcodex.app/login 登录。"
 	if got := i18n.T(i18n.ZhCN, err.Message, err.Args); got != want {
 		t.Errorf("文案 = %q, want %q", got, want)
 	}

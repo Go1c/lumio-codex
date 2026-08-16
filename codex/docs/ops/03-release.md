@@ -42,7 +42,7 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 
 ```bash
 # 版本号已对齐后
-git tag -a v1.2.46 -m "Lumio Codex 1.2.46 internal-unsigned"
+git tag -a v1.2.46 -m "BestCodex 1.2.46 internal-unsigned"
 git push origin v1.2.46
 ```
 
@@ -88,7 +88,7 @@ GET https://api.github.com/repos/Go1c/lumio-codex/releases/latest
 # 1. 工作区干净、版本号已对齐、测试已过
 git status
 # 2. 提交版本 bump + 变更说明（可同步改 CHANGELOG.md）
-git tag -a v1.2.46 -m "Lumio Codex 1.2.46"
+git tag -a v1.2.46 -m "BestCodex 1.2.46"
 git push origin publish
 git push origin v1.2.46
 ```
@@ -96,7 +96,7 @@ git push origin v1.2.46
 然后在 GitHub → Releases → Draft a new release：
 
 - Tag：`v1.2.46`  
-- Title：`Lumio Codex 1.2.46`  
+- Title：`BestCodex 1.2.46`  
 - 勾选是否 Pre-release（内测建议勾选）  
 - 上传四个 `-internal-unsigned` 制品（或签名后的正式名）  
 - 正文写清：平台、未签名须知、SHA-256、已知问题  
@@ -133,7 +133,7 @@ git push origin v1.2.46
 - [ ] 版本号三处（+ workspace）一致  
 - [ ] `cargo fmt` / `lumio` 测 / manager 测 / `npm test` / `npm run check` 通过  
 - [ ] `node .spec/tools/spec-lint.mjs`（若动过 `.spec/`）  
-- [ ] 官网健康；充值页 `https://api.lumio.games/purchase` 仍可达（[02](./02-website-deploy.md)、[04](./04-backend.md)）  
+- [ ] 站点 `https://bestcodex.app` 与帮助 `https://bestcodex.app/help` 健康；充值页 `https://api.lumio.games/purchase` 仍可达（[02](./02-website-deploy.md)、[04](./04-backend.md)）。CORS / DNS 仍待运维。  
 - [ ] API `https://api.lumio.games/` 健康（[04](./04-backend.md)）  
 - [ ] 四平台包已产出并抽测冒烟（[01](./01-local-build.md) §7）  
 - [ ] Tag + Release 已发布；更新提醒在旧版上可复现  

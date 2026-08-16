@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex · 离线 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Codex · 离线</h1>
+          <p>本机已就绪仍可启动。未安装则不能装</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home.html">在线</a>
+          <a class="note" href="home-offline.html">已安装</a>
+          <a class="note" href="home-offline.html?missing=1">未安装</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a class="is-on" href="home-offline.html">Codex</a>
+            <a href="cc-home.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <main class="win-main home">
+          <div class="banner">无法连接服务。正在使用 09:20 的缓存。你仍可以启动官方 Codex。</div>
+          <div class="home-top">
+            <div>
+              <h2>你好，Mary</h2>
+              <p class="note balance">
+                mary@example.com · 余额 <strong>128.50</strong>
+                <span class="quiet">缓存值</span>
+              </p>
+            </div>
+            <span class="chip" style="color: var(--warn)"><i style="background: var(--warn); box-shadow: 0 0 0 4px rgba(255, 159, 10, 0.16)"></i>离线</span>
+          </div>
+
+          <section class="launch-card" data-offline-ready>
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <p class="eyebrow">官方应用</p>
+            <header>
+              <h3>离线可用</h3>
+              <span class="pill-warn">缓存</span>
+            </header>
+            <p class="meta">本机配置还在。充值需要网络，启动不需要。</p>
+            <a class="btn is-blue" href="#">启动 Codex</a>
+            <p class="quiet" style="margin: 12px 0 0">/Applications/Codex.app</p>
+          </section>
+
+          <section class="launch-card" data-offline-missing hidden>
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <p class="eyebrow">官方应用</p>
+            <header>
+              <h3>尚未安装官方 Codex</h3>
+              <span class="note">需要网络</span>
+            </header>
+            <p class="meta">安装官方应用需要网络。连上之后再回来装。</p>
+            <button class="btn is-blue" type="button" disabled>安装并启动官方 Codex</button>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+    <script>
+      (() => {
+        const missing = new URLSearchParams(location.search).get("missing") === "1";
+        const ready = document.querySelector("[data-offline-ready]");
+        const empty = document.querySelector("[data-offline-missing]");
+        const banner = document.querySelector(".banner");
+        if (missing && ready && empty) {
+          ready.hidden = true;
+          empty.hidden = false;
+          if (banner) banner.textContent = "无法连接服务。安装官方应用需要网络。";
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+    <link rel="stylesheet" href="../assets/site.css" />
+  </head>
+  <body class="mk">
+    <div class="mk-proto">
+      <p>官网设计稿 · 点顶栏 Codex / Claude 换整页</p>
+      <div class="toolbar-actions">
+        <a class="note" href="../index.html">全部稿件</a>
+        <div class="seg">
+          <button type="button" data-theme-set="light">浅色</button>
+          <button type="button" data-theme-set="dark">深色</button>
+        </div>
+      </div>
+    </div>
+
+    <div data-site>
+      <header class="mk-nav">
+        <a class="brand" href="index.html">
+          <span class="app-icon" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+          BestCodex
+        </a>
+        <nav class="page-tabs" aria-label="产品">
+          <a class="is-on" href="#codex" data-site-tab="codex" aria-selected="true">Codex</a>
+          <a href="#claude" data-site-tab="claude" aria-selected="false">Claude</a>
+        </nav>
+        <div class="mk-cta">
+          <a href="help.html">帮助</a>
+          <a href="#">账户</a>
+          <a class="btn is-sm" data-download href="#downloads">下载</a>
+        </div>
+      </header>
+
+      <div data-pane="codex">
+        <section class="mk-hero">
+          <p class="kicker">官方原版</p>
+          <h1>更快开始使用<br /><em>官方 Codex</em></h1>
+          <p class="lede">
+            帮你完成注册、登录和本机配置。你使用的始终是官方 Codex 应用，不捆绑、不修改。
+          </p>
+          <div class="hero-cta">
+            <a class="btn" href="#downloads">下载 BestCodex</a>
+            <a class="btn is-ghost" href="#codex-faq">常见问题</a>
+          </div>
+        </section>
+
+        <section class="mk-section">
+          <span class="kicker">Get started</span>
+          <h2>三步开始</h2>
+          <div class="mk-steps">
+            <article>
+              <b>01</b>
+              <h3>下载安装</h3>
+              <p>选择你的平台。官方 Codex 应用需单独安装，本工具不捆绑、不修改它。</p>
+            </article>
+            <article>
+              <b>02</b>
+              <h3>在 App 内登录</h3>
+              <p>登录后连接与本机配置自动完成，无需填写任何服务地址或密钥。</p>
+            </article>
+            <article>
+              <b>03</b>
+              <h3>启动官方 Codex</h3>
+              <p>点「启动 Codex」进入官方应用。余额与充值在账户中心完成。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="mk-section" id="downloads">
+          <span class="kicker">Download</span>
+          <h2>下载</h2>
+          <div class="mk-dl">
+            <article>
+              <span class="you">你的设备</span>
+              <h3>Mac · Apple 芯片</h3>
+              <p>macOS 13 或更新版本</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+            <article>
+              <h3>Mac · Intel</h3>
+              <p>macOS 13 或更新版本</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+            <article>
+              <h3>Windows</h3>
+              <p>Windows 10 / 11 · 64 位</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+          </div>
+        </section>
+
+        <section class="mk-section" id="codex-faq">
+          <span class="kicker">FAQ</span>
+          <h2>常见问题</h2>
+          <div class="mk-faq">
+            <details open>
+              <summary>BestCodex 是官方 Codex 吗？</summary>
+              <p>不是。它是独立的辅助接入工具，仅为了让你更快用上官方 Codex、减少安装配置步骤。完成连接后，你日常使用的就是官方 Codex 本身。</p>
+            </details>
+            <details>
+              <summary>它会修改官方 Codex 吗？</summary>
+              <p>不会。官方应用保持原样；本工具只写入自己管理的连接配置，写入前先备份，随时可一键恢复。</p>
+            </details>
+          </div>
+        </section>
+      </div>
+
+      <div data-pane="claude" hidden>
+        <div class="mk-split">
+          <section class="mk-hero is-claude">
+            <p class="kicker">为了防封</p>
+            <h1>安心使用 Claude Code<br /><em>不再担心封号</em></h1>
+            <p class="lede">
+              官方 Claude Code 跑在你自己的服务器上——独立环境、固定 IP、持久会话。文件双向同步，编辑体验如同本机。
+            </p>
+            <div class="hero-cta">
+              <a class="btn" href="#claude-downloads">下载 BestCodex</a>
+              <a class="btn is-ghost" href="#claude-price">查看定价</a>
+            </div>
+          </section>
+          <div class="term-shot" aria-hidden="true">
+            <div class="mini-bar">
+              <div class="traffic"><i></i><i></i><i></i></div>
+              <span>claude · my-project</span>
+            </div>
+            <div class="cc-term">
+              <div class="dim">BestCodex · Claude · my-project</div>
+              <div class="ok">attached  session cc-my-project  ·  tmux</div>
+              <div>&nbsp;</div>
+              <div>&gt; claude</div>
+              <div>Claude Code · my-project</div>
+              <div>How can I help you today?</div>
+              <div>&nbsp;</div>
+              <div>&gt; <span class="dim">_</span></div>
+            </div>
+          </div>
+        </div>
+
+        <section class="mk-section">
+          <span class="kicker">Why</span>
+          <h2>防封，以及同步</h2>
+          <div class="mk-values">
+            <article>
+              <h3>防封方案</h3>
+              <p>独立服务器环境、固定 IP、持久会话，与本机完全隔离，大幅降低封号风险。即使连接中断，对话上下文也不会丢失。</p>
+            </article>
+            <article>
+              <h3>双向安全同步</h3>
+              <p>远端改动回到本机，本机编辑上到服务器。机密文件默认不同步；出现冲突时并排对比，绝不静默覆盖。</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="mk-section" id="claude-price">
+          <span class="kicker">Pricing</span>
+          <h2>简单定价</h2>
+          <div class="mk-price">
+            <p class="kicker">唯一套餐</p>
+            <h3>Claude 包月</h3>
+            <p class="price">¥19.9<span style="font-size: 18px; color: var(--ink-2)"> / 月</span></p>
+            <p class="quiet">随时取消</p>
+            <ul>
+              <li>防封服务器环境</li>
+              <li>双向安全同步</li>
+              <li>持久终端</li>
+              <li>不限工作区数量</li>
+            </ul>
+            <p class="quiet" style="margin: 0 0 16px">没有其他限制，就一个价钱。</p>
+            <a class="btn is-blue is-block" href="#claude-downloads">立即订阅</a>
+            <p class="mk-invite-note">🎁 经朋友邀请注册并登录 APP<br />首月免费（每个账号限一次）</p>
+          </div>
+        </section>
+
+        <section class="mk-section" id="claude-downloads">
+          <span class="kicker">Download</span>
+          <h2>下载</h2>
+          <div class="mk-dl">
+            <article>
+              <span class="you">你的设备</span>
+              <h3>Mac · Apple 芯片</h3>
+              <p>macOS 13 或更新版本</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+            <article>
+              <h3>Mac · Intel</h3>
+              <p>macOS 13 或更新版本</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+            <article>
+              <h3>Windows</h3>
+              <p>Windows 10 / 11 · 64 位</p>
+              <a class="btn is-sm" href="#">下载</a>
+            </article>
+          </div>
+        </section>
+
+        <section class="mk-section">
+          <span class="kicker">FAQ</span>
+          <h2>常见问题</h2>
+          <div class="mk-faq">
+            <details open>
+              <summary>有没有免费版？</summary>
+              <p>没有免费版。经朋友的邀请链接注册并登录后，可免费试用一个月，功能与正式订阅一样。</p>
+            </details>
+            <details>
+              <summary>订阅有什么限制？</summary>
+              <p>没有。不限工作区、不限同步用量，所有功能全开，就一个价钱。</p>
+            </details>
+            <details>
+              <summary>你们会存储我的源代码吗？</summary>
+              <p>文件只在你的电脑和你的服务器之间同步。我们只存账号与工作区元数据。</p>
+            </details>
+            <details>
+              <summary>可以随时取消吗？</summary>
+              <p>可以。订阅维持到本期结束，之后不再扣款。你的文件不会被删除。</p>
+            </details>
+          </div>
+        </section>
+      </div>
+
+      <footer class="mk-foot">
+        BestCodex 是独立项目，与 OpenAI、Anthropic 无从属关系。OpenAI、ChatGPT、Codex、Claude、Anthropic 为其各自所有者的商标。官方应用需单独安装。开源软件，AGPL-3.0-only。
+      </footer>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

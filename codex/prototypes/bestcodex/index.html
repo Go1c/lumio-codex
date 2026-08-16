@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BestCodex · 启动器设计稿</title>
+    <link rel="icon" href="assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="assets/prototype.css" />
+  </head>
+  <body>
+    <main class="gallery">
+      <header class="gallery-head">
+        <div class="brand">
+          <span class="app-icon" aria-hidden="true"><img src="assets/icons/app-icon.jpg" alt="" /></span>
+          BestCodex
+        </div>
+        <h1>启动器设计稿</h1>
+        <p>
+          一个窗口，两个 Tab：Codex 和 Claude。图标已锁定。第 1–3 步可点：正式图标、Codex 三态、Claude 接入。
+        </p>
+        <div class="seg" style="margin-top: 16px">
+          <button type="button" data-theme-set="light">浅色</button>
+          <button type="button" data-theme-set="dark">深色</button>
+        </div>
+      </header>
+
+      <div class="map">
+        <section>
+          <h2>先走这条线</h2>
+          <p>登录 → 默认 Codex → 点进 Claude 接入。</p>
+          <a href="app/signed-out.html">1. 未登录<small>欢迎页 · 正式图标</small></a>
+          <a href="app/home.html">2. Codex 已就绪<small>余额一行 + 启动卡</small></a>
+          <a href="app/cc-empty.html">3. 第一次点 Claude<small>先讲清再连</small></a>
+          <a href="app/cc-connect.html">4. 接入向导<small>主机 → 探测 → 装组件 → 首次同步</small></a>
+          <a href="app/cc-home.html">5. Claude 环境<small>左项目 · 右终端</small></a>
+        </section>
+        <section>
+          <h2>Codex Tab 三态</h2>
+          <a href="app/home.html">已就绪</a>
+          <a href="app/home-install.html">未安装<small>选位置 · 进度在卡内</small></a>
+          <a href="app/home-install.html?state=download">安装中 · 下载</a>
+          <a href="app/home-install.html?state=fail">安装失败</a>
+          <a href="app/home-offline.html">离线 · 仍可启动</a>
+          <a href="app/home-offline.html?missing=1">离线 · 未安装</a>
+          <a href="app/repair.html">修复（无 Tab）</a>
+        </section>
+        <section>
+          <h2>Claude 怎么接进来</h2>
+          <a href="app/cc-subscribe.html">未订阅</a>
+          <a href="app/cc-empty.html">第一次进入</a>
+          <a href="app/cc-connect.html?step=host">向导 1 · 主机</a>
+          <a href="app/cc-connect.html?step=probe">向导 2 · 探测</a>
+          <a href="app/cc-connect.html?step=probe&amp;fail=1">向导 2 · 探测失败</a>
+          <a href="app/cc-connect.html?step=setup">向导 3 · 装组件</a>
+          <a href="app/cc-connect.html?step=sync">向导 4 · 首次同步</a>
+          <a href="app/cc-home.html">接入之后</a>
+        </section>
+        <section>
+          <h2>共用</h2>
+          <a href="app/login.html">登录</a>
+          <a href="app/settings.html">设置</a>
+          <a href="site/index.html">官网<small>整页 · 两个页签</small></a>
+          <a href="site/help.html">帮助</a>
+          <a href="icon.html">正式图标<small>浅色 / 深色都站得住</small></a>
+        </section>
+      </div>
+    </main>
+    <script src="assets/prototype.js"></script>
+  </body>
+</html>

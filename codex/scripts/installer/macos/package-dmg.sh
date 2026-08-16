@@ -61,9 +61,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>Lumio Codex</string>
+  <string>BestCodex</string>
   <key>CFBundleDisplayName</key>
-  <string>Lumio Codex</string>
+  <string>BestCodex</string>
   <key>CFBundleIdentifier</key>
   <string>games.lumio.codex</string>
   <key>CFBundleVersion</key>
@@ -96,5 +96,5 @@ fi
 
 ln -s /Applications "$STAGE/Applications"
 
-hdiutil create -volname "Lumio Codex Internal" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+hdiutil create -volname "BestCodex Internal" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 echo "$DMG"

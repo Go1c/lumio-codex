@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>需要检查 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>App · 需要检查配置</h1>
+          <p>说清后果，不假装在修</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home.html">首页</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="titlebar-name">BestCodex</div>
+          <div></div>
+        </header>
+        <main class="win-main">
+          <section class="repair">
+            <div class="glyph" aria-hidden="true">!</div>
+            <h2>需要检查配置</h2>
+            <p>
+              本机配置被其他工具改过。BestCodex 不会自动覆盖这些改动。你可以重新检查，或恢复到接管前的原始配置。
+            </p>
+            <p class="code">CODEX_CONFIG_CONFLICT</p>
+            <div class="stack" style="display: grid; gap: 10px">
+              <button class="btn" type="button">重新检查</button>
+              <button class="btn is-ghost" type="button">恢复本机配置</button>
+              <a class="btn is-ghost" href="../site/help.html">打开帮助</a>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

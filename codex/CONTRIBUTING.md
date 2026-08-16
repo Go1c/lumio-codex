@@ -1,6 +1,6 @@
-# Contributing to Lumio Codex
+# Contributing to BestCodex
 
-感谢贡献。本仓库是 Lumio Codex 桌面客户端与官网源码（AGPL-3.0-only），fork 自 CodexPlusPlus。
+感谢贡献。本仓库是 BestCodex 桌面启动器与官网源码（AGPL-3.0-only），fork 自 CodexPlusPlus。用户可见名是 BestCodex；站点 `https://bestcodex.app`。
 
 ## 开发与打包
 
@@ -37,7 +37,7 @@ cargo test -p codex-plus-manager
 ## 代码风格
 
 - Rust：`cargo fmt`  
-- 前端：与现有 Lumio 壳一致；用户可见文案避开禁词（见 `shell-copy.test.ts`）  
+- 前端：与现有 BestCodex 壳一致；用户可见文案避开禁词（见 `shell-copy.test.ts`）  
 - 知识沉淀：功能行为进 `.spec/knowledge/`；运维步骤进 `docs/ops/`  
 
 ## 报告问题

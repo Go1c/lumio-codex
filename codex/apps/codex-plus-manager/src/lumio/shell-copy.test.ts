@@ -42,10 +42,7 @@ test("every bound command carries the lumio prefix", () => {
 
 test("shell label inventory covers the approved product surface", () => {
   assert.deepEqual(visibleShellLabels, [
-    "账户状态",
-    "余额与套餐",
-    "连接状态",
-    "默认模型",
+    "账户",
     "充值",
     "启动 Codex",
     "开机启动",
@@ -56,8 +53,12 @@ test("shell label inventory covers the approved product surface", () => {
     "配置恢复",
     "登录",
     "创建账户",
-    "首页",
+    "Codex",
+    "Claude",
     "设置",
+    "通用",
+    "支持",
+    "帮助中心",
     "验证账户",
     "准备连接",
     "同步模型目录",
@@ -66,6 +67,9 @@ test("shell label inventory covers the approved product surface", () => {
     "恢复本机配置",
     "导出诊断日志",
   ]);
+  const labels: readonly string[] = visibleShellLabels;
+  assert.equal(labels.includes("首页"), false);
+  assert.equal(labels.includes("余额与套餐"), false);
 });
 
 test("a failed command surfaces its stable error code", () => {
@@ -103,10 +107,15 @@ function userFacingSource(source: string): string {
 
 test("no user-facing source file mentions a forbidden product surface", async () => {
   const viewsDir = new URL("./views/", import.meta.url);
-  const views = (await readdir(viewsDir)).filter((name) => name.endsWith(".tsx")).sort();
+  const topLevel = (await readdir(viewsDir)).filter((name) => name.endsWith(".tsx"));
+  const claudeDir = new URL("./claude/", viewsDir);
+  const claudeViews = (await readdir(claudeDir))
+    .filter((name) => name.endsWith(".tsx"))
+    .map((name) => `claude/${name}`);
+  const views = [...topLevel, ...claudeViews].sort();
 
-  // 视图清单写死：改名或删文件都会在这里暴露，扫描覆盖面不会静默缩小。
-  assert.deepEqual(views, [
+  // 必扫清单写死：改名或删文件都会在这里暴露。Claude 子目录里其他 agent 可增文件，那些也会被扫到。
+  for (const required of [
     "HomeView.tsx",
     "LoginView.tsx",
     "ProvisioningView.tsx",
@@ -115,7 +124,10 @@ test("no user-facing source file mentions a forbidden product surface", async ()
     "SettingsView.tsx",
     "SignedOutView.tsx",
     "Toast.tsx",
-  ]);
+    "claude/ClaudeWorkspace.tsx",
+  ]) {
+    assert.ok(views.includes(required), `missing required view ${required}`);
+  }
 
   const sources: [string, string][] = [
     ["LumioApp.tsx", await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8")],
@@ -174,17 +186,17 @@ test("the removed decoration classes are gone from the stylesheet too", async ()
   assert.doesNotMatch(css, /lumio-orbit/);
 });
 
-test("the signed-out surface states the positioning promise verbatim", async () => {
+test("the signed-out surface uses the BestCodex welcome copy", async () => {
   const signedOut = await readFile(new URL("./views/SignedOutView.tsx", import.meta.url), "utf8");
 
-  assert.match(signedOut, /更快开始使用官方 Codex。/);
-  assert.match(
+  assert.match(signedOut, /\/lumio-icon\.png/);
+  assert.match(signedOut, /BestCodex/);
+  assert.match(signedOut, /一个启动器。官方 Codex，以及跑在你自己服务器上的 Claude。/);
+  assert.doesNotMatch(signedOut, /更快开始使用官方 Codex。/);
+  assert.doesNotMatch(
     signedOut,
     /这个小工具只做一件事：帮你完成注册、登录和本机配置，省去手动安装配置的步骤。之后你使用的始终是官方 Codex 应用，一切保持原生。/,
   );
-  assert.match(signedOut, /不修改官方应用/);
-  assert.match(signedOut, /配置可一键恢复/);
-  assert.match(signedOut, /凭据由系统保护/);
 });
 
 test("the credential promise describes the storage this release actually ships", async () => {
@@ -296,7 +308,58 @@ test("the home view explains every disabled action instead of hiding it", async 
   // 离线首页可能在没有任何可信同步时间时进入，这时余额与时间都不许当作真值渲染。
   assert.match(view, /上次同步时间未知/);
   assert.match(view, /尚未同步/);
-  assert.match(view, /已配置/);
+});
+
+test("the Codex tab is a greeting, a balance line, and one launch card", async () => {
+  const home = await readFile(new URL("./views/HomeView.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(home, /lumio-metric-grid/);
+  assert.doesNotMatch(home, /余额与套餐/);
+  assert.match(home, /你好，/);
+  assert.match(home, /greetingNameFromEmail/);
+  assert.match(home, /lumio-launch-card/);
+  assert.match(home, /Codex 已就绪/);
+  assert.match(home, /可启动/);
+  assert.match(home, /尚未安装官方 Codex/);
+  assert.match(home, /离线可用/);
+  assert.match(home, /需要网络/);
+});
+
+test("the shell chrome uses Codex and Claude tabs and keeps HomeView mounted", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+
+  assert.match(shell, /BestCodex/);
+  assert.match(shell, /shellLabels\.codex/);
+  assert.match(shell, /shellLabels\.claude/);
+  assert.doesNotMatch(shell, /shellLabels\.home/);
+  assert.match(shell, /import \{ ClaudeWorkspace \}/);
+  assert.match(shell, /<HomeView/);
+  assert.match(shell, /<ClaudeWorkspace/);
+  assert.doesNotMatch(shell, /\{showClaude \? \(/);
+  assert.match(shell, /hidden=\{!showClaude\}/);
+  assert.match(shell, /hidden=/);
+  assert.match(shell, /aria-hidden=/);
+  assert.match(shell, /HELP_URL/);
+  assert.match(shell, /openInBrowser\(HELP_URL\)/);
+});
+
+test("the titlebar leaves room for macOS traffic lights and is a drag region", async () => {
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+
+  assert.match(css, /prefers-color-scheme:\s*dark/);
+  assert.match(css, /-webkit-app-region:\s*drag/);
+  assert.match(css, /no-drag/);
+  assert.match(css, /78px/);
+});
+
+test("settings is five groups rather than a third product tab", async () => {
+  const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+
+  assert.match(view, /id="account"|账户/);
+  assert.match(view, /准备一台服务器/);
+  assert.match(view, /帮助中心/);
+  assert.match(view, /通用/);
+  assert.match(view, /支持/);
 });
 
 /**
@@ -428,7 +491,7 @@ test("the shell checks for updates and offers an in-app manual update", async ()
   assert.match(shell, /noticeMuted/);
   assert.match(shell, /updateNoticeShown\(/);
   assert.match(shell, /dismissUpdate\(/);
-  // 绿色标记：设置导航绿点 + footer 常驻入口，不受弹窗 dismiss 影响。
+  // 绿色标记：齿轮绿点 + footer 常驻入口，不受弹窗 dismiss 影响。
   assert.match(shell, /lumio-nav-dot/);
   assert.match(shell, /有新版本/);
   assert.match(css, /\.lumio-update-pop/);

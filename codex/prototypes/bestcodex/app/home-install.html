@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex · 未安装 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Codex · 未安装</h1>
+          <p>选位置后进度留在卡内。切去 Claude，安装继续</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home-install.html">未安装</a>
+          <a class="note" href="home-install.html?state=download">下载</a>
+          <a class="note" href="home-install.html?state=verify">校验</a>
+          <a class="note" href="home-install.html?state=install">安装</a>
+          <a class="note" href="home-install.html?state=fail">失败</a>
+          <a class="note" href="home.html">已就绪</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a class="is-on" href="home-install.html">Codex</a>
+            <a href="cc-empty.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main home" data-install data-now="idle">
+          <div class="home-top">
+            <div>
+              <h2>你好，Mary</h2>
+              <p class="note balance">
+                mary@example.com · 余额 <strong>128.50</strong>
+                <a href="#">充值</a>
+              </p>
+            </div>
+            <span class="chip"><i></i>服务正常</span>
+          </div>
+
+          <section class="launch-card">
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <p class="eyebrow">官方应用</p>
+
+            <div data-view="idle">
+              <header>
+                <h3>尚未安装官方 Codex</h3>
+                <span class="note">未安装</span>
+              </header>
+              <p class="meta">装好后会自动启动。安装过程可以切到 Claude，回来进度还在。</p>
+              <button class="btn is-blue" type="button" data-install-go="place">安装并启动官方 Codex</button>
+            </div>
+
+            <div data-view="download" hidden>
+              <header>
+                <h3>正在安装官方 Codex</h3>
+                <span class="note">下载</span>
+              </header>
+              <p class="meta">312 MB / 745 MB · 42%</p>
+              <div class="progress" style="margin-bottom: 16px"><i style="width: 42%"></i></div>
+              <div class="card-actions">
+                <button class="btn is-blue" type="button" disabled>正在安装…</button>
+                <button class="btn is-ghost" type="button" data-install-go="fail">取消</button>
+              </div>
+            </div>
+
+            <div data-view="verify" hidden>
+              <header>
+                <h3>正在安装官方 Codex</h3>
+                <span class="note">校验</span>
+              </header>
+              <p class="meta">正在核对安装包，还差一点。</p>
+              <div class="progress is-indeterminate" style="margin-bottom: 16px"><i></i></div>
+              <button class="btn is-blue" type="button" disabled>正在安装…</button>
+            </div>
+
+            <div data-view="install" hidden>
+              <header>
+                <h3>正在安装官方 Codex</h3>
+                <span class="note">安装</span>
+              </header>
+              <p class="meta">正在写入 /Applications/Codex.app</p>
+              <div class="progress is-indeterminate" style="margin-bottom: 16px"><i></i></div>
+              <div class="card-actions">
+                <button class="btn is-blue" type="button" disabled>正在安装…</button>
+                <a class="btn is-ghost" href="home.html">当作完成</a>
+              </div>
+            </div>
+
+            <div data-view="fail" hidden>
+              <header>
+                <h3>安装没有完成</h3>
+                <span class="pill-warn">可重试</span>
+              </header>
+              <div class="fail-box">
+                下载中断，官方应用还没装上。
+                <span class="code">CODEX_APP_DOWNLOAD_FAILED</span>
+              </div>
+              <p class="meta">主按钮就是重试。重试仍会先问安装位置。</p>
+              <div class="card-actions">
+                <button class="btn is-blue" type="button" data-install-go="place">重试</button>
+                <a class="btn is-ghost" href="../site/help.html">打开帮助</a>
+              </div>
+            </div>
+          </section>
+
+          <div class="sheet-back" data-view="place" hidden>
+            <div class="sheet">
+              <h2>选择安装位置</h2>
+              <p class="lede">先选位置，再开始下载。取消不会开始安装。</p>
+              <div class="place-list">
+                <button class="place is-on" type="button">
+                  <b>默认位置</b>
+                  <span>/Applications · 推荐</span>
+                </button>
+                <button class="place" type="button">
+                  <b>选择文件夹…</b>
+                  <span>装到你指定的目录，路径会记住</span>
+                </button>
+              </div>
+              <div class="card-actions">
+                <button class="btn is-ghost is-block" type="button" data-install-go="idle">取消</button>
+                <button class="btn is-blue is-block" type="button" data-install-go="run">开始安装</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

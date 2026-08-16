@@ -92,8 +92,29 @@ fn launcher_binary_embeds_lumio_icon_and_metadata() {
     assert!(build_rs.contains("WindowsResource"));
     assert!(build_rs.contains("icons/icon.ico"));
     assert!(build_rs.contains("ProductName"));
-    assert!(build_rs.contains("Lumio Codex"));
+    assert!(build_rs.contains("BestCodex"));
     assert!(build_rs.contains("lumio-codex-launcher.exe"));
+}
+
+#[test]
+fn macos_main_window_uses_overlay_title_bar() {
+    let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+        .expect("read manager lib.rs");
+
+    assert!(lib_rs.contains("#[cfg(target_os = \"macos\")]"));
+    assert!(lib_rs.contains("title_bar_style(tauri::TitleBarStyle::Overlay)"));
+    assert!(lib_rs.contains("hidden_title(true)"));
+}
+
+#[test]
+fn tray_menu_uses_bestcodex_display_name() {
+    let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
+        .expect("read manager lib.rs");
+
+    assert!(lib_rs.contains("显示 BestCodex"));
+    assert!(lib_rs.contains("退出 BestCodex"));
+    assert!(!lib_rs.contains("显示 Lumio Codex"));
+    assert!(!lib_rs.contains("退出 Lumio Codex"));
 }
 
 #[test]
@@ -168,6 +189,7 @@ fn macos_packager_keeps_launcher_inside_single_visible_lumio_app() {
     assert!(script.contains("ARCH=\"${2:-$(uname -m)}\""));
     assert!(script.contains("BINARY_DIR=\"${BINARY_DIR:-$ROOT/target/release}\""));
     assert!(script.contains("LumioCodex-${VERSION}-macos-${ARCH}-internal-unsigned.dmg"));
+    // First period: keep Lumio Codex.app on disk; CFBundleDisplayName is BestCodex.
     assert!(script.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
     assert!(script.contains("Contents/Helpers/lumio-codex-launcher"));
     assert!(!script.contains("LSUIElement"));

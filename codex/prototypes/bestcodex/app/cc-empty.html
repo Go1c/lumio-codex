@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude · 第一次 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · 第一次点 Claude</h1>
+          <p>先讲清再连服务器，不甩 SSH 表单</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-connect.html">下一步：连接</a>
+          <a class="note" href="cc-subscribe.html">未订阅</a>
+          <a class="note" href="home.html">Codex</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-empty.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <main class="win-main onboard">
+          <div class="onboard-card is-claude">
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <span class="chip">Claude</span>
+            <h2>把 Claude<br />放到你自己的服务器上。</h2>
+            <p>固定 IP、持久会话、和本机双向同步。Codex Tab 不受影响，随时切回去。</p>
+            <div class="promise">
+              <div>
+                <b>独立环境</b>
+                <span>Claude 不跑在你的笔记本上，封号风险隔开。</span>
+              </div>
+              <div>
+                <b>本机仍能改文件</b>
+                <span>远端改动回来，本地编辑上去。冲突不会被静默覆盖。</span>
+              </div>
+              <div>
+                <b>一次登录</b>
+                <span>用的就是现在这个 BestCodex 账号，不用再注册。</span>
+              </div>
+            </div>
+            <a class="btn is-blue" href="cc-connect.html">连接一台服务器</a>
+            <p class="quiet" style="margin-top: 14px"><a href="home.html">先留在 Codex</a></p>
+          </div>
+        </main>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

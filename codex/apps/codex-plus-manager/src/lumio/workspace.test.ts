@@ -1,0 +1,41 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import type { LumioPhase } from "./types.ts";
+import { DEFAULT_WORKSPACE, workspaceTabsVisible } from "./workspace.ts";
+
+const hiddenPhases: LumioPhase[] = [
+  "bootstrapping",
+  "signed-out",
+  "authenticating",
+  "provisioning",
+  "needs-repair",
+];
+
+test("unsigned and repair phases hide Codex/Claude tabs", () => {
+  for (const phase of hiddenPhases) {
+    assert.equal(workspaceTabsVisible(phase), false, phase);
+  }
+});
+
+test("ready phases show product tabs", () => {
+  assert.equal(workspaceTabsVisible("ready-online"), true);
+  assert.equal(workspaceTabsVisible("ready-offline"), true);
+});
+
+test("the default workspace is codex", () => {
+  assert.equal(DEFAULT_WORKSPACE, "codex");
+});
+
+test("LumioApp keeps HomeView and ClaudeWorkspace mounted behind hidden", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  assert.match(shell, /workspaceTabsVisible/);
+  assert.match(shell, /DEFAULT_WORKSPACE/);
+  assert.match(shell, /<HomeView/);
+  assert.match(shell, /<ClaudeWorkspace/);
+  assert.match(shell, /hidden=\{!showCodexHome\}/);
+  assert.match(shell, /hidden=\{!showClaude\}/);
+  assert.doesNotMatch(shell, /showClaude \? \(/);
+  assert.doesNotMatch(shell, /workspace === "codex" && <HomeView/);
+});

@@ -88,9 +88,12 @@ export function LoginView({
   return (
     <div className="lumio-auth-wrap">
       <section className="lumio-auth-card">
-        <p className="lumio-eyebrow">欢迎回来</p>
+        <span className="lumio-app-icon is-card" aria-hidden="true">
+          <img alt="" src="/lumio-icon.png" />
+        </span>
+        <p className="lumio-eyebrow">BestCodex</p>
         <h1>{shellLabels.signIn}</h1>
-        <p className="lumio-auth-lead">登录后会自动完成官方 Codex 的连接准备，无需任何手动配置。</p>
+        <p className="lumio-auth-lead">使用你的 BestCodex 账号。登录后会自动完成官方 Codex 的连接准备，无需任何手动配置。</p>
 
         {bannerCode === null ? null : (
           <ErrorBanner code={bannerCode} pushToast={pushToast} settings={settings} />
@@ -324,7 +327,10 @@ function TwoFactorStep({
   return (
     <div className="lumio-auth-wrap">
       <section className="lumio-auth-card">
-        <p className="lumio-eyebrow">两步验证</p>
+        <span className="lumio-app-icon is-card" aria-hidden="true">
+          <img alt="" src="/lumio-icon.png" />
+        </span>
+        <p className="lumio-eyebrow">BestCodex</p>
         <h1>输入两步验证码</h1>
         <p className="lumio-auth-lead">打开你的验证器应用查看动态码。</p>
 

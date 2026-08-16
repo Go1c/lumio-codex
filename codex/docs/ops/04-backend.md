@@ -10,9 +10,9 @@ https://api.lumio.games/
 
 后台实现应是你们部署的 **Sub2API**（上游文档见 Sub2API 仓库 README / `deploy/`）。本仓只约定**桌面依赖的契约与验收**。
 
-> **Sub2API 是全 Lumio 唯一的账号数据源。** 邮箱 / 口令 / 2FA / 余额只有这一套：
-> Lumio Codex 桌面端、统一门户 `lumiogame.com`、CC避风港的控制面都认它签发的令牌。
-> CCHaven 控制面已下线自有终端用户认证（对应端点返回 410），不存在第二套注册登录。
+> **Sub2API 是唯一的账号数据源。** 邮箱 / 口令 / 2FA / 余额只有这一套：
+> BestCodex 桌面启动器、统一门户 `bestcodex.app`、Claude Tab 控制面（仓库仍可叫 CC）都认它签发的令牌。
+> CC 控制面已下线自有终端用户认证（对应端点返回 410），不存在第二套注册登录。
 > 跨产品视角见根 [`docs/ops/03-service-prerequisites.md`](../../../docs/ops/03-service-prerequisites.md)。
 
 ## 0. 域名现状（哪些变了、哪些没变）
@@ -21,7 +21,7 @@ https://api.lumio.games/
 |-------------|------|----------|
 | `API_BASE_URL` | `https://api.lumio.games/` | **未变**，且不允许变——存量客户端硬编码 |
 | `PAYMENT_PATH` | `/purchase`（拼出 `https://api.lumio.games/purchase`） | 未变 |
-| `SITE_BASE_URL` | `https://codex.lumiogame.com` | **已改**：官网从 `lumio.games` 迁到统一门户的子域 |
+| `SITE_BASE_URL` | `https://codex.bestcodex.app` | **已改**：产品站从 `lumio.games` 迁到 `bestcodex.app` 子域。用户可见站点是 `https://bestcodex.app`，帮助 `https://bestcodex.app/help` |
 | `RELEASES_PAGE_URL` | `https://github.com/Go1c/lumio-codex/releases` | 未变 |
 
 `SITE_BASE_URL` 只是营销 / 下载引导站点，改它不影响任何接口地址；充值、支持、
@@ -34,7 +34,7 @@ https://api.lumio.games/
 | 公开设置 | `GET` 公开 settings（注册开关、邮箱后缀、协议、默认模型等） | `lumio::api` → `lumio_public_settings` |
 | 验证码 / 注册 / 登录 / 2FA / 刷新令牌 | Sub2API auth 系列 | `lumio::api` + `session` |
 | 用户资料（余额等） | `auth/me` 一类 | provisioning / 刷新 |
-| 桌面 Key | `GET/POST /keys`，保留名 `Lumio Codex Desktop`，创建带 `Idempotency-Key` | `lumio::account` |
+| 桌面 Key | `GET/POST /keys`，名 `BestCodex Desktop`，创建带 `Idempotency-Key` | `lumio::account` |
 | 模型目录 | 使用桌面 Key 拉取 | provisioning `sync-models` |
 | 支付 | **当前**：浏览器打开 `https://api.lumio.games/purchase`，**不**强制 handoff API | `HomeView` + `API_BASE_URL` |
 
@@ -49,9 +49,9 @@ https://api.lumio.games/
 3. DNS：`api.lumio.games` → 该入口  
 4. 配置：注册开关、邮箱验证、邀请码、支付渠道、默认模型等  
 5. 确认 CORS / Cookie 策略与支付前端一致（若支付在 API 同源前端）
-6. **为统一官网三站放行 CORS**：`https://lumiogame.com`、`https://cc.lumiogame.com`、
-   `https://codex.lumiogame.com`，允许 `Authorization` 请求头——三站是纯静态站点，
-   直连本 API，没有同源反代（清单见根
+6. **为统一官网三站放行 CORS**（**仍待运维**，本仓不改生产）：`https://bestcodex.app`、
+   `https://cc.bestcodex.app`、`https://codex.bestcodex.app`，允许 `Authorization` 请求头——
+   三站是纯静态站点，直连本 API，没有同源反代（清单见根
    [`docs/ops/03-service-prerequisites.md`](../../../docs/ops/03-service-prerequisites.md)）
 
 安装类命令以 Sub2API 文档为准，例如其 README 中的 `deploy/install.sh` / `docker-deploy.sh`（版本与镜像名以你们锁定的 fork 为准）。
@@ -61,9 +61,10 @@ https://api.lumio.games/
 ```text
 api.lumio.games           ← App 的 JSON API、账户网页 /support /reset-password
 api.lumio.games/purchase  ← App「充值」按钮目标（禁止配成官网域名）
-codex.lumiogame.com       ← 营销 / 下载站 only（web/apps/codex）
-lumiogame.com             ← 总门户：浏览器端的注册 / 登录 / 2FA / 账户中心
-lumio.games               ← 旧官网，301 到 codex.lumiogame.com 后下线
+bestcodex.app             ← 用户可见站点：门户 / 注册 / 登录 / 2FA / 账户中心；帮助 /help
+codex.bestcodex.app       ← Codex 产品站 / 下载引导（web/apps/codex）
+cc.bestcodex.app          ← Claude 产品站（仓库仍可叫 CC）
+lumio.games               ← 旧官网，301 到 https://bestcodex.app 后下线（DNS 仍待运维）
 ```
 
 浏览器侧的账号页面在门户，桌面端的账号流程仍在 App 内直连 Sub2API——两条路径连的是
@@ -87,7 +88,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" https://api.lumio.games/
 
 - [ ] TLS 证书有效  
 - [ ] 注册 / 登录 / 2FA / 刷新令牌在 App 内跑通  
-- [ ] 桌面 Key 查找或创建成功；官方 Codex 能走 Lumio 路由  
+- [ ] 桌面 Key 查找或创建成功（名为 `BestCodex Desktop`）；官方 Codex 能走 BestCodex 路由  
 - [ ] 余额刷新有真实数字（非长期假 0.00）  
 - [ ] 支付页从 App 打开后可完成充值（后台侧）  
 - [ ] 限流与风控错误能映射到客户端稳定码（见 `lumio/errors`）  

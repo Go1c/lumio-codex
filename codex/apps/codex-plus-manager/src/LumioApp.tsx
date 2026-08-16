@@ -1,4 +1,4 @@
-import { Download, Home, RefreshCw, Settings } from "lucide-react";
+import { Download, RefreshCw, Settings } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
@@ -25,6 +25,10 @@ import {
   signOut,
   updateNoticeShown,
 } from "./lumio/invoke.ts";
+import { CLAUDE_ACCOUNT_URL } from "./lumio/claude/portal.ts";
+import { hydrateClaudeWorkspace } from "./lumio/claude/session.ts";
+import { resetClaudeStore } from "./lumio/claude/store.ts";
+import { HELP_URL } from "./lumio/help.ts";
 import { paymentUrl } from "./lumio/payment.ts";
 import { initialLumioState, reduceLumioState } from "./lumio/state.ts";
 import type { LumioEvent, ProvisioningStepId } from "./lumio/state.ts";
@@ -36,6 +40,8 @@ import type {
   LumioPhase,
   LumioUpdateReminder,
 } from "./lumio/types.ts";
+import { DEFAULT_WORKSPACE, workspaceTabsVisible, type WorkspaceId } from "./lumio/workspace.ts";
+import { ClaudeWorkspace } from "./lumio/views/claude/ClaudeWorkspace.tsx";
 import { HomeView } from "./lumio/views/HomeView.tsx";
 import { LoginView } from "./lumio/views/LoginView.tsx";
 import { ProvisioningView } from "./lumio/views/ProvisioningView.tsx";
@@ -118,6 +124,7 @@ async function planStartup(): Promise<LumioEvent[]> {
 export function LumioApp() {
   const [state, dispatch] = useReducer(reduceLumioState, undefined, initialLumioState);
   const [view, setView] = useState<View>("home");
+  const [workspace, setWorkspace] = useState<WorkspaceId>(DEFAULT_WORKSPACE);
   const [updateReminder, setUpdateReminder] = useState<LumioUpdateReminder | null>(null);
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -188,11 +195,23 @@ export function LumioApp() {
         dispatch({ type: "auth-step-changed", step: "login" });
       }
       setView("home");
+      setWorkspace("codex");
+      resetClaudeStore();
     });
     return () => onSessionExpired(null);
   }, [pushToast]);
 
   const openSettings = useCallback(() => setView("settings"), []);
+  const openClaudeSubscribe = useCallback(() => {
+    void openInBrowser(CLAUDE_ACCOUNT_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
+  }, [pushToast]);
+  const openHelp = useCallback(() => {
+    void openInBrowser(HELP_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
+  }, [pushToast]);
+  const backToCodex = useCallback(() => {
+    setWorkspace("codex");
+    setView("home");
+  }, []);
 
   // Stable identities: ProvisioningView keys its run loop on these callbacks.
   const onStepStarted = useCallback(
@@ -241,6 +260,7 @@ export function LumioApp() {
   }, [pushToast]);
   const onSignOutRequested = useCallback(() => {
     setView("home");
+    setWorkspace("codex");
     onDeferred();
   }, [onDeferred]);
   const onRefreshed = useCallback(
@@ -322,6 +342,9 @@ export function LumioApp() {
     let unlisten: (() => void) | undefined;
     void listen(WINDOW_SHOWN_EVENT, () => {
       if (!active || stateRef.current.phase !== "ready-online") return;
+      if (workspaceTabsVisible(stateRef.current.phase)) {
+        void hydrateClaudeWorkspace(stateRef.current.account);
+      }
       if (!shouldAutoRefresh(stateRef.current.cachedAt, Date.now(), WINDOW_SHOWN_REFRESH_MIN_GAP_MS)) {
         return;
       }
@@ -346,49 +369,64 @@ export function LumioApp() {
 
   // Stage pages own the whole main area: leaving them mid-flight would strand
   // the account in a half-configured state (interaction spec §4).
-  const navLocked = !ready && state.phase !== "signed-out";
+  const showProductTabs = workspaceTabsVisible(state.phase);
+  const settingsAllowed = showProductTabs || state.phase === "signed-out";
+  const showCodexHome = showProductTabs && view !== "settings" && workspace === "codex";
+  const showClaude = showProductTabs && view !== "settings" && workspace === "claude";
+  const macosOverlay = state.bootstrap?.platform === "macos";
 
   return (
-    <div className="lumio-app">
+    <div className={`lumio-app${macosOverlay ? " is-macos" : ""}`}>
       <header className="lumio-topbar">
-        <span className="lumio-brand">
-          <span className="lumio-logo-wrap">
-            <img alt="" className="lumio-logo" src="/lumio-icon.png" />
-          </span>
-          <span>
-            <strong>Lumio Codex</strong>
-            <small>DESKTOP</small>
-          </span>
-        </span>
+        {showProductTabs ? (
+          <nav aria-label="主导航" className="lumio-nav">
+            <button
+              aria-current={workspace === "codex" && view !== "settings" ? "page" : undefined}
+              className={workspace === "codex" && view !== "settings" ? "is-active" : ""}
+              onClick={() => {
+                setWorkspace("codex");
+                setView("home");
+              }}
+              type="button"
+            >
+              {shellLabels.codex}
+            </button>
+            <button
+              aria-current={workspace === "claude" && view !== "settings" ? "page" : undefined}
+              className={workspace === "claude" && view !== "settings" ? "is-active" : ""}
+              onClick={() => {
+                setWorkspace("claude");
+                setView("home");
+              }}
+              type="button"
+            >
+              {shellLabels.claude}
+            </button>
+          </nav>
+        ) : (
+          <div className="lumio-titlebar-name">BestCodex</div>
+        )}
 
-        <nav aria-label="主导航" className={`lumio-nav${navLocked ? " is-locked" : ""}`}>
+        <div className="lumio-titlebar-tools">
           <button
-            aria-current={view === "home" ? "page" : undefined}
-            className={view === "home" ? "is-active" : ""}
-            disabled={navLocked}
-            onClick={() => setView("home")}
+            aria-label="帮助"
+            className="lumio-icon-btn"
+            onClick={openHelp}
             type="button"
           >
-            <Home size={16} />
-            {shellLabels.home}
+            ?
           </button>
           <button
-            aria-current={view === "settings" ? "page" : undefined}
-            className={view === "settings" ? "is-active" : ""}
-            disabled={navLocked}
-            onClick={() => setView("settings")}
+            aria-label={shellLabels.settings}
+            className={`lumio-icon-btn${view === "settings" ? " is-active" : ""}`}
+            disabled={!settingsAllowed}
+            onClick={() => setView((current) => (current === "settings" ? "home" : "settings"))}
             type="button"
           >
-            <Settings size={16} />
-            {shellLabels.settings}
-            {/* 绿色小标记：有新版本时常驻在设置入口上，弹窗「稍后」不影响它。 */}
+            <Settings size={15} />
+            {/* 绿色小标记：有新版本时常驻在齿轮上，弹窗「稍后」不影响它。 */}
             {updateReminder?.updateAvailable ? <span aria-hidden="true" className="lumio-nav-dot" /> : null}
           </button>
-        </nav>
-
-        <div className={`lumio-phase${online ? " is-online" : offline ? " is-offline" : ""}`}>
-          <span />
-          {phaseCopy[state.phase]}
         </div>
       </header>
 
@@ -407,8 +445,10 @@ export function LumioApp() {
             onSignOut={onDeferred}
             pushToast={pushToast}
           />
-        ) : view === "settings" ? (
+        ) : view === "settings" && settingsAllowed && !ready ? (
           <SettingsView
+            accountEmail={state.account?.email ?? null}
+            appVersion={state.bootstrap?.version ?? null}
             autoUpdateEnabled={state.autoUpdateEnabled}
             codexApp={state.codexApp}
             launchAtLoginEnabled={state.launchAtLoginEnabled}
@@ -417,6 +457,7 @@ export function LumioApp() {
             updating={updating}
             onCodexAppChanged={onCodexAppChanged}
             onLaunchAtLoginChanged={onLaunchAtLoginChanged}
+            onOpenHelp={openHelp}
             onSignOut={onSignOutRequested}
             onUpdateRequested={onUpdateRequested}
             pushToast={pushToast}
@@ -427,10 +468,9 @@ export function LumioApp() {
           <SignedOutView
             actionNotes={state.actionNotes}
             actions={state.actions}
-            codexApp={state.codexApp}
             errorCode={state.errorCode}
             onCreateAccount={() => dispatch({ type: "auth-step-changed", step: "register" })}
-            onOpenSettings={openSettings}
+            onOpenHelp={openHelp}
             onSignIn={() => dispatch({ type: "auth-step-changed", step: "login" })}
             serviceAvailable={state.serviceAvailable}
           />
@@ -475,15 +515,47 @@ export function LumioApp() {
             <p>{phaseCopy[state.phase]}…</p>
           </section>
         ) : (
-          <HomeView
-            onCodexAppChanged={onCodexAppChanged}
-            onInstallProgress={onInstallProgress}
-            onOpenSettings={openSettings}
-            onReconnected={onReconnected}
-            onRefreshed={onRefreshed}
-            pushToast={pushToast}
-            state={state}
-          />
+          <>
+            <div aria-hidden={!showCodexHome} hidden={!showCodexHome}>
+              <HomeView
+                onCodexAppChanged={onCodexAppChanged}
+                onInstallProgress={onInstallProgress}
+                onOpenSettings={openSettings}
+                onReconnected={onReconnected}
+                onRefreshed={onRefreshed}
+                pushToast={pushToast}
+                state={state}
+              />
+            </div>
+            <div aria-hidden={!showClaude} hidden={!showClaude}>
+              <ClaudeWorkspace
+                account={state.account}
+                onBackToCodex={backToCodex}
+                onOpenAccount={openClaudeSubscribe}
+                onOpenHelp={openHelp}
+              />
+            </div>
+            {view === "settings" ? (
+              <SettingsView
+                accountEmail={state.account?.email ?? null}
+                appVersion={state.bootstrap?.version ?? null}
+                autoUpdateEnabled={state.autoUpdateEnabled}
+                codexApp={state.codexApp}
+                launchAtLoginEnabled={state.launchAtLoginEnabled}
+                latestVersion={updateReminder?.updateAvailable ? updateReminder.latestVersion : null}
+                officialAppInstall={state.officialAppInstall}
+                updating={updating}
+                onCodexAppChanged={onCodexAppChanged}
+                onLaunchAtLoginChanged={onLaunchAtLoginChanged}
+                onOpenHelp={openHelp}
+                onSignOut={onSignOutRequested}
+                onUpdateRequested={onUpdateRequested}
+                pushToast={pushToast}
+                signedIn={state.account !== null}
+                telemetryEnabled={state.telemetryEnabled}
+              />
+            ) : null}
+          </>
         )}
       </main>
 

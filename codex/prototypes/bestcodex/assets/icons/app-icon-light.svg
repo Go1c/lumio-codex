@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="BestCodex">
+  <defs>
+    <linearGradient id="bg" x1="200" y1="0" x2="820" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F2F4F7"/>
+    </linearGradient>
+    <linearGradient id="skin" x1="320" y1="200" x2="720" y2="820" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D8EAF8"/>
+      <stop offset="1" stop-color="#B4D0EA"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <path
+    fill="url(#skin)"
+    d="M512 176c36 0 71 9 102 27l226 131c32 18 51 52 51 89v282c0 37-19 71-51 89l-226 131a210 210 0 0 1-204 0L184 794c-32-18-51-52-51-89V423c0-37 19-71 51-89l226-131A210 210 0 0 1 512 176Z"
+  />
+  <circle cx="430" cy="488" r="34" fill="#1A1A1A"/>
+  <circle cx="594" cy="488" r="34" fill="#1A1A1A"/>
+  <circle cx="442" cy="476" r="8" fill="#fff"/>
+  <circle cx="606" cy="476" r="8" fill="#fff"/>
+</svg>

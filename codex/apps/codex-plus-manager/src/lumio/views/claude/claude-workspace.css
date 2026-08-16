@@ -1,0 +1,551 @@
+.lumio-claude {
+  --cc-ink: var(--ink, #1d1d1f);
+  --cc-ink-2: var(--ink-2, #6e6e73);
+  --cc-ink-3: var(--ink-3, #86868b);
+  --cc-line: var(--line, rgb(0 0 0 / 8%));
+  --cc-accent: var(--accent, #0071e3);
+  --cc-ok: var(--ok, #34c759);
+  --cc-danger: var(--danger, #ff3b30);
+  --cc-glass: var(--glass, rgb(255 255 255 / 68%));
+  --cc-glass-border: var(--glass-border, rgb(255 255 255 / 82%));
+  --cc-bg-elev: var(--bg-elev, #fff);
+  --cc-grouped: var(--grouped, #f2f2f7);
+  --cc-field: var(--field, rgb(120 120 128 / 12%));
+  --cc-claude: var(--claude, #e07a62);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--cc-ink);
+}
+
+@media (prefers-color-scheme: dark) {
+  .lumio-claude {
+    --cc-ink: var(--ink, #f5f5f7);
+    --cc-ink-2: var(--ink-2, #98989d);
+    --cc-ink-3: var(--ink-3, #636366);
+    --cc-line: var(--line, rgb(255 255 255 / 10%));
+    --cc-accent: var(--accent, #0a84ff);
+    --cc-glass: var(--glass, rgb(44 44 48 / 62%));
+    --cc-glass-border: var(--glass-border, rgb(255 255 255 / 10%));
+    --cc-bg-elev: var(--bg-elev, #1c1c1e);
+    --cc-grouped: var(--grouped, #1c1c1e);
+    --cc-field: var(--field, rgb(118 118 128 / 24%));
+    --cc-claude: var(--claude, #f0a090);
+  }
+}
+
+.lumio-claude-onboard {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  padding: 36px 28px;
+}
+
+.lumio-claude-onboard.is-ghost {
+  pointer-events: none;
+  opacity: 0.42;
+}
+
+.lumio-claude-card {
+  width: min(560px, 100%);
+  padding: 32px 32px 28px;
+  border: 1px solid var(--cc-glass-border);
+  border-radius: 24px;
+  background: var(--cc-glass);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 70%) inset,
+    0 24px 60px rgb(20 20 40 / 8%);
+  backdrop-filter: blur(24px);
+}
+
+.lumio-claude-card.is-subscribe {
+  text-align: center;
+}
+
+.lumio-claude-card h2 {
+  margin: 14px 0 8px;
+  font-size: 30px;
+  font-weight: 620;
+  letter-spacing: -0.035em;
+}
+
+.lumio-claude-card > p {
+  margin: 0 0 22px;
+  color: var(--cc-ink-2);
+}
+
+.lumio-claude-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.lumio-claude-card.is-subscribe .lumio-claude-icon {
+  margin: 0 auto;
+}
+
+.lumio-claude-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lumio-claude-chip {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--cc-claude) 16%, transparent);
+  color: var(--cc-claude);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lumio-claude-price {
+  margin: 8px 0 4px;
+  font-size: 40px;
+  font-weight: 620;
+  letter-spacing: -0.04em;
+}
+
+.lumio-claude-price span {
+  font-size: 16px;
+  color: var(--cc-ink-2);
+}
+
+.lumio-claude-quiet {
+  margin: 14px 0 0;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+}
+
+.lumio-claude-promise {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 24px;
+}
+
+.lumio-claude-promise div {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--cc-bg-elev) 80%, transparent);
+}
+
+.lumio-claude-promise b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 14px;
+}
+
+.lumio-claude-promise span {
+  color: var(--cc-ink-2);
+  font-size: 13px;
+}
+
+.lumio-claude-sheet-back {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: auto;
+  background: rgb(20 22 26 / 28%);
+  backdrop-filter: blur(10px);
+}
+
+.lumio-claude-sheet {
+  width: min(520px, 100%);
+  padding: 26px 26px 22px;
+  border: 1px solid var(--cc-glass-border);
+  border-radius: 20px;
+  background: var(--cc-bg-elev);
+  box-shadow: 0 24px 70px rgb(20 24 32 / 12%);
+}
+
+.lumio-claude-sheet h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+}
+
+.lumio-claude-lede {
+  margin: 0 0 18px;
+  color: var(--cc-ink-2);
+  font-size: 14px;
+}
+
+.lumio-claude-legend {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.lumio-claude-legend li {
+  color: var(--cc-ink-3);
+  font-size: 11px;
+  font-weight: 560;
+  text-align: center;
+}
+
+.lumio-claude-legend li.is-on {
+  color: var(--cc-ink);
+}
+
+.lumio-claude-legend li.is-done {
+  color: var(--cc-ok);
+}
+
+.lumio-claude-sheet-steps {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 18px;
+}
+
+.lumio-claude-sheet-steps i {
+  flex: 1;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--cc-field);
+}
+
+.lumio-claude-sheet-steps i.is-on {
+  background: var(--cc-accent);
+}
+
+.lumio-claude-sheet-steps i.is-done {
+  background: var(--cc-ok);
+}
+
+.lumio-claude-note {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--cc-ink-2);
+  font-size: 12px;
+}
+
+.lumio-claude-field {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--cc-field);
+  color: inherit;
+  font: inherit;
+}
+
+.lumio-claude-adv {
+  margin: 4px 0 14px;
+  border-radius: 12px;
+  background: var(--cc-grouped);
+}
+
+.lumio-claude-adv summary {
+  padding: 10px 12px;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lumio-claude-adv-pad {
+  padding: 0 12px 12px;
+}
+
+.lumio-claude-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.lumio-claude-actions .lumio-button {
+  flex: 1;
+  min-width: 140px;
+}
+
+.lumio-claude-checks {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.lumio-claude-check {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 10px;
+  align-items: start;
+  font-size: 14px;
+}
+
+.lumio-claude-check i {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--cc-field);
+}
+
+.lumio-claude-check.is-now i {
+  background: var(--cc-accent);
+}
+
+.lumio-claude-check.is-done i {
+  background: var(--cc-ok);
+}
+
+.lumio-claude-check span {
+  display: block;
+  margin-top: 2px;
+  color: var(--cc-ink-2);
+  font-size: 12px;
+}
+
+.lumio-claude-fail {
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(255 59 48 / 10%);
+  color: #c43128;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.lumio-claude-fail-code {
+  display: block;
+  margin-top: 4px;
+  color: var(--cc-ink-3);
+  font-size: 11px;
+}
+
+.lumio-claude-meta {
+  margin: 0 0 10px;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+}
+
+.lumio-claude-progress {
+  overflow: hidden;
+  height: 6px;
+  margin-bottom: 18px;
+  border-radius: 99px;
+  background: var(--cc-field);
+}
+
+.lumio-claude-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--cc-accent);
+}
+
+.lumio-claude-progress.is-indeterminate > i {
+  animation: lumio-claude-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes lumio-claude-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumio-claude-progress.is-indeterminate > i {
+    animation: none;
+    width: 50%;
+  }
+}
+
+.lumio-claude-frame {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  height: 100%;
+  min-height: 0;
+}
+
+.lumio-claude-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 10px 12px;
+  border-right: 1px solid var(--cc-line);
+  background: color-mix(in srgb, var(--cc-glass) 70%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+.lumio-claude-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 12px;
+}
+
+.lumio-claude-rail-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 610;
+  letter-spacing: -0.02em;
+}
+
+.lumio-claude-rail-head .lumio-button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.lumio-claude-proj {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-proj:hover {
+  background: rgb(120 120 128 / 10%);
+}
+
+.lumio-claude-proj.is-on {
+  background: var(--cc-bg-elev);
+  box-shadow: 0 8px 24px rgb(20 20 40 / 6%);
+}
+
+.lumio-claude-proj .k {
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.lumio-claude-proj .d {
+  display: block;
+  margin-top: 3px;
+  color: var(--cc-ink-3);
+  font-size: 11px;
+}
+
+.lumio-claude-add {
+  width: 100%;
+  margin-top: auto;
+}
+
+.lumio-claude-stage {
+  display: grid;
+  grid-template-rows: 40px 1fr 28px;
+  min-height: 0;
+  background: #0c0d11;
+  color: #e8e8ed;
+}
+
+.lumio-claude-stage-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+  background: rgb(16 17 22 / 92%);
+  font-size: 13px;
+}
+
+.lumio-claude-stage-tabs button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8e8e93;
+}
+
+.lumio-claude-stage-tabs button.is-on {
+  background: rgb(255 255 255 / 8%);
+  color: #fff;
+}
+
+.lumio-claude-term,
+.lumio-claude-files {
+  min-height: 0;
+  padding: 20px 22px;
+  overflow: auto;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #d7d7de;
+  background:
+    radial-gradient(500px 220px at 90% -20%, rgb(10 132 255 / 16%), transparent 55%),
+    #0c0d11;
+}
+
+.lumio-claude-term .dim,
+.lumio-claude-files .dim {
+  color: #6e6e73;
+}
+
+.lumio-claude-term .ok {
+  color: #32d74b;
+}
+
+.lumio-claude-term .err {
+  color: #ff8a80;
+}
+
+.lumio-claude-term .in {
+  color: #fff;
+}
+
+.lumio-claude-term-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.lumio-claude-term-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 8%);
+  color: inherit;
+  font: inherit;
+}
+
+.lumio-claude-files ul {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lumio-claude-files li {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.lumio-claude-status {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  background: #101117;
+  color: #8e8e93;
+  font-size: 11px;
+  line-height: 28px;
+}
+
+@media (max-width: 720px) {
+  .lumio-claude-frame {
+    grid-template-columns: 1fr;
+  }
+}

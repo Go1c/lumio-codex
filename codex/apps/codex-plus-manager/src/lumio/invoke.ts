@@ -47,10 +47,7 @@ export const LUMIO_COMMANDS = {
 export const LUMIO_BOOTSTRAP_COMMAND = LUMIO_COMMANDS.bootstrap;
 
 export const shellLabels = {
-  accountStatus: "账户状态",
-  balanceAndPlan: "余额与套餐",
-  connectionStatus: "连接状态",
-  defaultModel: "默认模型",
+  account: "账户",
   payment: "充值",
   launch: "启动 Codex",
   launchAtLogin: "开机启动",
@@ -61,8 +58,12 @@ export const shellLabels = {
   restoreConfiguration: "配置恢复",
   signIn: "登录",
   createAccount: "创建账户",
-  home: "首页",
+  codex: "Codex",
+  claude: "Claude",
   settings: "设置",
+  general: "通用",
+  support: "支持",
+  helpCenter: "帮助中心",
   verifyAccount: "验证账户",
   prepareConnection: "准备连接",
   syncModels: "同步模型目录",
@@ -221,6 +222,10 @@ export async function signOut(): Promise<void> {
 
 export async function refreshAccount(): Promise<LumioAccountSummary> {
   return runCommand<LumioAccountSummary>(LUMIO_COMMANDS.refreshAccount);
+}
+
+export async function fetchClaudeEntitlement(): Promise<{ status: string } | null> {
+  return runNullableCommand<{ status: string }>("lumio_claude_entitlement");
 }
 
 export async function runProvisioningStep(step: string): Promise<LumioProvisionStepResult> {

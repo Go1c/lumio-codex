@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" role="img" aria-label="BestCodex">
+  <defs>
+    <linearGradient id="skin" x1="18" y1="8" x2="48" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D7E9F8"/>
+      <stop offset="1" stop-color="#B9D4EE"/>
+    </linearGradient>
+  </defs>
+  <path
+    fill="url(#skin)"
+    d="M32 7.2c1.25 0 2.46.32 3.52.94l15.6 9.05c1.1.64 1.78 1.83 1.78 3.12v18.38c0 1.29-.68 2.48-1.78 3.12l-15.6 9.05a7.05 7.05 0 0 1-7.04 0l-15.6-9.05A3.6 3.6 0 0 1 11.1 38.7V20.3c0-1.29.68-2.48 1.78-3.12l15.6-9.05A7.05 7.05 0 0 1 32 7.2Z"
+  />
+  <circle cx="25.6" cy="30.4" r="2.35" fill="#1A1A1A"/>
+  <circle cx="38.4" cy="30.4" r="2.35" fill="#1A1A1A"/>
+  <circle cx="26.45" cy="29.55" r=".55" fill="#fff"/>
+  <circle cx="39.25" cy="29.55" r=".55" fill="#fff"/>
+</svg>

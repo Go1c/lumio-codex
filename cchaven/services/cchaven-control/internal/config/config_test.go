@@ -64,7 +64,7 @@ func TestLoadIdentityDefaults(t *testing.T) {
 	if got, want := cfg.PurchaseURL(), "https://api.lumio.games/purchase"; got != want {
 		t.Errorf("PurchaseURL() = %q, want %q", got, want)
 	}
-	if got, want := cfg.PortalLoginURL(), "https://lumiogame.com/login"; got != want {
+	if got, want := cfg.PortalLoginURL(), "https://bestcodex.app/login"; got != want {
 		t.Errorf("PortalLoginURL() = %q, want %q", got, want)
 	}
 }
@@ -72,7 +72,7 @@ func TestLoadIdentityDefaults(t *testing.T) {
 func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("CCHAVEN_SUB2API_BASE", "https://staging-api.lumio.games/")
-	t.Setenv("CCHAVEN_PORTAL_URL", "https://staging.lumiogame.com/")
+	t.Setenv("CCHAVEN_PORTAL_URL", "https://staging.bestcodex.app/")
 	t.Setenv("CCHAVEN_SUB2API_CACHE_TTL", "15s")
 
 	cfg, err := Load()
@@ -83,7 +83,7 @@ func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
 	if cfg.Sub2APIBase != "https://staging-api.lumio.games" {
 		t.Errorf("Sub2APIBase = %q", cfg.Sub2APIBase)
 	}
-	if cfg.PortalURL != "https://staging.lumiogame.com" {
+	if cfg.PortalURL != "https://staging.bestcodex.app" {
 		t.Errorf("PortalURL = %q", cfg.PortalURL)
 	}
 	if cfg.Sub2APICacheTTL != 15*time.Second {
@@ -98,12 +98,12 @@ func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
 // 漏了它，门户在生产环境的每个请求都会被 CORS 挡下，而 dev 放行 localhost 看不出来。
 func TestTrustedOriginsIncludesThePortal(t *testing.T) {
 	cfg := Config{
-		PublicURL: "https://cc.lumiogame.com",
+		PublicURL: "https://cc.bestcodex.app",
 		AdminURL:  "https://admin.cchaven.cn",
-		PortalURL: "https://lumiogame.com",
+		PortalURL: "https://bestcodex.app",
 	}
 
-	want := []string{"https://cc.lumiogame.com", "https://admin.cchaven.cn", "https://lumiogame.com"}
+	want := []string{"https://cc.bestcodex.app", "https://admin.cchaven.cn", "https://bestcodex.app"}
 	if got := cfg.TrustedOrigins(); !slices.Equal(got, want) {
 		t.Errorf("可信来源 = %v, want %v", got, want)
 	}

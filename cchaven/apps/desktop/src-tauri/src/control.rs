@@ -17,12 +17,12 @@ pub const CLIENT_ID: &str = "cchaven-desktop";
 pub const SCOPE: &str = "profile workspace offline_access";
 
 /// 控制面 API 主机（运维文档 `docs/ops/01-architecture.md` 的权威取值）。
-const DEFAULT_API_BASE: &str = "https://api.cc.lumiogame.com";
+const DEFAULT_API_BASE: &str = "https://api.cc.bestcodex.app";
 /// CC 产品站：下载、文档、账户页。
-const DEFAULT_WEB_BASE: &str = "https://cc.lumiogame.com";
+const DEFAULT_WEB_BASE: &str = "https://cc.bestcodex.app";
 /// 统一门户（Lumio 账号中心）。注册、登录与桌面授权确认页都在这里——
 /// 账号已收口到 Sub2API，只有门户上才有可用的账号中心会话。
-const DEFAULT_PORTAL_BASE: &str = "https://lumiogame.com";
+const DEFAULT_PORTAL_BASE: &str = "https://bestcodex.app";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 // --- Wire types (must stay in sync with the Go service) ---
@@ -638,8 +638,8 @@ mod tests {
     fn mock() -> ControlClient {
         ControlClient::new(ControlConfig {
             api_base: "http://127.0.0.1:0".into(),
-            web_base: "https://cc.lumiogame.com".into(),
-            portal_base: "https://lumiogame.com".into(),
+            web_base: "https://cc.bestcodex.app".into(),
+            portal_base: "https://bestcodex.app".into(),
             mock: true,
         })
     }
@@ -648,7 +648,7 @@ mod tests {
     fn authorize_url_targets_the_unified_portal_with_pkce() {
         let url = mock().authorize_url("http://127.0.0.1:53682/callback", "chal", "st4te");
         // 授权确认页必须开在账号中心所在的门户：只有那里能拿到 Sub2API 会话。
-        assert!(url.starts_with("https://lumiogame.com/authorize?"));
+        assert!(url.starts_with("https://bestcodex.app/authorize?"));
         // PKCE 契约一个字都不能变——存量客户端与控制面都按它对齐。
         assert!(url.contains("client_id=cchaven-desktop"));
         assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A53682%2Fcallback"));
@@ -660,9 +660,9 @@ mod tests {
 
     #[test]
     fn defaults_target_the_lumio_domains() {
-        assert_eq!(DEFAULT_WEB_BASE, "https://cc.lumiogame.com");
-        assert_eq!(DEFAULT_API_BASE, "https://api.cc.lumiogame.com");
-        assert_eq!(DEFAULT_PORTAL_BASE, "https://lumiogame.com");
+        assert_eq!(DEFAULT_WEB_BASE, "https://cc.bestcodex.app");
+        assert_eq!(DEFAULT_API_BASE, "https://api.cc.bestcodex.app");
+        assert_eq!(DEFAULT_PORTAL_BASE, "https://bestcodex.app");
     }
 
     #[test]

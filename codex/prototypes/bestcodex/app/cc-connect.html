@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>接入服务器 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Claude 接入向导</h1>
+          <p>sheet 盖在 Claude Tab 上。外层 Tab 还在</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-connect.html?step=host">主机</a>
+          <a class="note" href="cc-connect.html?step=probe">探测</a>
+          <a class="note" href="cc-connect.html?step=probe&amp;fail=1">探测失败</a>
+          <a class="note" href="cc-connect.html?step=setup">装组件</a>
+          <a class="note" href="cc-connect.html?step=sync">首次同步</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-empty.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="onboard ghost-stage" aria-hidden="true">
+            <div class="onboard-card is-claude">
+              <span class="chip">Claude</span>
+              <h2>把 Claude放到你自己的服务器上。</h2>
+              <p>sheet 盖在这上面，取消就回到这里。</p>
+            </div>
+          </div>
+
+          <div class="sheet-back" data-wizard>
+            <div class="sheet is-wide">
+              <ol class="wiz-legend">
+                <li data-wiz-step="host" class="is-on">主机</li>
+                <li data-wiz-step="probe">探测</li>
+                <li data-wiz-step="setup">装组件</li>
+                <li data-wiz-step="sync">首次同步</li>
+              </ol>
+              <div class="sheet-steps" aria-hidden="true">
+                <i class="is-on"></i><i></i><i></i><i></i>
+              </div>
+
+              <div data-view="host">
+                <h2>连接服务器</h2>
+                <p class="lede">买好云服务器之后，把公网 IP 和密码填进来就行。其余默认即可。</p>
+                <label class="note" for="host">主机</label>
+                <input class="field" id="host" value="43.156.20.8" autocomplete="off" />
+                <label class="note" for="user">用户</label>
+                <input class="field" id="user" value="root" />
+                <label class="note" for="pass">密码</label>
+                <input class="field" id="pass" type="password" value="password" />
+                <p class="quiet" style="margin: -4px 0 12px">密码只留在这台电脑上。也可以粘贴整条 <code>ssh root@…</code>。</p>
+                <details class="adv">
+                  <summary>懂 SSH 再用</summary>
+                  <div class="pad">
+                    <label class="note" for="port">端口</label>
+                    <input class="field" id="port" value="22" />
+                    <label class="note" for="auth">认证</label>
+                    <input class="field" id="auth" value="密码（也可改成本机密钥）" />
+                  </div>
+                </details>
+                <div class="card-actions">
+                  <a class="btn is-ghost is-block" href="cc-empty.html">取消</a>
+                  <button class="btn is-blue is-block" type="button" data-wiz-go="probe">探测连接</button>
+                </div>
+              </div>
+
+              <div data-view="probe" hidden>
+                <div data-probe="ok">
+                  <h2>探测连接</h2>
+                  <p class="lede">正在确认这台机器能登录、能跑组件。</p>
+                  <div class="check-list">
+                    <div class="check-row is-done"><i></i><div>网络可达<span>43.156.20.8:22</span></div></div>
+                    <div class="check-row is-done"><i></i><div>可以登录<span>root · 密码有效</span></div></div>
+                    <div class="check-row is-now"><i></i><div>系统可用<span>Ubuntu 22.04 · 4 核 · 8 GB</span></div></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-ghost is-block" type="button" data-wiz-go="host">返回修改</button>
+                    <button class="btn is-blue is-block" type="button" data-wiz-go="setup">继续装组件</button>
+                  </div>
+                </div>
+                <div data-probe="fail" hidden>
+                  <h2>连不上这台服务器</h2>
+                  <p class="lede">先对一下这三件，大多数情况是其中一件。</p>
+                  <div class="fail-box">
+                    无法登录 43.156.20.8。
+                    <span class="code">SSH_AUTH_FAILED</span>
+                  </div>
+                  <div class="promise">
+                    <div>
+                      <b>IP 是否抄对</b>
+                      <span>用控制台里的公网 IP，不要填内网地址。</span>
+                    </div>
+                    <div>
+                      <b>密码是否正确</b>
+                      <span>注意大小写，建议从控制台重新复制。</span>
+                    </div>
+                    <div>
+                      <b>安全组是否放行 22</b>
+                      <span>云平台防火墙要允许你当前网络访问 SSH 端口。</span>
+                    </div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-ghost is-block" type="button" data-wiz-go="host">返回修改</button>
+                    <button class="btn is-blue is-block" type="button" data-wiz-go="probe">重试</button>
+                  </div>
+                </div>
+              </div>
+
+              <div data-view="setup" hidden>
+                <h2>安装组件</h2>
+                <p class="lede">在服务器上准备同步环境和项目目录。不用你操作。</p>
+                <div class="check-list">
+                  <div class="check-row is-done"><i></i><div>已连上服务器<span>root@43.156.20.8</span></div></div>
+                  <div class="check-row is-now"><i></i><div>安装同步组件<span>自动完成，无需操作</span></div></div>
+                  <div class="check-row"><i></i><div>创建项目目录<span>/root/bestcodex/my-project · 本机 ~/BestCodex/my-project</span></div></div>
+                </div>
+                <div class="card-actions">
+                  <a class="btn is-ghost is-block" href="cc-empty.html">取消</a>
+                  <button class="btn is-blue is-block" type="button" data-wiz-go="sync">开始首次同步</button>
+                </div>
+              </div>
+
+              <div data-view="sync" hidden>
+                <h2>首次同步</h2>
+                <p class="lede">把服务器上的项目拉到这台电脑。完成后右侧就是终端。</p>
+                <p class="meta" style="margin: 0 0 10px; color: var(--ink-2); font-size: 13px">123 / 456 个文件 · my-project</p>
+                <div class="progress" style="margin-bottom: 18px"><i style="width: 27%"></i></div>
+                <div class="check-list">
+                  <div class="check-row is-done"><i></i><div>目录已创建</div></div>
+                  <div class="check-row is-now"><i></i><div>正在同步文件</div></div>
+                  <div class="check-row"><i></i><div>打开 Claude 终端</div></div>
+                </div>
+                <div class="card-actions">
+                  <a class="btn is-ghost is-block" href="home.html">切到 Codex（同步继续）</a>
+                  <a class="btn is-blue is-block" href="cc-home.html">当作完成</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

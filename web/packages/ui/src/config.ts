@@ -7,9 +7,9 @@
 
 export type SiteId = "portal" | "cc" | "codex";
 
-const DEFAULT_ROOT_DOMAIN = "lumiogame.com";
+const DEFAULT_ROOT_DOMAIN = "bestcodex.app";
 const DEFAULT_API_BASE_URL = "https://api.lumio.games";
-const DEFAULT_CC_CONTROL_BASE_URL = "https://api.cc.lumiogame.com";
+const DEFAULT_CC_CONTROL_BASE_URL = "https://api.cc.bestcodex.app";
 
 function env(key: string): string | undefined {
   const value = (import.meta.env as Record<string, string | undefined>)[key];
@@ -68,6 +68,16 @@ export interface AccountLinks {
 }
 
 /** 产品站不做自己的登录：账号入口一律回门户，并带上回跳地址。 */
+/** 桌面端约定的帮助入口。若 apex 是门户，产品站镜像页仍可打开。 */
+export function helpCanonicalUrl(): string {
+  return `https://${rootDomain()}/help`;
+}
+
+export function helpProductUrl(path = ""): string {
+  const suffix = path ? `/${path.replace(/^\/+/, "")}` : "";
+  return `${siteUrl("codex")}/help${suffix}`;
+}
+
 export function portalAccountLinks(next?: string | null): AccountLinks {
   return {
     login: portalUrl("/login", next),

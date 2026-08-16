@@ -1,7 +1,7 @@
-# Lumio Codex
+# BestCodex
 
 <p align="center">
-  <img src="assets/brand/lumio-icon.png" alt="Lumio Codex 图标" width="160">
+  <img src="assets/brand/bestcodex-icon.jpg" alt="BestCodex 图标" width="160">
 </p>
 
 <p align="center">
@@ -14,9 +14,9 @@
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB">
 </p>
 
-Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测用户已经安装的官方 Codex / ChatGPT 桌面应用，完成 Lumio 账户接入、余额与套餐展示、Responses 配置和启动交接，让用户继续使用官方 Codex 的原生模型选择器。
+**BestCodex** 是一个启动器：下载一次、登录一次，窗口里两个 Tab——**Codex**（配好并启动官方 Codex）和 **Claude**（把 Claude 跑在自己的服务器上；仓库仍可叫 cchaven / CC）。Codex Tab 主区是问候 + 一行「邮箱 · 余额 · 充值」+ 一张启动卡，不是仪表盘墙。用户不需要手填 Base URL 或 API Key。
 
-生产 API 固定为 `https://api.lumio.games/`。官网为 `https://lumio.games/`。用户不需要手填 Base URL 或 API Key。
+生产 API 固定为 `https://api.lumio.games/`。站点 [`https://bestcodex.app`](https://bestcodex.app)，帮助 [`https://bestcodex.app/help`](https://bestcodex.app/help)。充值仍打开 `https://api.lumio.games/purchase`。桌面 Key 名是 `BestCodex Desktop`。bundle id 仍为 `games.lumio.codex`。安装包显示名为 BestCodex，安装目录为 `BestCodex.app` / `%LOCALAPPDATA%\Programs\BestCodex`。制品**文件名**仍是 `LumioCodex-*.dmg`。
 
 > **开发 / 发布状态：** `publish` 是持续集成与发版准备分支。账户、登录、配置接管、离线启动、官网、充值打开网站、GitHub 更新提醒已落地。当前对外分发仍以明确标记为 `internal-unsigned` 的内部测试制品为主。没有完成 Apple Developer ID 签名与公证、Windows 代码签名和回滚演练前，**不发布**正式公开安装包（见 CI `Public release gate`）。
 
@@ -38,13 +38,13 @@ Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测�
 1. 检测官方 Codex / ChatGPT 应用；检测失败时允许手动选择路径。
 2. 动态显示服务条款、隐私政策、使用政策和区域声明。
 3. 使用 Sub2API 的邮箱验证码、密码注册 / 登录和 2FA。
-4. 自动复用或创建账号级唯一的 `Lumio Codex Desktop` API Key。
-5. 配置 LumioAPI、Responses 协议、模型目录和服务端默认模型。
-6. 展示余额、试用额度和套餐状态。
+4. 自动复用或创建账号级唯一的 `BestCodex Desktop` API Key。
+5. 配置 Responses 协议、模型目录和服务端默认模型（零配置，用户看不见 Key / Base URL）。
+6. Codex 首页一行展示邮箱 · 余额 · 充值；充值打开 `https://api.lumio.games/purchase`。
 7. 一键启动官方 Codex，后续模型切换仍使用 Codex 原生选择器。
-8. 充值时在系统浏览器打开 `https://api.lumio.games/purchase`（当前为打开网站；安全一次性交接可后续增强）。
+8. 第二个 Tab **Claude** 接入现有 CC 能力（项目、终端、同步）；不为 Claude 再打一份独立安装包。
 
-Lumio Codex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用**。请先从 OpenAI 官方渠道安装受支持的桌面应用。
+BestCodex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用**。请先从 OpenAI 官方渠道安装受支持的桌面应用。
 
 ## 支持平台
 
@@ -54,7 +54,7 @@ Lumio Codex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用*
 | macOS | Apple Silicon arm64 | DMG |
 | macOS | Intel x64 | DMG |
 
-Windows 使用当前用户目录安装到 `%LOCALAPPDATA%\Programs\Lumio Codex`，不请求管理员权限。macOS DMG 只显示一个 `Lumio Codex.app`，启动辅助程序保存在应用包内部。
+安装包显示名为 BestCodex。Windows 安装到 `%LOCALAPPDATA%\Programs\BestCodex`（不请求管理员权限）；macOS 为 `BestCodex.app`。制品**文件名**仍是 `LumioCodex-*`。
 
 ## 内部测试包
 
@@ -71,14 +71,14 @@ Windows 使用当前用户目录安装到 `%LOCALAPPDATA%\Programs\Lumio Codex`�
 
 ## 产品边界
 
-Lumio 精简模式不公开 Provider、Base URL、Key、协议、多供应商、脚本、会话增强、Stepwise、Goals、MCP、Skill、Plugin 或注入配置。首版也不内置支付 UI、第三方 OAuth、邀请码或设备管理。
+BestCodex 精简模式不公开 Provider、Base URL、Key、协议、多供应商、脚本、会话增强、Stepwise、Goals、MCP、Skill、Plugin 或注入配置。首版也不内置支付 UI、第三方 OAuth、邀请码或设备管理。
 
-项目保留必要的上游实现代码以便同步，但 Lumio 产品入口只注册精简命令面；隐藏的旧模块不等于对用户承诺的功能。
+项目保留必要的上游实现代码以便同步，但 BestCodex 产品入口只注册精简命令面；隐藏的旧模块不等于对用户承诺的功能。
 
 ## 安全与隐私
 
-- 访问令牌与 API Key 落在 Lumio 数据目录的 owner-only 文件（见 `.spec/decisions/0001-lumio-credentials-local-file.md`）；日志与界面只显示脱敏值。系统钥匙串为后续可选项。
-- 第一次接管前保存 Codex 配置快照，只合并 Lumio 负责的字段；设置中可整文件恢复接管前快照。
+- 访问令牌与 API Key 落在本机数据目录的 owner-only 文件（见 `.spec/decisions/0001-lumio-credentials-local-file.md`）；本机目录第一期不改。日志与界面只显示脱敏值。系统钥匙串为后续可选项。
+- 第一次接管前保存 Codex 配置快照，只合并 BestCodex 负责的字段；设置中可整文件恢复接管前快照。
 - 遥测 UI 默认关闭且本期未接真实上报通道。
 - 服务临时不可用时，已有有效本机配置的登录用户仍可启动 Codex；注册、账户刷新在离线时明确不可用。
 
@@ -113,13 +113,13 @@ npm run build
 仓库结构：
 
 ```text
-apps/codex-plus-manager/       Lumio Codex Tauri 与 React 客户端
+apps/codex-plus-manager/       BestCodex Tauri 与 React 启动器
 apps/codex-plus-launcher/      内部启动辅助程序
 crates/codex-plus-core/        跨平台检测、配置、账户与启动
 crates/codex-plus-data/        本地数据层
-site/                          官网静态站（lumio.games）
+site/                          旧官网静态站（历史 `lumio.games`，用户可见站点已是 bestcodex.app）
 docs/ops/                      部署 / 打包 / 发版 / 后台维护
-assets/brand/                  品牌源图
+assets/brand/                  品牌源图（权威图标 `bestcodex-icon.jpg`）
 scripts/installer/windows/     Windows NSIS 内测安装脚本
 scripts/installer/macos/       macOS DMG 内测打包脚本
 .spec/                         Agent 规则与知识库
@@ -129,6 +129,6 @@ scripts/installer/macos/       macOS DMG 内测打包脚本
 
 本项目以 `AGPL-3.0-only` 公开源码，完整条款见 [LICENSE](LICENSE)。分发修改版本或通过网络向用户提供修改后的版本时，必须按 GNU AGPL v3.0 提供对应源代码。
 
-Lumio Codex 是 [`BigPizzaV3/CodexPlusPlus`](https://github.com/BigPizzaV3/CodexPlusPlus) 的 AGPL Fork，保留上游同步关系和历史归属。第三方代码与素材声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。品牌替换不会移除原许可证或第三方义务。
+BestCodex 是 [`BigPizzaV3/CodexPlusPlus`](https://github.com/BigPizzaV3/CodexPlusPlus) 的 AGPL Fork，保留上游同步关系和历史归属。第三方代码与素材声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。品牌替换不会移除原许可证或第三方义务。
 
-Lumio Codex 是独立项目，与 OpenAI 无隶属、赞助或认可关系。OpenAI、ChatGPT、Codex 及相关名称和标识是其各自权利人的商标。本项目不授予官方应用、商标或第三方内容的任何权利。
+BestCodex 是独立项目，与 OpenAI、Anthropic 无隶属、赞助或认可关系。OpenAI、ChatGPT、Codex、Claude、Anthropic 及相关名称和标识是其各自权利人的商标。本项目不授予官方应用、商标或第三方内容的任何权利。

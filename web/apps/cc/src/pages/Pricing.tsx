@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 
-import { Aurora, Reveal } from "@lumio/ui";
+import { Reveal } from "@lumio/ui";
 
 import { PlanCard } from "@/components/PlanCard";
 import { FAQS } from "@/content";
@@ -12,18 +12,17 @@ export function Pricing() {
 
   return (
     <>
-      <Aurora variant="claude" />
-
-      <Reveal immediate>
-        <h2 className="section-title" style={{ marginTop: 70 }}>
-          定价
-        </h2>
-        <p className="section-sub">一个价钱，功能全开，没有其他限制。</p>
-      </Reveal>
-
-      <Reveal immediate delay={0.1}>
-        <PlanCard />
-      </Reveal>
+      <section className="mk-section" aria-labelledby="pricing-title">
+        <Reveal immediate>
+          <span className="section-kicker">Pricing</span>
+          <h2 className="section-title" id="pricing-title">
+            简单定价
+          </h2>
+        </Reveal>
+        <Reveal immediate delay={0.1}>
+          <PlanCard />
+        </Reveal>
+      </section>
 
       <section className="faq" aria-label="常见问题">
         <h3 className="sr-only">常见问题</h3>

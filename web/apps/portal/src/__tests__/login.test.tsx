@@ -84,11 +84,11 @@ describe("登录页", () => {
   it("注册入口保留 next，跨页不丢回跳目标", async () => {
     stubFetch({ "/auth/login": () => failure(401, "INVALID_CREDENTIALS") });
 
-    renderApp("/login?next=https%3A%2F%2Fcc.lumiogame.com%2Fpricing");
+    renderApp("/login?next=https%3A%2F%2Fcc.bestcodex.app%2Fpricing");
 
     expect(await screen.findByRole("link", { name: "创建账号" })).toHaveAttribute(
       "href",
-      "/signup?next=https%3A%2F%2Fcc.lumiogame.com%2Fpricing",
+      "/signup?next=https%3A%2F%2Fcc.bestcodex.app%2Fpricing",
     );
   });
 });

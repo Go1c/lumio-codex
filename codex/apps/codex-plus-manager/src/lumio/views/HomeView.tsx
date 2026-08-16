@@ -1,18 +1,8 @@
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
-  CloudOff,
-  FolderOpen,
-  RefreshCw,
-  Rocket,
-  ShieldCheck,
-  Star,
-  WalletCards,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, CloudOff, FolderOpen, RefreshCw, Rocket } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, useState } from "react";
 
+import { greetingNameFromEmail } from "../greeting.ts";
 import {
   LumioCommandError,
   detectCodexApp,
@@ -48,7 +38,6 @@ const INSTALL_POLL_MS = 400;
 const INSTALL_AND_LAUNCH_COPY = "安装并启动官方 Codex";
 const INSTALLING_COPY = "正在安装官方 Codex…";
 const OFFLINE_NO_APP_NOTE = "安装官方应用需要网络";
-const NO_APP_SUBCOPY = "将为你安装官方 Codex";
 
 function errorCodeOf(error: unknown): string {
   return error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
@@ -287,6 +276,40 @@ export function HomeView({
       : null;
   const progressCopy = installProgressCopy(officialAppInstall, downloadPercentValue);
   const failureCopy = installEnded ? installFailureCopy(officialAppInstall) : null;
+  const greetingName = greetingNameFromEmail(account.email);
+  const offlineMissing = offline && codexApp === null && !installInProgress;
+
+  const cardTitle = installInProgress
+    ? "正在安装官方 Codex"
+    : installEnded
+      ? "安装没有完成"
+      : offlineMissing
+        ? "尚未安装官方 Codex"
+        : offline
+          ? "离线可用"
+          : codexApp
+            ? "Codex 已就绪"
+            : "尚未安装官方 Codex";
+  const cardPill = installInProgress
+    ? (stageLabel ?? "安装")
+    : installEnded
+      ? "可重试"
+      : offlineMissing
+        ? "需要网络"
+        : offline
+          ? "缓存"
+          : codexApp
+            ? "可启动"
+            : "未安装";
+  const cardMeta = installInProgress
+    ? progressCopy
+    : offlineMissing
+      ? OFFLINE_NO_APP_NOTE
+      : offline
+        ? "本机配置还在。充值需要网络，启动不需要。"
+        : codexApp
+          ? "本机配置已写好。启动后进入官方 Codex，这个窗口留在这里。"
+          : "装好后会自动启动。安装过程可以切到 Claude，回来进度还在。";
 
   const openPayment = () => {
     const url = paymentUrl(state);
@@ -306,18 +329,6 @@ export function HomeView({
 
   return (
     <div className="lumio-dashboard">
-      <section className="lumio-welcome-row">
-        <div>
-          <p className="lumio-eyebrow">{shellLabels.accountStatus}</p>
-          <h1>欢迎回来</h1>
-          <p>{account.email}</p>
-        </div>
-        <span className="lumio-secure-chip">
-          <ShieldCheck size={16} />
-          凭据由系统保护
-        </span>
-      </section>
-
       {reconnected ? (
         <p className="lumio-notice is-success" role="status">
           <CheckCircle2 size={15} />
@@ -332,30 +343,28 @@ export function HomeView({
         </p>
       ) : null}
 
-      <div className="lumio-metric-grid">
-        <article className={`lumio-card lumio-balance-card${offline ? " is-cached" : ""}`}>
-          <span className="lumio-card-icon">
-            <WalletCards size={20} />
-          </span>
-          <p>{shellLabels.balanceAndPlan}</p>
-          <strong>{syncTimeUnknown ? "未知" : formatBalance(account.balance)}</strong>
-          <small>
+      <div className="lumio-home-top">
+        <div>
+          <h1>你好，{greetingName}</h1>
+          <p className="lumio-balance-line">
+            {account.email}
+            {" · "}
+            余额{" "}
+            <strong>{syncTimeUnknown ? "未知" : formatBalance(account.balance)}</strong>
             {offline ? (
               <span className="lumio-tag is-warning">{syncTimeUnknown ? "尚未同步" : "缓存值"}</span>
             ) : null}
-            {syncTimeUnknown ? "恢复网络后自动更新" : (account.planLabel ?? "当前没有生效套餐")}
             <button
-              className="lumio-small-button is-inline"
+              className="lumio-link-button"
               disabled={!actions.canPay || paying}
               onClick={openPayment}
               title={actions.canPay ? undefined : (actionNotes.pay ?? undefined)}
               type="button"
             >
-              <WalletCards size={12} />
               {paying ? "正在打开…" : shellLabels.payment}
             </button>
             <button
-              className="lumio-small-button is-inline"
+              className="lumio-link-button"
               disabled={!actions.canRefresh || refreshing}
               onClick={refresh}
               title={actions.canRefresh ? undefined : (actionNotes.refresh ?? undefined)}
@@ -364,63 +373,33 @@ export function HomeView({
               <RefreshCw size={12} />
               {refreshing ? "刷新中…" : "刷新余额"}
             </button>
-          </small>
-        </article>
-
-        <article className="lumio-card">
-          <span className="lumio-card-icon">
-            <Activity size={20} />
-          </span>
-          <p>{shellLabels.connectionStatus}</p>
-          <strong>{offline ? "本机就绪" : "在线"}</strong>
-          <small>
-            {offline
-              ? "使用本机缓存"
-              : syncTimeUnknown
-                ? "尚未同步"
-                : `上次同步 ${formatSyncTime(state.cachedAt)}`}
-            <button
-              className="lumio-small-button is-inline"
-              disabled={!actions.canRefresh || refreshing}
-              onClick={refresh}
-              title={actions.canRefresh ? undefined : (actionNotes.refresh ?? undefined)}
-              type="button"
-            >
-              <RefreshCw size={12} />
-              {refreshing ? "刷新中…" : "刷新"}
-            </button>
-          </small>
-          {actions.canRefresh ? null : <small className="lumio-card-note">{actionNotes.refresh}</small>}
-        </article>
-
-        <article className="lumio-card">
-          <span className="lumio-card-icon">
-            <Star size={20} />
-          </span>
-          <p>{shellLabels.defaultModel}</p>
-          <strong>{state.defaultModel ?? "等待服务端同步"}</strong>
-          <small>
-            <span className="lumio-tag is-success">已配置</span>
-            由服务端管理
-          </small>
-        </article>
-      </div>
-
-      <section className="lumio-action-panel">
-        <div>
-          <p className="lumio-eyebrow">官方 Codex</p>
-          <h2>{codexApp === null ? "尚未检测到官方应用" : "已检测到官方应用"}</h2>
-          <p>
-            {codexApp === null
-              ? NO_APP_SUBCOPY
-              : `${codexApp.version === null ? "已就绪" : `版本 ${codexApp.version}`} · ${codexApp.path}`}
           </p>
         </div>
+        <span className={`lumio-chip${offline ? " is-offline" : ""}`}>
+          <i />
+          {offline ? "离线" : "服务正常"}
+        </span>
+      </div>
+
+      <section className="lumio-launch-card">
+        <span className="lumio-app-icon is-card" aria-hidden="true">
+          <img alt="" src="/lumio-icon.png" />
+        </span>
+        <p className="lumio-eyebrow">官方应用</p>
+        <header>
+          <h2>{cardTitle}</h2>
+          <span className={`lumio-pill${offline || installEnded || offlineMissing ? " is-warn" : " is-ok"}`}>
+            {cardPill}
+          </span>
+        </header>
+        <p className="lumio-launch-meta">{cardMeta}</p>
+
         <div className="lumio-actions">
           <button
             className="lumio-button is-primary"
             disabled={primaryDisabled}
             onClick={onPrimaryClick}
+            title={!actions.canLaunch ? (actionNotes.launch ?? undefined) : undefined}
             type="button"
           >
             <Rocket size={17} />
@@ -456,46 +435,50 @@ export function HomeView({
             {failureCopy}
           </p>
         ) : null}
-      </section>
 
-      {actions.canPay ? null : <p className="lumio-settings-note">{actionNotes.pay}</p>}
-      {!actions.canLaunch && actionNotes.launch ? (
-        <p className="lumio-settings-note">
-          {actionNotes.launch}
-          <button className="lumio-link-button" onClick={onOpenSettings} type="button">
-            {shellLabels.settings}
-          </button>
-        </p>
-      ) : null}
+        {codexApp ? <p className="lumio-launch-path">{codexApp.path}</p> : null}
 
-      {destinationOpen ? (
-        <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">
-          <div className="lumio-modal">
-            <h3>选择安装位置</h3>
-            {destinationOptions(state.bootstrap?.platform ?? "").map((option) => (
-              <p className="lumio-settings-note" key={option.id}>
-                <button
-                  className="lumio-button is-secondary"
-                  onClick={() => {
-                    if (option.id === "standard") {
-                      installThenLaunch(null);
-                      return;
-                    }
-                    void chooseDirectory().then((dir) => {
-                      if (dir !== null) installThenLaunch(dir);
-                    });
-                  }}
-                  type="button"
-                >
-                  <FolderOpen size={16} />
-                  {option.label}
-                </button>
-                {option.note === null ? null : <small>{option.note}</small>}
-              </p>
-            ))}
-            <div className="lumio-modal-actions">
+        {actions.canPay ? null : <p className="lumio-settings-note">{actionNotes.pay}</p>}
+        {!actions.canLaunch && actionNotes.launch ? (
+          <p className="lumio-settings-note">
+            {actionNotes.launch}
+            <button className="lumio-link-button" onClick={onOpenSettings} type="button">
+              {shellLabels.settings}
+            </button>
+          </p>
+        ) : null}
+
+        {destinationOpen ? (
+          <div className="lumio-sheet-back">
+            <div aria-modal="true" className="lumio-sheet" role="dialog">
+              <h3>选择安装位置</h3>
+              <p>先选位置，再开始下载。取消不会开始安装。</p>
+              <div className="lumio-place-list">
+                {destinationOptions(state.bootstrap?.platform ?? "").map((option) => (
+                  <button
+                    className="lumio-place"
+                    key={option.id}
+                    onClick={() => {
+                      if (option.id === "standard") {
+                        installThenLaunch(null);
+                        return;
+                      }
+                      void chooseDirectory().then((dir) => {
+                        if (dir !== null) installThenLaunch(dir);
+                      });
+                    }}
+                    type="button"
+                  >
+                    <FolderOpen size={16} />
+                    <span>
+                      <b>{option.label}</b>
+                      {option.note === null ? null : <small>{option.note}</small>}
+                    </span>
+                  </button>
+                ))}
+              </div>
               <button
-                className="lumio-button is-secondary"
+                className="lumio-button is-secondary is-block"
                 onClick={() => setDestinationOpen(false)}
                 type="button"
               >
@@ -503,8 +486,8 @@ export function HomeView({
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </section>
 
       {paymentOpen ? (
         <div aria-modal="true" className="lumio-modal-backdrop" role="dialog">

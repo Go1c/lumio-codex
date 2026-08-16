@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>启动器 · Claude 环境（接入后）</h1>
+          <p>左项目轨，右工作台。文件 / 冲突细稿下一步再画</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home.html">Codex</a>
+          <a class="note" href="cc-empty.html">第一次</a>
+          <a class="note" href="cc-connect.html">向导</a>
+          <a class="note" href="cc-subscribe.html">未订阅</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-home.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="cc-frame">
+            <aside class="cc-rail">
+              <div class="cc-rail-head">
+                <h2>项目</h2>
+                <a class="btn is-sm is-ghost" href="cc-connect.html">新建</a>
+              </div>
+              <a class="cc-proj is-on" href="cc-home.html">
+                <span class="k">my-project</span>
+                <span class="d">已同步 · 43.156.20.8</span>
+              </a>
+              <a class="cc-proj" href="cc-home.html">
+                <span class="k">docs-site</span>
+                <span class="d">2 个冲突 · gpu-box</span>
+              </a>
+              <a class="btn is-sm add" href="cc-connect.html">连接新服务器</a>
+            </aside>
+            <section class="cc-stage">
+              <nav class="cc-stage-tabs">
+                <a class="is-on" href="cc-home.html">终端</a>
+                <a href="cc-home.html">文件</a>
+                <a href="cc-home.html">冲突</a>
+              </nav>
+              <div class="cc-term">
+                <div class="dim">BestCodex · Claude · my-project</div>
+                <div class="ok">attached  session cc-my-project  ·  tmux</div>
+                <div>&nbsp;</div>
+                <div>&gt; claude</div>
+                <div>Claude Code · my-project</div>
+                <div>How can I help you today?</div>
+                <div>&nbsp;</div>
+                <div>&gt; <span class="dim">_</span></div>
+              </div>
+              <div class="cc-status">
+                <span>已同步 · 文件与远端一致</span>
+                <span>root@43.156.20.8</span>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

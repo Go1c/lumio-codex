@@ -818,13 +818,13 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/v1/keys"))
-            .and(query_param("search", "Lumio Codex Desktop"))
+            .and(query_param("search", "BestCodex Desktop"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(envelope(serde_json::json!({
                     "items": [
                         {
                             "id": 1,
-                            "name": "Lumio Codex Desktop",
+                            "name": "BestCodex Desktop",
                             "key": "sk-existing",
                             "status": "active",
                             "group_id": 3,
@@ -842,12 +842,12 @@ mod tests {
 
         let client = LumioApiClient::new(&server.uri()).unwrap();
         let keys = client
-            .list_keys("access-token", "Lumio Codex Desktop")
+            .list_keys("access-token", "BestCodex Desktop")
             .await
             .unwrap();
 
         assert_eq!(keys.len(), 1);
-        assert_eq!(keys[0].name, "Lumio Codex Desktop");
+        assert_eq!(keys[0].name, "BestCodex Desktop");
         assert_eq!(keys[0].status, "active");
     }
 
@@ -860,7 +860,7 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(201).set_body_json(envelope(serde_json::json!({
                     "id": 2,
-                    "name": "Lumio Codex Desktop",
+                    "name": "BestCodex Desktop",
                     "key": "sk-created",
                     "status": "active",
                     "group_id": 3,
@@ -872,7 +872,7 @@ mod tests {
 
         let client = LumioApiClient::new(&server.uri()).unwrap();
         let request = CreateKeyRequest {
-            name: "Lumio Codex Desktop".to_string(),
+            name: "BestCodex Desktop".to_string(),
             group_id: Some(3),
         };
         let created = client.create_key("access-token", &request).await.unwrap();

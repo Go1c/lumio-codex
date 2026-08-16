@@ -1,7 +1,7 @@
 /**
  * 邀请返利归因码的落地与读取。
  *
- * 邀请链接形如 `https://lumiogame.com/register?aff=ABC123`（兼容 `aff_code` 参数）。
+ * 邀请链接形如 `https://bestcodex.app/register?aff=ABC123`（兼容 `aff_code` 参数）。
  * 归因码不是用户凭据：存 sessionStorage 只为让用户从邀请页逛到注册页（先看协议、
  * 去邮箱拿验证码再回来）之间不丢；注册提交时原样放进 `aff_code`，由 Sub2API
  * 大写化并静默绑定——绑定失败也不阻断注册（docs/ops/05 §2.2）。

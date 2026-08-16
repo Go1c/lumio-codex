@@ -8,9 +8,9 @@ describe("redirectTarget", () => {
   });
 
   it("子站地址整页跳回去", () => {
-    expect(redirectTarget("https://cc.lumiogame.com/pricing", "/account")).toEqual({
+    expect(redirectTarget("https://cc.bestcodex.app/pricing", "/account")).toEqual({
       kind: "external",
-      url: "https://cc.lumiogame.com/pricing",
+      url: "https://cc.bestcodex.app/pricing",
     });
   });
 

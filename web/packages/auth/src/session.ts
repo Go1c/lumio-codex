@@ -2,7 +2,7 @@
  * 跨子域会话存储。
  *
  * 门户与产品站是三个独立的静态站点，没有共同的后端会话，所以令牌落在父域 Cookie
- * （`.lumiogame.com`）上让三站都能读到。父域 Cookie 必须能被前端读写，因此不是 HttpOnly；
+ * （`.bestcodex.app`）上让三站都能读到。父域 Cookie 必须能被前端读写，因此不是 HttpOnly；
  * 相应地服务端要收紧 CORS 与令牌有效期（见 web/README.md 的「对服务端的依赖」）。
  */
 

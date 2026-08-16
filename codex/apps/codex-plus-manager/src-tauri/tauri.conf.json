@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Lumio Codex",
+  "productName": "BestCodex",
   "version": "1.2.46",
   "identifier": "games.lumio.codex",
   "build": {
@@ -14,7 +14,7 @@
       {
         "create": false,
         "label": "main",
-        "title": "Lumio Codex",
+        "title": "BestCodex",
         "width": 1180,
         "height": 820,
         "minWidth": 960,

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use codex_plus_core::lumio::account::ensure_desktop_key;
 use codex_plus_core::lumio::api::{AccountProfile, AuthOutcome, LumioApiClient, RegisterRequest};
+use codex_plus_core::lumio::claude_control;
 use codex_plus_core::lumio::config_takeover::{self, TakeoverHealth, TakeoverRequest};
 use codex_plus_core::lumio::credentials::{CredentialStatus, CredentialStore};
 use codex_plus_core::lumio::errors::redact;
@@ -69,6 +70,12 @@ pub struct LumioAccountPayload {
     pub email: String,
     pub balance: f64,
     pub plan_label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioClaudeEntitlementPayload {
+    pub status: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -470,6 +477,31 @@ pub async fn lumio_refresh_account(
             *lock(&session.account) = Some(profile);
             payload
         });
+    result(outcome)
+}
+
+#[tauri::command]
+pub async fn lumio_claude_entitlement(
+    session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioClaudeEntitlementPayload>, ()> {
+    let client = &session.client;
+    let outcome = session
+        .auth
+        .with_access_token(client, move |token| async move {
+            let snapshot = claude_control::fetch_entitlement(&token).await?;
+            let _ = claude_control::heartbeat(
+                &token,
+                "",
+                env!("CARGO_PKG_VERSION"),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            )
+            .await;
+            Ok(LumioClaudeEntitlementPayload {
+                status: snapshot.status,
+            })
+        })
+        .await;
     result(outcome)
 }
 

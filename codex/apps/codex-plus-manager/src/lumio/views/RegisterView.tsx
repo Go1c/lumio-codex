@@ -101,7 +101,10 @@ export function RegisterView({
     return (
       <div className="lumio-auth-wrap">
         <section className="lumio-auth-card">
-          <p className="lumio-eyebrow">{shellLabels.createAccount}</p>
+          <span className="lumio-app-icon is-card" aria-hidden="true">
+            <img alt="" src="/lumio-icon.png" />
+          </span>
+          <p className="lumio-eyebrow">BestCodex</p>
           <h1>注册暂未开放</h1>
           <p className="lumio-auth-lead">
             我们正在分批开放注册名额，请稍后再来。如你已有账户，可以直接登录。
@@ -186,10 +189,13 @@ export function RegisterView({
   return (
     <div className="lumio-auth-wrap">
       <section className="lumio-auth-card">
-        <p className="lumio-eyebrow">{shellLabels.createAccount}</p>
-        <h1>用邮箱开始</h1>
+        <span className="lumio-app-icon is-card" aria-hidden="true">
+          <img alt="" src="/lumio-icon.png" />
+        </span>
+        <p className="lumio-eyebrow">BestCodex</p>
+        <h1>创建账户</h1>
         <p className="lumio-auth-lead">
-          验证邮箱后设置密码即可完成注册，随后会自动完成官方 Codex 的连接准备。
+          用邮箱验证码完成注册，随后会自动完成官方 Codex 的连接准备。
         </p>
 
         {bannerCode === null ? null : (

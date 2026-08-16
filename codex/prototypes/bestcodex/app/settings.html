@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>设置 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>App · 设置</h1>
+          <p>正式图标落在账户行。各组细稿下一步再补</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="home.html">Codex Tab</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a href="cc-home.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+          </div>
+        </header>
+        <div class="win-main settings">
+          <aside class="side" aria-label="设置分组">
+            <a class="is-on" href="#account">账户</a>
+            <a href="#codex">Codex</a>
+            <a href="#cc">Claude</a>
+            <a href="#general">通用</a>
+            <a href="#support">支持</a>
+          </aside>
+          <main class="settings-main">
+            <h2>设置</h2>
+
+            <p class="group-label" id="account">账户</p>
+            <div class="group">
+              <div class="row">
+                <div class="settings-ident">
+                  <span class="app-icon is-md" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+                  <div>
+                    <div class="who">BestCodex</div>
+                    <span class="d">mary@example.com</span>
+                  </div>
+                </div>
+              </div>
+              <div class="row is-link">
+                <div class="k">退出登录</div>
+                <span class="v" style="color: var(--danger)">退出</span>
+              </div>
+            </div>
+
+            <p class="group-label" id="codex">Codex</p>
+            <div class="group">
+              <div class="row">
+                <div>
+                  <div class="k">已安装路径</div>
+                  <span class="d">/Applications/Codex.app</span>
+                </div>
+              </div>
+              <div class="row is-link">
+                <div class="k">重新检测</div>
+                <span class="chev">›</span>
+              </div>
+              <div class="row is-link">
+                <div class="k">手动选择</div>
+                <span class="chev">›</span>
+              </div>
+            </div>
+
+            <p class="group-label" id="cc">Claude</p>
+            <div class="group">
+              <a class="row is-link" href="../site/help.html">
+                <div>
+                  <div class="k">准备一台服务器</div>
+                  <span class="d">Claude Code 跑在你自己的机器上</span>
+                </div>
+                <span class="chev">›</span>
+              </a>
+            </div>
+
+            <p class="group-label" id="general">通用</p>
+            <div class="group">
+              <div class="row">
+                <div>
+                  <div class="k">开机启动</div>
+                  <span class="d">登录后打开 BestCodex</span>
+                </div>
+                <button class="toggle is-on" type="button" data-toggle aria-label="开机启动"><i></i></button>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="k">自动更新</div>
+                  <span class="d">有新版本时提示你，不会在后台安装</span>
+                </div>
+                <button class="toggle" type="button" disabled aria-label="自动更新"><i></i></button>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="k">遥测</div>
+                  <span class="d">使用数据收集尚未开放</span>
+                </div>
+                <button class="toggle" type="button" disabled aria-label="遥测"><i></i></button>
+              </div>
+            </div>
+
+            <p class="group-label" id="support">支持</p>
+            <div class="group">
+              <a class="row is-link" href="../site/help.html">
+                <div class="k">帮助中心</div>
+                <span class="chev">›</span>
+              </a>
+              <div class="row is-link">
+                <div class="k">导出诊断日志</div>
+                <span class="chev">›</span>
+              </div>
+              <div class="row is-link">
+                <div>
+                  <div class="k">恢复本机配置</div>
+                  <span class="d">整份还原到接管前的快照</span>
+                </div>
+                <span class="chev">›</span>
+              </div>
+              <div class="row">
+                <div class="k">版本</div>
+                <div class="v">1.2.46</div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

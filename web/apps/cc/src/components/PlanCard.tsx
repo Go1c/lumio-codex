@@ -9,7 +9,10 @@ export function PlanCard() {
       <div className="plan featured">
         <span className="tag">{PLAN.tag}</span>
         <h3>{PLAN.name}</h3>
-        <div className="price">{PLAN.price}</div>
+        <div className="price">
+          {PLAN.price}
+          <span className="price-unit"> / 月</span>
+        </div>
         <div className="per">{PLAN.per}</div>
         <ul>
           {PLAN.features.map((feature) => (
@@ -20,7 +23,10 @@ export function PlanCard() {
         <a className="btn btn-primary btn-block" href={purchaseUrl()} target="_blank" rel="noreferrer">
           立即订阅
         </a>
-        <p className="invite-note">{PLAN.inviteNote}</p>
+        <div className="invite-note">
+          <p>{PLAN.inviteLine}</p>
+          <p>{PLAN.inviteOnce}</p>
+        </div>
       </div>
     </div>
   );

@@ -1,4 +1,3 @@
-import { AlertTriangle } from "lucide-react";
 import { useState } from "react";
 
 import { lumioErrorCopy, lumioErrorLabel } from "../errors.ts";
@@ -79,8 +78,8 @@ export function RepairView({ errorCode, onResolved, onSignOut, pushToast }: Repa
   return (
     <section className="lumio-repair">
       <div className="lumio-repair-card">
-        <span className="lumio-panel-icon is-warning">
-          <AlertTriangle size={22} />
+        <span className="lumio-app-icon is-card" aria-hidden="true">
+          <img alt="" src="/lumio-icon.png" />
         </span>
         <div>
           <p className="lumio-eyebrow">启动检查发现问题</p>

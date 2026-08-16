@@ -1,6 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 
-import { SiteShell, ToastProvider, siteUrl } from "@lumio/ui";
+import { HelpArticle, HelpIndex, SiteShell, ToastProvider, siteUrl } from "@lumio/ui";
 
 import { Account } from "@/pages/Account";
 import { Authorize } from "@/pages/Authorize";
@@ -49,6 +49,8 @@ function Shell() {
         <Route path="/account" element={<Account />} />
         <Route path="/authorize" element={<Authorize />} />
         <Route path="/logout" element={<Logout />} />
+        <Route path="/help" element={<HelpIndex />} />
+        <Route path="/help/:slug" element={<HelpArticle />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SiteShell>

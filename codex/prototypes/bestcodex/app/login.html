@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 · BestCodex</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>App · 登录</h1>
+          <p>窄表单，系统 inset 输入框</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="signed-out.html">返回</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <div class="titlebar-name">BestCodex</div>
+          <div></div>
+        </header>
+        <main class="win-main">
+          <form class="form-wrap" action="provisioning.html">
+            <span class="app-icon is-card" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            <h2>登录</h2>
+            <p class="lede">使用你的 BestCodex 账号。</p>
+            <label for="email">邮箱</label>
+            <input class="field" id="email" type="email" value="mary@example.com" autocomplete="username" />
+            <label for="password">密码</label>
+            <input class="field" id="password" type="password" value="password" autocomplete="current-password" />
+            <div class="row-inline">
+              <span></span>
+              <a href="#">忘记密码？</a>
+            </div>
+            <button class="btn is-block" type="submit">登录</button>
+            <p class="note" style="text-align: center; margin-top: 16px">
+              没有账户？<a href="register.html">创建账户</a>
+            </p>
+          </form>
+        </main>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

@@ -1,3 +1,4 @@
+mod claude_commands;
 #[allow(dead_code)]
 mod commands;
 #[allow(dead_code)]
@@ -33,6 +34,12 @@ pub fn run() {
             .title(codex_plus_core::lumio::product::PRODUCT_NAME)
             .inner_size(1040.0, 720.0)
             .min_inner_size(760.0, 620.0);
+            #[cfg(target_os = "macos")]
+            {
+                main_window_builder = main_window_builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true);
+            }
             if let Some(icon) = app.default_window_icon().cloned() {
                 main_window_builder = main_window_builder.icon(icon)?;
             }
@@ -50,6 +57,7 @@ pub fn run() {
             lumio_commands::lumio_login_two_factor,
             lumio_commands::lumio_logout,
             lumio_commands::lumio_refresh_account,
+            lumio_commands::lumio_claude_entitlement,
             lumio_commands::lumio_provision_step,
             lumio_commands::lumio_takeover_health,
             lumio_commands::lumio_restore_config,
@@ -67,6 +75,12 @@ pub fn run() {
             lumio_commands::lumio_install_official_app,
             lumio_commands::lumio_official_app_status,
             lumio_commands::lumio_cancel_official_app,
+            claude_commands::lumio_claude_probe_connection,
+            claude_commands::lumio_claude_prepare_remote,
+            claude_commands::lumio_claude_first_sync,
+            claude_commands::lumio_claude_open_system_terminal,
+            claude_commands::lumio_claude_run_remote,
+            claude_commands::lumio_claude_list_local_files,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])
@@ -79,8 +93,8 @@ pub fn run() {
 }
 
 fn install_tray<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, TRAY_MENU_SHOW, "显示 Lumio Codex", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT, "退出 Lumio Codex", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, TRAY_MENU_SHOW, "显示 BestCodex", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, TRAY_MENU_QUIT, "退出 BestCodex", true, None::<&str>)?;
     let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
     let mut tray_builder = TrayIconBuilder::with_id(TRAY_ID)

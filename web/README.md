@@ -1,23 +1,26 @@
-# Lumio 统一官网门户（`web/`）
+# BestCodex 官网门户（`web/`）
 
-三个静态站点 + 两个共享包，npm workspaces 单仓管理。UI 基准是原 `cc.lumiogame.com`
+三个静态站点 + 两个共享包，npm workspaces 单仓管理。用户可见品牌是 **BestCodex**，站点
+[`https://bestcodex.app`](https://bestcodex.app)，帮助 [`https://bestcodex.app/help`](https://bestcodex.app/help)。
+门户本身仍是账号中心，不整站改成启动器。UI 基准是原 `cc.bestcodex.app`
 的克制蓝白风（设计 token 抽取自 `cchaven/apps/web/src/styles.css`），三站共用同一套外壳与组件。
 
 ## 站点与域名
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | `lumiogame.com` | 品牌总站 + **唯一**的注册 / 登录 / 2FA / 账户中心 + CC 桌面端授权页 `/authorize` |
-| `apps/cc` | `cc.lumiogame.com` | CC避风港产品站（介绍 / 定价 / 下载） |
-| `apps/codex` | `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载） |
+| `apps/portal` | `bestcodex.app` | 品牌总站 + **唯一**的注册 / 登录 / 2FA / 账户中心 + Claude / CC 桌面端授权页 `/authorize`；帮助 `/help` |
+| `apps/cc` | `cc.bestcodex.app` | Claude 产品站（用户可见名 Claude；仓库仍可叫 CC / cchaven）（介绍 / 定价 / 下载） |
+| `apps/codex` | `codex.bestcodex.app` | BestCodex / Codex 产品站（介绍 / 下载） |
 
 - 账号数据全部在 **Sub2API**（`https://api.lumio.games`）；本目录不引用 `cchaven/` 与 `codex/` 的任何代码。
 - 门户的 `/authorize` 是 **CC 桌面端浏览器登录的确认页**：桌面端带 PKCE 参数打开它，用户在账号中心
-  会话下确认后，门户带 Sub2API 令牌调 **CC 控制面**（`https://api.cc.lumiogame.com`）的
+  会话下确认后，门户带 Sub2API 令牌调 **CC 控制面**（`https://api.cc.bestcodex.app`）的
   `POST /api/v1/oauth/authorize` 换授权码，再按响应的 `redirect_to` 跳回本机回环端口。
   控制面仍是桌面端的 OAuth token issuer，但已不是身份提供方；令牌交换（`/oauth/token`）在桌面端完成，门户不参与。
 - 产品站**不做自己的登录**：账号入口一律跳门户并带 `?next=` 回跳参数（`portalAccountLinks()`）。
-- **充值统一跳 `https://api.lumio.games/purchase`**（Codex 与 CC 都是），不经过 cchaven 控制面的 billing。
+- **充值统一跳 `https://api.lumio.games/purchase`**（Codex 与 Claude 都是），不经过 cchaven 控制面的 billing。
+- 页脚须声明与 OpenAI、Anthropic 无从属。CORS 放行 `https://bestcodex.app` 与 DNS 仍待运维。
 
 ## 目录结构
 
@@ -32,8 +35,8 @@ web/
 │   └── auth/               # @lumio/auth：Sub2API 客户端、错误码映射、跨子域会话
 └── apps/
     ├── portal/             # 门户（含账号中心）
-    ├── cc/                 # CC避风港产品站
-    └── codex/              # Lumio Codex 产品站
+    ├── cc/                 # Claude 产品站（仓库仍可叫 CC）
+    └── codex/              # BestCodex / Codex 产品站
 ```
 
 共享包以**源码**形式被引用（`exports` 指向 `src/`，配合 Vite alias 与 tsconfig `paths`），
@@ -76,11 +79,11 @@ npm run lint    # eslint（可选，不在收口门槛内）
 | 变量 | 默认值 | 作用 | 使用方 |
 |------|--------|------|--------|
 | `VITE_API_BASE_URL` | `https://api.lumio.games` | Sub2API base，充值页地址也由它派生 | 三站 |
-| `VITE_CC_CONTROL_URL` | `https://api.cc.lumiogame.com` | CC 控制面 base，`/authorize` 的授权端点由它派生 | `apps/portal` |
-| `VITE_ROOT_DOMAIN` | `lumiogame.com` | 会话 Cookie 作用域与 `next` 回跳白名单的根域 | 三站 |
-| `VITE_PORTAL_URL` | `https://lumiogame.com` | 门户地址（账号入口跳转目标） | 三站 |
-| `VITE_CC_URL` | `https://cc.lumiogame.com` | CC 站地址 | 三站 |
-| `VITE_CODEX_URL` | `https://codex.lumiogame.com` | Codex 站地址 | 三站 |
+| `VITE_CC_CONTROL_URL` | `https://api.cc.bestcodex.app` | CC 控制面 base，`/authorize` 的授权端点由它派生 | `apps/portal` |
+| `VITE_ROOT_DOMAIN` | `bestcodex.app` | 会话 Cookie 作用域与 `next` 回跳白名单的根域 | 三站 |
+| `VITE_PORTAL_URL` | `https://bestcodex.app` | 门户地址（账号入口跳转目标） | 三站 |
+| `VITE_CC_URL` | `https://cc.bestcodex.app` | CC 站地址 | 三站 |
+| `VITE_CODEX_URL` | `https://codex.bestcodex.app` | Codex 站地址 | 三站 |
 | `VITE_CC_DOWNLOAD_ARM_URL` | 空 | CC 桌面端 Apple Silicon 安装包地址 | `apps/cc` |
 | `VITE_CC_DOWNLOAD_INTEL_URL` | 空 | CC 桌面端 Intel 安装包地址 | `apps/cc` |
 | `VITE_CC_VERSION` | 空 | CC 桌面端版本号（仅展示） | `apps/cc` |
@@ -108,17 +111,18 @@ GitHub Releases 页。同源指针在部署时由发布流水线的产物复制�
 ## 对服务端 / 运维的依赖
 
 以下四项**必须由服务端与运维配合**，前端无法单方面解决（操作细节见
-[`docs/ops/03-service-prerequisites.md`](../docs/ops/03-service-prerequisites.md)）：
+[`docs/ops/03-service-prerequisites.md`](../docs/ops/03-service-prerequisites.md)）。
+**CORS 与 DNS 仍待运维**，本仓不改生产：
 
-1. **Sub2API CORS**：`https://api.lumio.games` 需允许来源 `https://lumiogame.com`、
-   `https://cc.lumiogame.com`、`https://codex.lumiogame.com`（本地联调还需 `http://localhost:528x`），
+1. **Sub2API CORS**：`https://api.lumio.games` 需允许来源 `https://bestcodex.app`、
+   `https://cc.bestcodex.app`、`https://codex.bestcodex.app`（本地联调还需 `http://localhost:528x`），
    允许 `Authorization` 与 `Content-Type` 请求头。三站是纯静态站点，直连 Sub2API，没有同源反代。
-2. **CC 控制面 CORS**：`/authorize` 是跨源请求——页面在 `lumiogame.com`，授权端点在
-   `api.cc.lumiogame.com`。控制面须放行来源 `https://lumiogame.com`、允许 `Authorization` 与
+2. **CC 控制面 CORS**：`/authorize` 是跨源请求——页面在 `bestcodex.app`，授权端点在
+   `api.cc.bestcodex.app`。控制面须放行来源 `https://bestcodex.app`、允许 `Authorization` 与
    `Content-Type` 请求头，并正确响应 `OPTIONS` 预检。可信来源来自 `CCHAVEN_PORTAL_URL`
    （`config.Config.TrustedOrigins`），**漏配则 CC 桌面端在生产完全无法登录**，而 dev 放行
    localhost 任意端口，本地联调看不出来。
-3. **会话 Cookie 域**：令牌写在父域 Cookie（`Domain=.lumiogame.com`、`Path=/`、`SameSite=Lax`、
+3. **会话 Cookie 域**：令牌写在父域 Cookie（`Domain=.bestcodex.app`、`Path=/`、`SameSite=Lax`、
    https 下带 `Secure`），子站据此判断登录态。父域 Cookie 需要前端可读，因此**不是 HttpOnly**；
    风险由「短 access token 有效期 + 收紧 CORS + 三站同属一个可信根域」共同兜住。
    若日后接入统一网关，应改为 HttpOnly + 服务端下发，届时 `packages/auth/src/session.ts` 是唯一改动点。

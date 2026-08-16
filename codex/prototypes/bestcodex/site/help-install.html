@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>打不开应用 · BestCodex 帮助</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio">
+      <div class="toolbar">
+        <div>
+          <h1>帮助文章</h1>
+          <p>一篇的结构：现象 → 原因 → 步骤</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="help.html">帮助首页</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="window is-site">
+        <header class="titlebar site-bar">
+          <a class="brand" href="index.html">
+            <span class="app-icon" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+            BestCodex
+          </a>
+          <nav class="site-nav">
+            <a href="index.html#codex">Codex</a>
+            <a href="index.html#claude">Claude</a>
+            <a href="help.html">帮助</a>
+          </nav>
+          <div class="site-cta">
+            <a class="btn is-sm" href="index.html#downloads">下载</a>
+          </div>
+        </header>
+        <article class="article">
+          <p class="crumbs"><a href="help.html">帮助</a> / 安装</p>
+          <h1>macOS 提示应用已损坏</h1>
+          <p>内测包尚未签名。系统会把从浏览器下载的应用标上隔离标记，看起来像坏了，其实没有。</p>
+
+          <h2>原因</h2>
+          <p>Gatekeeper 拦截了未公证的应用。这不是 BestCodex 自己的错误提示。</p>
+
+          <h2>做法</h2>
+          <p>把应用放到「应用程序」后，在终端执行：</p>
+          <pre>xattr -cr "/Applications/BestCodex.app"</pre>
+          <p>然后再次打开。仍不行时，按住 Control 再点图标，选「打开」。</p>
+
+          <h2>仍不行</h2>
+          <p>回到 BestCodex，打开设置 → 支持 → 导出诊断日志，把文件发给我们。</p>
+        </article>
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

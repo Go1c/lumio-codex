@@ -13,8 +13,8 @@ import (
 // identityConfig 是身份收口到 Sub2API 之后的一份典型生产配置。
 func identityConfig() config.Config {
 	cfg := prodConfig()
-	cfg.PublicURL = "https://cc.lumiogame.com"
-	cfg.PortalURL = "https://lumiogame.com"
+	cfg.PublicURL = "https://cc.bestcodex.app"
+	cfg.PortalURL = "https://bestcodex.app"
 	cfg.Sub2APIBase = "https://api.lumio.games"
 	return cfg
 }
@@ -26,7 +26,7 @@ func call(t *testing.T, method, path string) *httptest.ResponseRecorder {
 
 	req := httptest.NewRequest(method, path, strings.NewReader("{}"))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://cc.lumiogame.com")
+	req.Header.Set("Origin", "https://cc.bestcodex.app")
 
 	rec := httptest.NewRecorder()
 	NewServer(nil, identityConfig()).Routes().ServeHTTP(rec, req)
@@ -87,10 +87,10 @@ func TestSelfServeAuthEndpointsAreGone(t *testing.T) {
 			if !ok {
 				t.Fatalf("响应缺少 details: %s", rec.Body.String())
 			}
-			if details["portal_url"] != "https://lumiogame.com/login" {
+			if details["portal_url"] != "https://bestcodex.app/login" {
 				t.Errorf("details.portal_url = %v", details["portal_url"])
 			}
-			if message, _ := errObj["message"].(string); !strings.Contains(message, "lumiogame.com") {
+			if message, _ := errObj["message"].(string); !strings.Contains(message, "bestcodex.app") {
 				t.Errorf("文案应指路到账号中心, got %q", message)
 			}
 		})

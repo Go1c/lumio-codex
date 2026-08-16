@@ -17,12 +17,12 @@ describe("serializeCookie", () => {
   it("生产域下写父域 Cookie 并带 Secure，三站共享同一会话", () => {
     const cookie = serializeCookie("lumio_at", "abc", {
       maxAge: 3600,
-      hostname: "cc.lumiogame.com",
+      hostname: "cc.bestcodex.app",
       secure: true,
     });
 
     expect(cookie).toContain("lumio_at=abc");
-    expect(cookie).toContain("Domain=.lumiogame.com");
+    expect(cookie).toContain("Domain=.bestcodex.app");
     expect(cookie).toContain("Path=/");
     expect(cookie).toContain("SameSite=Lax");
     expect(cookie).toContain("Max-Age=3600");

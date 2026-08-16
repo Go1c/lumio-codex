@@ -1,7 +1,9 @@
 # 02 · 旧官网（lumio.games）下线与过渡
 
-> **官网已经搬家。** Lumio Codex 的产品站现在是 `web/apps/codex`，域名
-> `codex.lumiogame.com`，构建与分发写在根 [`docs/ops/`](../../../docs/ops/README.md)：
+> **官网已经搬家。** 用户可见站点是 [`https://bestcodex.app`](https://bestcodex.app)，
+> 帮助 [`https://bestcodex.app/help`](https://bestcodex.app/help)。BestCodex 的 Codex
+> 产品站在 `web/apps/codex`，域名 `codex.bestcodex.app`，构建与分发写在根
+> [`docs/ops/`](../../../docs/ops/README.md)。**CORS / DNS 仍待运维。**
 >
 > - 构建与静态托管 → [`docs/ops/01-web-sites-deploy.md`](../../../docs/ops/01-web-sites-deploy.md)
 > - 域名、证书、301 → [`docs/ops/02-domains-and-dns.md`](../../../docs/ops/02-domains-and-dns.md)
@@ -31,17 +33,18 @@
 - 发内测包后，发布指针要同时更新新站的 `/latest-internal.json`
   （见 [`docs/ops/01-web-sites-deploy.md`](../../../docs/ops/01-web-sites-deploy.md) §4）；
   旧站读的是 CDN 上的同一份，不需要单独发布。
-- 桌面端里的官网链接已经指向新站（`crates/codex-plus-core/src/lumio/product.rs`
-  的 `SITE_BASE_URL` = `https://codex.lumiogame.com`），所以新装的客户端不会再把用户带回旧站。
+- 桌面端里的产品站链接已经指向新站（`crates/codex-plus-core/src/lumio/product.rs`
+  的 `SITE_BASE_URL` = `https://codex.bestcodex.app`），用户可见站点是
+  `https://bestcodex.app`，所以新装的客户端不会再把用户带回旧站。
 
 ## 3. 下线步骤
 
-前提：`codex.lumiogame.com` 已可用并通过验收（[`docs/ops/04-golive-checklist.md`](../../../docs/ops/04-golive-checklist.md) A / F 两节）。
+前提：`https://bestcodex.app` 已可用并通过验收（[`docs/ops/04-golive-checklist.md`](../../../docs/ops/04-golive-checklist.md) A / F 两节）。DNS 仍待运维。
 
-1. 在 DNS 侧把 `lumio.games` 改成 301 到 `https://codex.lumiogame.com/`
+1. 在 DNS 侧把 `lumio.games` 改成 301 到 `https://bestcodex.app/`
    （先跑一轮 302 验证，见 [`docs/ops/02-domains-and-dns.md`](../../../docs/ops/02-domains-and-dns.md) §3）。
 2. 仓库设置 → Pages：移除自定义域名 `lumio.games`，或直接把 Pages 关掉。
-3. 确认 `https://lumio.games/` 跳到新站，且新站的下载区正常。
+3. 确认 `https://lumio.games/` 跳到新站，且新站的下载区与 `https://bestcodex.app/help` 正常。
 4. `site/` 目录暂时保留（历史与文案参考，`latest-internal.json` 还是格式基准），
    不再作为部署来源；真要删除需单独决策。
 

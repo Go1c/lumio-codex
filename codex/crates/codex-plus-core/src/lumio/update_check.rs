@@ -189,7 +189,7 @@ mod tests {
         assert!(product::payment_url().starts_with("https://api.lumio.games/"));
         assert!(!product::payment_url().starts_with(product::SITE_BASE_URL));
         assert!(!product::payment_url().contains("lumio.games/payment"));
-        assert_eq!(product::SITE_BASE_URL, "https://codex.lumiogame.com");
+        assert_eq!(product::SITE_BASE_URL, "https://bestcodex.app");
         assert_ne!(
             product::SITE_BASE_URL,
             product::API_BASE_URL.trim_end_matches('/')

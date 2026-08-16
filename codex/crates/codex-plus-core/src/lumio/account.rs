@@ -137,15 +137,15 @@ mod tests {
     #[test]
     fn only_active_keys_in_an_allowed_group_are_reusable() {
         assert!(is_reusable(
-            &key("Lumio Codex Desktop", "active", Some(3), "2026-01-01"),
+            &key("BestCodex Desktop", "active", Some(3), "2026-01-01"),
             &[3]
         ));
         assert!(!is_reusable(
-            &key("Lumio Codex Desktop", "disabled", Some(3), "2026-01-01"),
+            &key("BestCodex Desktop", "disabled", Some(3), "2026-01-01"),
             &[3]
         ));
         assert!(!is_reusable(
-            &key("Lumio Codex Desktop", "active", Some(9), "2026-01-01"),
+            &key("BestCodex Desktop", "active", Some(9), "2026-01-01"),
             &[3]
         ));
         assert!(!is_reusable(
@@ -157,14 +157,14 @@ mod tests {
     #[test]
     fn a_key_with_no_group_is_reusable_when_the_account_has_no_group_restriction() {
         assert!(is_reusable(
-            &key("Lumio Codex Desktop", "active", None, "2026-01-01"),
+            &key("BestCodex Desktop", "active", None, "2026-01-01"),
             &[]
         ));
     }
 
     #[test]
     fn expiry_decides_reuse_and_an_unreadable_expiry_counts_as_expired() {
-        let base = key("Lumio Codex Desktop", "active", Some(3), "2026-01-01");
+        let base = key("BestCodex Desktop", "active", Some(3), "2026-01-01");
         for (expiry, reusable) in [
             ("2999-01-01T00:00:00Z", true),
             ("2020-01-01T00:00:00Z", false),
@@ -210,7 +210,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 0, "message": "success",
                 "data": { "items": [{
-                    "id": 1, "name": "Lumio Codex Desktop", "key": "sk-existing",
+                    "id": 1, "name": "BestCodex Desktop", "key": "sk-existing",
                     "status": "active", "group_id": 3, "created_at": "2026-01-01T00:00:00Z"
                 }], "total": 1, "page": 1, "page_size": 100, "pages": 1 }
             })))
@@ -239,9 +239,9 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 0, "message": "success",
                 "data": { "items": [
-                    { "id": 2, "name": "Lumio Codex Desktop", "key": "sk-newer",
+                    { "id": 2, "name": "BestCodex Desktop", "key": "sk-newer",
                       "status": "active", "group_id": 3, "created_at": "2026-05-01T00:00:00Z" },
-                    { "id": 1, "name": "Lumio Codex Desktop", "key": "sk-older",
+                    { "id": 1, "name": "BestCodex Desktop", "key": "sk-older",
                       "status": "active", "group_id": 3, "created_at": "2026-01-01T00:00:00Z" }
                 ], "total": 2, "page": 1, "page_size": 100, "pages": 1 }
             })))
@@ -270,7 +270,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "code": 0, "message": "success",
                 "data": { "items": [{
-                    "id": 1, "name": "Lumio Codex Desktop", "key": "sk-dead",
+                    "id": 1, "name": "BestCodex Desktop", "key": "sk-dead",
                     "status": "disabled", "group_id": 3, "created_at": "2026-01-01T00:00:00Z"
                 }], "total": 1, "page": 1, "page_size": 100, "pages": 1 }
             })))
@@ -280,7 +280,7 @@ mod tests {
             .and(path("/api/v1/keys"))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
                 "code": 0, "message": "success",
-                "data": { "id": 9, "name": "Lumio Codex Desktop", "key": "sk-fresh",
+                "data": { "id": 9, "name": "BestCodex Desktop", "key": "sk-fresh",
                           "status": "active", "group_id": 3, "created_at": "2026-08-01T00:00:00Z" }
             })))
             .mount(&server)
