@@ -19,7 +19,7 @@ metadata:
 - 窗口两个 Tab：默认 **Codex**，第二个 **Claude**（仓库仍可叫 cchaven / CC）。设置共用，不是第三个 Tab。
 - 服务暂不可用时，已登录且本机配置健康的用户仍可启动官方 Codex（离线降级态）。
 - 绝不静默覆盖用户本机 Codex 配置；冲突必须进无 Tab 的修复页。
-- 第一期不改：bundle id `games.lumio.codex`、本机状态目录、LaunchAgent 名、桌面 API Key 名 `Lumio Codex Desktop`。安装包**显示名** BestCodex；**文件名** `LumioCodex-*` 第一期可不动。
+- 不改：bundle id `games.lumio.codex`、LaunchAgent 名 `games.lumio.codex.plist`、二进制 `lumio-codex`。用户可见名是 **BestCodex**；本机状态目录跟 `PRODUCT_NAME`（`project_dirs("games", "Lumio", "BestCodex")`）；桌面 Key `BestCodex Desktop`。安装包**显示名** BestCodex；`.app` 目录 / Windows `InstallDir` / 注册表键仍为 `Lumio Codex`；制品文件名 `LumioCodex-*`。
 
 ## 设计
 
@@ -53,7 +53,7 @@ metadata:
 
 - 用户可见站点：[`https://bestcodex.app`](https://bestcodex.app)；帮助：[`https://bestcodex.app/help`](https://bestcodex.app/help)
 - 旧静态站（过渡）：[`codex/site/`](../../../codex/site/)（历史 `lumio.games`，待 301；DNS 仍待运维）
-- 产品站常量 `SITE_BASE_URL` 现为 `https://codex.bestcodex.app`；充值仍 `https://api.lumio.games/purchase`。Sub2API CORS 放行 `https://bestcodex.app` 仍待运维
+- 产品站常量 `SITE_BASE_URL` 现为 `https://bestcodex.app`；充值仍 `https://api.lumio.games/purchase`。Sub2API CORS 放行 `https://bestcodex.app` 仍待运维
 - 更新提醒：`lumio_check_update` 先对照 GitHub Releases latest，404（内测渠道只发 prerelease，latest API 对其恒 404）时回退读 `/releases` 列表（含 prerelease，跳过 draft，D-27）
 - 手动更新（D-30）：不做后台自动安装——检测到新版本时**右下角弹出常驻通知卡**，**绿色标记常驻**于导航「设置」角标、footer 版本旁入口与设置页「发现新版本」条目；任一入口触发 `lumio_download_update`，应用内下载平台安装包（资产按既有 CI 命名选：`-setup-*.exe` / `macos-<arch>-*.dmg`，文件名 `LumioCodex-*` 第一期可不动）到缓存 `updates/` 并打开安装向导，安装由用户在向导里完成。弹窗有频率闸门（`lumio/update_notice.rs`，偏好落 `state_dir()/update-notice.json`）：点「稍后」= 持久忽略该版本（下个版本才恢复弹窗）、同一天最多弹一次（UTC epoch 天）；闸门只静默弹窗，绿色标记常驻不受影响
 
