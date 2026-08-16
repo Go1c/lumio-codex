@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import { Banner, LoadingBlock, SectionCard, StatusDot, purchaseUrl, siteUrl } from "@lumio/ui";
 
+import { AffiliateCard } from "@/components/AffiliateCard";
 import { usePortalSession } from "@/state/session";
 
 const STATUS_TONE: Record<string, { tone: "green" | "orange" | "gray"; label: string }> = {
@@ -63,6 +64,11 @@ export function Account() {
               充值在 Sub2API 收银台完成，Lumio 官网与客户端都不收集任何付款信息。
             </p>
           </SectionCard>
+
+          <AffiliateCard
+            accessToken={session.accessToken}
+            onBalanceChanged={session.reload}
+          />
 
           <SectionCard title="在哪里使用" id="products">
             <p className="note">

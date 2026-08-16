@@ -21,6 +21,7 @@ export type LumioErrorCode =
   | "AUTH_2FA_UNAVAILABLE"
   | "AUTH_SESSION_EXPIRED"
   | "KEY_PROVISION_FAILED"
+  | "AFFILIATE_QUOTA_EMPTY"
   | "SERVICE_RATE_LIMITED"
   | "SERVICE_UNAVAILABLE";
 
@@ -70,6 +71,8 @@ const REASON_MAP: Record<string, LumioErrorCode> = {
   IDEMPOTENCY_KEY_CONFLICT: "KEY_PROVISION_FAILED",
   IDEMPOTENCY_IN_PROGRESS: "KEY_PROVISION_FAILED",
   IDEMPOTENCY_STORE_UNAVAILABLE: "KEY_PROVISION_FAILED",
+  // affiliate 系列目前只有门户消费（桌面端无返利界面），不与 errors.rs 对表。
+  AFFILIATE_QUOTA_EMPTY: "AFFILIATE_QUOTA_EMPTY",
 };
 
 const ERROR_TEXT: Record<LumioErrorCode, string> = {
@@ -88,6 +91,7 @@ const ERROR_TEXT: Record<LumioErrorCode, string> = {
   AUTH_2FA_UNAVAILABLE: "两步验证暂时不可用，请稍后再试。",
   AUTH_SESSION_EXPIRED: "登录已过期，请重新登录。",
   KEY_PROVISION_FAILED: "密钥开通失败，请稍后重试。",
+  AFFILIATE_QUOTA_EMPTY: "暂无可划转的返利额度。",
   SERVICE_RATE_LIMITED: "请求过于频繁，请稍后再试。",
   SERVICE_UNAVAILABLE: "服务暂时不可用，请检查网络后重试。",
 };

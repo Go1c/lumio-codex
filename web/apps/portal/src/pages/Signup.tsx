@@ -8,6 +8,7 @@ import { TwoFactorStep } from "@/components/TwoFactorStep";
 import { useCountdown } from "@/hooks/useCountdown";
 import { usePublicSettings } from "@/hooks/usePublicSettings";
 import { messageOf, useAuthOutcome } from "@/lib/authFlow";
+import { readAffiliateRef } from "@/lib/affiliateRef";
 import { withNext } from "@/lib/redirect";
 
 export function Signup() {
@@ -37,6 +38,7 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [invitationCode, setInvitationCode] = useState(params.get("invite") ?? "");
+  const [affCode] = useState(() => readAffiliateRef(params));
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -88,6 +90,7 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
           password,
           verifyCode: code.trim() || undefined,
           invitationCode: invitationCode.trim() || undefined,
+          affCode: affCode || undefined,
         }),
       ),
     );
@@ -109,6 +112,9 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
   return (
     <>
       {error && <Banner kind="error">{error}</Banner>}
+      {affCode && (
+        <Banner kind="info">已接受好友邀请（{affCode.toUpperCase()}），注册后自动绑定邀请关系。</Banner>
+      )}
       <form onSubmit={submit}>
         <fieldset className="form-fieldset" disabled={busy}>
           <TextField

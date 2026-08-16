@@ -16,6 +16,7 @@ const OPEN_SETTINGS = {
 
 afterEach(() => {
   clearSession();
+  sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -131,5 +132,28 @@ describe("注册页尊重 settings/public", () => {
 
     expect(await screen.findByText("该邮箱已注册，请直接登录。")).toBeInTheDocument();
     expect(screen.queryByText(/服务端原文/)).not.toBeInTheDocument();
+  });
+
+  it("邀请链接 ?aff= 的归因码随注册提交，页面有邀请提示", async () => {
+    const fetchMock = stubFetch({
+      "/settings/public": () => envelope(OPEN_SETTINGS),
+      "/auth/register": () => envelope(TOKENS),
+      "/auth/me": () => envelope(PROFILE),
+      "/user/aff": () => envelope({}),
+    });
+
+    renderApp("/register?aff=abc123xy");
+
+    expect(await screen.findByText(/已接受好友邀请（ABC123XY）/)).toBeInTheDocument();
+
+    await userEvent.type(await screen.findByLabelText("邮箱"), "user@example.com");
+    await userEvent.type(screen.getByLabelText("密码"), "pw12345678");
+    await userEvent.click(screen.getByRole("button", { name: "创建账号" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/auth/register"));
+      expect(call).toBeTruthy();
+      expect(JSON.parse(String(call?.[1]?.body)).aff_code).toBe("abc123xy");
+    });
   });
 });

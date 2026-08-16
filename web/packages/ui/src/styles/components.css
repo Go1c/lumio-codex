@@ -1280,6 +1280,18 @@
   font-family: ui-monospace, Menlo, Monaco, monospace;
   font-size: 13.5px;
 }
+/* 无符号紧凑列表（账户中心被邀列表等）。 */
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.plain-list li {
+  font-size: 13.5px;
+  color: var(--ink-strong);
+}
 
 /* ---------- 响应式：最小 375px 不横向溢出 ---------- */
 @media (max-width: 960px) {

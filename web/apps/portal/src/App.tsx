@@ -44,6 +44,8 @@ function Shell() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        {/* 邀请链接的入口别名：?aff= 归因码在注册页被捕获（lib/affiliateRef）。 */}
+        <Route path="/register" element={<Signup />} />
         <Route path="/account" element={<Account />} />
         <Route path="/authorize" element={<Authorize />} />
         <Route path="/logout" element={<Logout />} />

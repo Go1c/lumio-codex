@@ -192,6 +192,11 @@ invitee_username?, affiliate_code, success, failure_reason?, failure_message?, b
 
 ## 6. 对下游两卡的建议
 
+> **落地状态（2026-08-16）**：门户消费端已实现——注册归因 `apps/portal/src/lib/affiliateRef.ts`
+> （`/register?aff=` 捕获 → 注册载荷 `aff_code`），返利视图 `apps/portal/src/components/AffiliateCard.tsx`
+> + API 层 `web/packages/auth/src/client.ts`（`fetchAffiliate` / `fetchAffiliateLogs` /
+> `transferAffiliateQuota`）。**页面不存任何业务数值**，额度/比例/阶梯/rules 全部实时取接口。
+
 **门户归因接线**：
 - 邀请链接形如 `https://lumiogame.com/register?aff=<code>`，注册提交时原样放进 `aff_code`
   （服务端自动大写化，门户无需规范化）；`aff_fingerprint` 可选，不传不影响绑定。
