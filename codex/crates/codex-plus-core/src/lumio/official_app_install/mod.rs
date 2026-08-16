@@ -236,6 +236,7 @@ pub async fn start_official_app_install_with(
     let cache = crate::lumio::product::cache_dir().ok_or_else(|| DOWNLOAD_FAILED.to_string())?;
     std::fs::create_dir_all(&cache).map_err(|_| DOWNLOAD_FAILED.to_string())?;
     std::fs::create_dir_all(cache.join("official-app")).map_err(|_| DOWNLOAD_FAILED.to_string())?;
+    prepare_destination(destination.as_deref())?;
 
     let mirror_payload = fetch_mirror_payload(platform, arch).await;
     let session_for_detect = session_app.clone();
@@ -473,6 +474,38 @@ fn windows_portable_dest() -> Result<PathBuf, String> {
     Ok(PathBuf::from(local).join(PORTABLE_REL))
 }
 
+/// 用户自选的安装目录必须在下载开始前就建好并确认可写（Windows 便携解压与
+/// macOS .app 拷贝都到安装阶段才消费它）；失败在下载前暴露，不让 745MB 白下。
+fn prepare_destination(destination: Option<&Path>) -> Result<(), String> {
+    let Some(root) = destination else {
+        return Ok(());
+    };
+    if std::fs::create_dir_all(root).is_err() {
+        return Err(INSTALL_FAILED.to_string());
+    }
+    if !dir_is_writable(root) {
+        return Err(INSTALL_FAILED.to_string());
+    }
+    Ok(())
+}
+
+fn dir_is_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".lumio-write-probe-{}", std::process::id()));
+    // 上次异常退出可能残留同名探针：先清再试，残留不等于不可写。
+    let _ = std::fs::remove_file(&probe);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 async fn fetch_mirror_payload(platform: HostPlatform, arch: HostArch) -> Option<MirrorPayload> {
     let manifest = fetch_https_text(MIRROR_MANIFEST_URL).await?;
     let checksums = fetch_https_text(MIRROR_CHECKSUMS_URL).await;
@@ -546,6 +579,38 @@ mod tests {
             "http://tlu.dl.delivery.mp.microsoft.com.evil.com/file"
         ));
         assert!(!store_resolved_url_allowed("store:9PLM9XGG6VKS"));
+    }
+
+    /// 自选目录必须在 745MB 下载开始前就建好并确认可写：Windows 便携解压与
+    /// macOS .app 拷贝都在下载完成后才消费它，坏目录晚失败等于白下一遍。
+    #[test]
+    fn a_custom_destination_is_created_before_download() {
+        let home = tempfile::tempdir().unwrap();
+        let dest = home.path().join("MyApps").join("Codex");
+
+        prepare_destination(Some(&dest)).expect("缺失的多级目录要先创建");
+        assert!(dest.is_dir());
+
+        assert!(
+            prepare_destination(None).is_ok(),
+            "默认路线没有自选目录，直接放行"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unwritable_custom_destination_fails_before_download() {
+        let home = tempfile::tempdir().unwrap();
+        let locked = home.path().join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&locked, perms).unwrap();
+
+        assert_eq!(
+            prepare_destination(Some(&locked)),
+            Err(INSTALL_FAILED.to_string())
+        );
     }
 
     #[test]
