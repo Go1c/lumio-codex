@@ -35,6 +35,7 @@ affiliate 相关差异（fork `publish` vs 上游 `main`）：
 | `aff_fingerprint` 注册指纹 | 无 | 有（随注册传入，落邀请日志，防注册赠送薅羊毛） |
 | `invitation_registration_mode` | 无 | 有（`redeem_code` / `affiliate_link` / `both`） |
 | 用户侧邀请日志端点 | 无 | `GET /api/v1/user/aff/logs` |
+| 用户侧运行规则暴露（`rules`） | 无 | `GET /user/aff` → `data.rules`（[Go1c/sub2api#307](https://github.com/Go1c/sub2api/pull/307)，**待合入部署**，见 §3.1） |
 | 管理端 affiliate 路由 | 有（invites/rebates/transfers/users） | 同左 + `invite-logs` + 用户级码/比例管理 |
 | 被邀列表 100 条 | 有 | 有——**只是展示条数上限，不是绑定数上限**（两版都无绑定上限；修正蓝图） |
 
@@ -112,11 +113,29 @@ OAuth 注册同样收 `aff_code`：`/auth/oauth/*/complete-registration` 系列
 | `inviter_id` | int? | 本人绑定过的邀请人；无则省略 |
 | `aff_count` | int | 有效被邀人数（2） |
 | `aff_quota` / `aff_frozen_quota` / `aff_history_quota` | float | 可划转 / 冻结中 / 历史累计（均为 0） |
-| `invitee_recharge_total` | float | 全部被邀人充值总额（0） |
-| `effective_rebate_rate_percent` | float? | 当前实际生效比例（1 = L1） |
+| `invitee_recharge_total` | float | 被邀人**可返点付费订单**金额累计：含余额充值订单与外部支付订阅订单；不含手工余额兑换码、余额内扣订阅（实测 0） |
+| `effective_rebate_rate_percent` | float? | 当前实际生效比例（实测 1 = L1）；未配置或未达标时为 `null` |
 | `affiliate_tiers` | array | L1-L4 阶梯配置（见 §4 生产值） |
 | `current_affiliate_tier` / `next_affiliate_tier` | object? | 当前/下一档 |
 | `invitees` | array | 被邀人列表，**≤100 条**（展示上限），每项 `{user_id, email(脱敏), username, created_at, total_rebate}` |
+| `rules` | object | 全站当前生效运行规则（§3.1）；**生产须部署 PR #307 后才有此字段** |
+
+### 3.1 `rules` 对象（运行规则，门户文案唯一数据源）
+
+[Go1c/sub2api#307](https://github.com/Go1c/sub2api/pull/307)（`feat/user-aff-runtime-rules`，2026-08-16 实现、
+待合入 `dev` → release → `publish` → 生产部署）。取值走 `SettingService` 既有 getter
+（含默认值与 clamp，`affiliate_service.go` `affiliateRuntimeRules`），门户**不得硬编码**这些数值：
+
+| 字段 | 类型 | 语义 |
+| --- | --- | --- |
+| `rebate_freeze_hours` | int | 返利冻结小时，`0` = 不冻结 |
+| `rebate_duration_days` | int | 邀请关系有效天数，`0` = 永久有效 |
+| `rebate_per_invitee_cap` | float | 单被邀人返利上限（元），`0` = 无上限 |
+| `signup_bonus_enabled` | bool | 注册赠送开关 |
+| `signup_bonus_amount` | float | 注册赠送当前额度（开关关闭时仍透传配置值） |
+
+**兼容注意**：字段**缺失 = 后端旧版本**，门户按「未知」处理并隐藏对应文案——缺失 ≠ `0`，
+`0` 有明确语义（不冻结/永久/无上限）。部署前的生产响应没有 `rules` 键。
 
 邀请日志 item（用户侧已抹掉 `fingerprint_hash`/`ip_address`/`user_agent`，邮箱脱敏）：
 `{id, inviter_id?, inviter_email?(脱敏), inviter_username?, invitee_id?, invitee_email?(脱敏),
@@ -148,8 +167,9 @@ invitee_username?, affiliate_code, success, failure_reason?, failure_message?, b
 
 比例解析优先级（fork）：被邀充值总额（阶梯判定时含本笔）→ 邀请人**专属比例**
 （管理端按用户设置 `aff_rebate_rate_percent`，覆盖阶梯）→ 命中阶梯的比例；无任何可用比例则不计提。
-除扁平比例「未见」外，其余数值已于 2026-08-16 由运营从管理后台截图回填；后台再改配置，
-须同步更新本表并注明日期。
+下表「生产当前值」为 2026-08-16 运营管理后台截图快照；PR #307 部署后，
+冻结/有效期/上限/注册赠送均经 `GET /user/aff` 的 `data.rules` 动态读取（§3.1），
+届时快照仅作留档，以接口实时值为准。后台再改配置，运营更新本表并注明日期。
 
 管理端面（需 admin 鉴权，本次未测）：`GET /api/v1/admin/affiliates/{invite-logs,invites,rebates,transfers}`、
 `GET/PUT/DELETE /api/v1/admin/affiliates/users[...]`（改邀请码、设专属比例、批量设比例）、
@@ -184,9 +204,9 @@ invitee_username?, affiliate_code, success, failure_reason?, failure_message?, b
 - 「划转到余额」按钮调 `POST /aff/transfer`，把 `AFFILIATE_QUOTA_EMPTY` 映射为
   「暂无可划转额度」；成功后以响应里的 `balance` 刷新余额显示。
 - 展示比例用 `effective_rebate_rate_percent` + `affiliate_tiers`（阶梯进阶条件都在响应里）。
-- 冻结中额度（`aff_frozen_quota`）解释文案的**具体冻结时长**取决于管理端配置（§4），
-  上线前须运营回填，不得写死。当前冻结期配置为 0，`aff_frozen_quota` 恒为 0——
-  冻结区块做成条件渲染（值 > 0 才显示），后台改配置即自动生效，前端无需改代码。
+- 冻结/有效期/单被邀上限/注册赠送文案**一律读 `GET /user/aff` 的 `data.rules`**（§3.1），
+  不得硬编码；`aff_frozen_quota > 0` 才渲染冻结区块。部署前生产无 `rules` 字段——
+  门户须容忍缺失并按「未知」隐藏对应文案（缺失 ≠ 0，0 有明确语义）。
 
 **给产品/运营的动作项**（不替产品定数值，仅列待办）：
 1. ~~管理后台核对并回填 §4「未获取」项~~ **已完成（2026-08-16 截图回填）**；扁平比例管理界面未见、
@@ -215,7 +235,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' "$B/api/v1/user/aff"   # 401（需 Bea
 ## 8. 维护
 
 后台改 affiliate 配置（开关、阶梯、冻结期、赠送）→ 运营在 §4 回填新值并注明日期；
-后台升级 fork 版本 → 复查 §1 差异表是否仍成立。上游同步 merge 时重点看
+后台升级 fork 版本 → 复查 §1 差异表是否仍成立。[PR #307](https://github.com/Go1c/sub2api/pull/307)
+合入 publish 并部署生产后：`curl GET /user/aff`（带 Bearer）确认 `data.rules` 在场，
+删除本文「待部署」标注，§4 快照与接口值核对其一。上游同步 merge 时重点看
 `affiliate_service.go` / `auth_service.go` 注册路径与 `invitation_registration_mode` 的合并冲突
 （fork 在这三处有定制）。Sub2API 通用信封与 CORS 契约见
 [03-service-prerequisites.md](./03-service-prerequisites.md)。
