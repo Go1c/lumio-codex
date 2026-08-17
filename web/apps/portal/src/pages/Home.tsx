@@ -9,7 +9,7 @@ export function Home() {
 
       <section className="hero">
         <Reveal immediate>
-          <span className="hero-badge">Lumio · 统一账号中心</span>
+          <span className="hero-badge">BestCodex · 账号中心</span>
         </Reveal>
         <Reveal immediate delay={0.08}>
           <h1>
@@ -21,7 +21,7 @@ export function Home() {
         </Reveal>
         <Reveal immediate delay={0.16}>
           <p className="sub">
-            一个账号，一个 BestCodex 启动器——注册、登录、余额与充值统一在 Lumio 官网完成。
+            一个账号，一个 BestCodex 启动器——注册、登录、余额与充值都在这里完成。
           </p>
         </Reveal>
         <Reveal immediate delay={0.24}>
@@ -50,7 +50,7 @@ export function Home() {
             <ul className="panel-points">
               <li>一个启动器，一次下载</li>
               <li>Codex 与 Claude 两种工作方式</li>
-              <li>余额与充值走同一个 Lumio 账号</li>
+              <li>余额与充值走同一个 BestCodex 账号</li>
             </ul>
             <span className="panel-cta">
               进入 BestCodex
@@ -65,7 +65,7 @@ export function Home() {
       <Reveal>
         <section className="cta-band">
           <h2>开启你的 AI 开发新体验</h2>
-          <p>一个账号，解锁 BestCodex。现在加入 Lumio。</p>
+          <p>一个账号，解锁 BestCodex。现在加入。</p>
           <div className="ctas">
             <Link to="/signup" className="btn btn-primary btn-lg">
               免费创建账号

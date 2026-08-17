@@ -167,6 +167,28 @@ describe("SiteShell · 账号入口", () => {
 });
 
 describe("SiteShell · 门户", () => {
+  it("传入 BestCodex 时顶栏与页脚都用 BestCodex 标，不用 Lumio 字标", () => {
+    renderShell(
+      <SiteShell
+        brand={{ name: "BestCodex" }}
+        site="portal"
+        nav={[{ label: "产品", href: siteUrl("codex") }]}
+        accountLinks={{ login: "/login", signup: "/signup", account: "/account" }}
+      >
+        <p>门户内容</p>
+      </SiteShell>,
+    );
+
+    expect(document.querySelector(".site-header .logo")?.textContent).toMatch(/BestCodex/);
+    expect(screen.queryByRole("link", { name: /^Lumio$/ })).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/Lumio/)).toHaveLength(0);
+    expect(document.querySelector('img[src="/bestcodex-icon.jpg"]')).not.toBeNull();
+    expect(screen.getByRole("link", { name: "产品" })).toHaveAttribute(
+      "href",
+      "https://bestcodex.app/codex",
+    );
+  });
+
   it("门户仍用传入的品牌名，不改成 BestCodex", () => {
     renderShell(
       <SiteShell

@@ -84,8 +84,10 @@ export function SiteLink({
   );
 }
 
-function BrandMark({ site }: { site?: SiteId }) {
-  if (isProductSite(site)) return <BestCodexMark size={22} className="mark-bestcodex" />;
+function BrandMark({ site, name }: { site?: SiteId; name: string }) {
+  if (isProductSite(site) || name === "BestCodex") {
+    return <BestCodexMark size={22} className="mark-bestcodex" />;
+  }
   return <LumioLogo size={22} />;
 }
 
@@ -110,7 +112,7 @@ export function SiteShell({
       <header className={`site-header${product ? " site-header-product" : ""}`}>
         <SiteLink href={brand.href ?? "/"} className="logo">
           <span className="mark" aria-hidden="true">
-            <BrandMark site={site} />
+            <BrandMark site={site} name={brand.name} />
           </span>
           {brand.name}
           {brand.nameEn && <span className="logo-en">{brand.nameEn}</span>}
@@ -178,12 +180,12 @@ export function SiteShell({
             <div className="footer-brand">
               <span className="logo">
                 <span className="mark" aria-hidden="true">
-                  <LumioLogo size={22} />
+                  <BrandMark site={site} name={brand.name} />
                 </span>
-                Lumio
+                {brand.name}
               </span>
               <p className="footer-tagline">
-                一个账号，一个 BestCodex 启动器。注册、登录与余额统一在 Lumio 官网完成。
+                一个账号，一个 BestCodex 启动器。注册、登录与余额都在这里完成。
               </p>
             </div>
             <nav className="footer-links" aria-label="站点互链">
@@ -191,7 +193,7 @@ export function SiteShell({
             </nav>
           </div>
           <div className="footer-meta">
-            <span>© 2026 Lumio</span>
+            <span>© 2026 {brand.name}</span>
             {footerExtra}
           </div>
         </footer>

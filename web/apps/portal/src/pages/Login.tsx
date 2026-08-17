@@ -54,7 +54,6 @@ export function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <h2>登录</h2>
-        <p className="sub">一个 Lumio 账号，用于 BestCodex。</p>
         {error && <Banner kind="error">{error}</Banner>}
         <form onSubmit={submit}>
           <fieldset className="form-fieldset" disabled={busy}>

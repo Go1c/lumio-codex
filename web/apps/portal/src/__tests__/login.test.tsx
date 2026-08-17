@@ -23,8 +23,21 @@ describe("登录页", () => {
     renderApp("/login");
 
     expect((await screen.findAllByText(/BestCodex/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/一个 Lumio 账号/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/用于 BestCodex/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
     expect(screen.queryByText(/CC避风港/)).not.toBeInTheDocument();
+  });
+
+  it("登录页用户可见品牌是 BestCodex，不出现 Lumio 商标", async () => {
+    stubFetch({ "/auth/login": () => failure(401, "INVALID_CREDENTIALS") });
+    renderApp("/login");
+
+    expect(await screen.findByRole("heading", { name: "登录" })).toBeInTheDocument();
+    expect(document.querySelector(".site-header .logo")?.textContent).toMatch(/BestCodex/);
+    expect(screen.queryByRole("link", { name: /^Lumio$/ })).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/Lumio/)).toHaveLength(0);
+    expect(document.querySelector('img[src="/bestcodex-icon.jpg"]')).not.toBeNull();
   });
 
   it("凭据错误展示统一文案", async () => {

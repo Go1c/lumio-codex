@@ -28,8 +28,11 @@ describe("注册页尊重 settings/public", () => {
 
     renderApp("/signup");
 
+    expect(await screen.findByRole("heading", { name: "创建账号" })).toBeInTheDocument();
     expect((await screen.findAllByText(/BestCodex/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/创建 Lumio 账号/)).not.toBeInTheDocument();
+    expect(screen.queryAllByText(/Lumio/)).toHaveLength(0);
     expect(screen.queryByText(/CC避风港/)).not.toBeInTheDocument();
   });
 
@@ -157,6 +160,7 @@ describe("注册页尊重 settings/public", () => {
     renderApp("/register?aff=abc123xy");
 
     expect(await screen.findByText(/已接受好友邀请（ABC123XY）/)).toBeInTheDocument();
+    expect(screen.getByLabelText("邀请码（选填）")).toHaveValue("ABC123XY");
 
     await userEvent.type(await screen.findByLabelText("邮箱"), "user@example.com");
     await userEvent.type(screen.getByLabelText("密码"), "pw12345678");

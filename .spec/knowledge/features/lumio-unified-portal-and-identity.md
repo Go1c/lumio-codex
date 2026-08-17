@@ -26,7 +26,7 @@ metadata:
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | 独立门户（本期部署不变） | 品牌首页 + **唯一**的注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）+ CC 桌面端授权页 `/authorize` |
+| `apps/portal` | 独立门户（本期部署不变） | 用户可见品牌 **BestCodex**；**唯一**注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）+ CC 授权页 `/authorize`。账号源仍是 Sub2API |
 | `apps/bestcodex` | `bestcodex.app` | 产品站：`/` `/codex` 为 Codex 落地页，`/claude` 为 Claude 落地页，帮助 `/help` |
 
 两站是纯静态 SPA，共用 `packages/ui` 与 `packages/auth`。

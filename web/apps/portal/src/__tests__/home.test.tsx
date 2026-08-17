@@ -12,11 +12,12 @@ afterEach(() => {
 });
 
 describe("门户首页交叉文案", () => {
-  it("品牌仍是 Lumio，产品卡指向 BestCodex，不再写两个旧产品", () => {
+  it("品牌是 BestCodex，产品卡指向产品站，不再写两个旧产品", () => {
     stubFetch({});
     renderApp("/");
 
-    expect(screen.getByRole("link", { name: /^Lumio$/ })).toBeInTheDocument();
+    expect(document.querySelector(".site-header .logo")?.textContent).toMatch(/BestCodex/);
+    expect(screen.queryByRole("link", { name: /^Lumio$/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Lumio Codex")).not.toBeInTheDocument();
     expect(screen.queryByText("CC避风港")).not.toBeInTheDocument();
     expect(screen.getAllByText(/一个启动器/).length).toBeGreaterThan(0);

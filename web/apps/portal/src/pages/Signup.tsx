@@ -17,8 +17,7 @@ export function Signup() {
   return (
     <div className="auth-page">
       <div className="auth-card wide">
-        <h2>创建 Lumio 账号</h2>
-        <p className="sub">一个账号用于 BestCodex。</p>
+        <h2>创建账号</h2>
         {settings.status === "loading" && <LoadingBlock label="读取注册设置…" />}
         {settings.status === "error" && (
           <ErrorBlock message={settings.error ?? ""} onRetry={settings.reload} />
@@ -37,8 +36,10 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [invitationCode, setInvitationCode] = useState(params.get("invite") ?? "");
   const [affCode] = useState(() => readAffiliateRef(params));
+  const [invitationCode, setInvitationCode] = useState(
+    () => (params.get("invite") ?? "").trim() || (affCode ? affCode.toUpperCase() : ""),
+  );
   const [agreed, setAgreed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,7 +48,7 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
   const whitelist = settings.emailSuffixWhitelist;
 
   if (!settings.registrationEnabled) {
-    return <Banner kind="warn">当前未开放注册。如需账号，请联系 Lumio 客服。</Banner>;
+    return <Banner kind="warn">当前未开放注册。如需账号，请联系客服。</Banner>;
   }
 
   async function run(action: () => Promise<void>) {

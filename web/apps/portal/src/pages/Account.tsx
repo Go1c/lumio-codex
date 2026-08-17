@@ -61,7 +61,7 @@ export function Account() {
               </a>
             </div>
             <p className="note">
-              充值在 Sub2API 收银台完成，Lumio 官网与客户端都不收集任何付款信息。
+              充值在收银台完成，BestCodex 官网与客户端都不收集任何付款信息。
             </p>
           </SectionCard>
 
