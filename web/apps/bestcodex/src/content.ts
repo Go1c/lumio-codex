@@ -2,7 +2,7 @@
 
 export const TERMINAL_SHOT = [
   "BestCodex · Claude · my-project",
-  "attached  session cc-my-project  ·  tmux",
+  "attached  session my-project  ·  终端",
   "",
   "> claude",
   "Claude Code · my-project",

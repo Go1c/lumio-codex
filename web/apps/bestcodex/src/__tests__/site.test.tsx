@@ -90,6 +90,19 @@ describe("BestCodex 单站", () => {
     ).toBeTruthy();
   });
 
+  it("Claude 装饰终端不含 agent / tmux", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    expect(document.body.textContent).not.toMatch(/\btmux\b/i);
+    expect(document.body.textContent).not.toMatch(/\bagent\b/i);
+    expect(screen.getByText(/attached\s+session my-project/)).toBeInTheDocument();
+  });
+
   it("/pricing 站内落到 Claude 页定价锚点", () => {
     vi.stubGlobal(
       "fetch",
