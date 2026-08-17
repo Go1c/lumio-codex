@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
-import { useSession } from "@lumio/auth";
+import { isHandoffHash, useSession } from "@lumio/auth";
 import {
   HelpArticle,
   HelpIndex,
@@ -32,7 +32,8 @@ const useIsomorphicLayoutEffect = isServerRender() ? useEffect : useLayoutEffect
 function HashScroll() {
   const { hash, pathname } = useLocation();
   useIsomorphicLayoutEffect(() => {
-    if (!hash) return;
+    // 会话交接用的 hash 不是锚点，不能拿去找元素滚动。
+    if (!hash || isHandoffHash(hash)) return;
     const id = decodeURIComponent(hash.replace(/^#/, ""));
     if (!id) return;
     document.getElementById(id)?.scrollIntoView?.();

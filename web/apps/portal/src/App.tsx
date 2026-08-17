@@ -1,6 +1,15 @@
+import { useLayoutEffect } from "react";
 import { Route, Routes } from "react-router-dom";
 
-import { HelpArticle, HelpIndex, SiteShell, ToastProvider, siteUrl } from "@lumio/ui";
+import { sessionTokensForHandoff, withHandoff } from "@lumio/auth";
+import {
+  HelpArticle,
+  HelpIndex,
+  SiteShell,
+  ToastProvider,
+  bounceToCanonicalUrl,
+  siteUrl,
+} from "@lumio/ui";
 
 import { Account } from "@/pages/Account";
 import { Authorize } from "@/pages/Authorize";
@@ -16,10 +25,22 @@ export function App() {
   return (
     <SessionProvider>
       <ToastProvider>
+        <LegacyHostBounce />
         <Shell />
       </ToastProvider>
     </SessionProvider>
   );
+}
+
+/** 遗留门户主机（lumiogame.com）整页搬到规范账号 origin，有会话则带一次性 hash。 */
+function LegacyHostBounce() {
+  useLayoutEffect(() => {
+    const next = bounceToCanonicalUrl(window.location.href);
+    if (!next) return;
+    const tokens = sessionTokensForHandoff();
+    window.location.replace(tokens ? withHandoff(next, tokens) : next);
+  }, []);
+  return null;
 }
 
 function Shell() {
