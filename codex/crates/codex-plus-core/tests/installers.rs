@@ -331,9 +331,8 @@ fn lumio_macos_packager_creates_one_visible_internal_unsigned_app() {
         std::fs::read_to_string(repository.join("scripts/installer/macos/package-dmg.sh"))
             .expect("read Lumio macOS packager");
 
-    // First period: keep Lumio Codex.app on disk; CFBundleDisplayName is BestCodex.
-    assert!(macos_installer.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
-    assert!(!macos_installer.contains("APP_DIR=\"$STAGE/BestCodex.app\""));
+    assert!(macos_installer.contains("APP_DIR=\"$STAGE/BestCodex.app\""));
+    assert!(!macos_installer.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
     assert!(macos_installer.contains("<string>BestCodex</string>"));
     assert!(macos_installer.contains("games.lumio.codex"));
     assert!(macos_installer.contains("LumioCodex-${VERSION}-macos-${ARCH}-internal-unsigned.dmg"));

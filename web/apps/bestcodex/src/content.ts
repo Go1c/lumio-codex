@@ -33,6 +33,11 @@ export const PLAN = {
   inviteOnce: "首月免费（每个账号限一次）",
 };
 
+const MACOS_DAMAGED_FAQ: [string, string] = [
+  "打开时提示「已损坏，无法打开」怎么办？",
+  "这是 macOS 对未签名内测包的拦截，应用本身没有损坏。把 BestCodex 拖进「应用程序」后，打开「终端」执行：xattr -cr \"/Applications/BestCodex.app\"，然后再打开。仍不行时，按住 Control 再点图标，选「打开」。",
+];
+
 export const CLAUDE_FAQS: Array<[string, string]> = [
   [
     "有没有免费版？",
@@ -44,6 +49,7 @@ export const CLAUDE_FAQS: Array<[string, string]> = [
     "文件只在你的电脑和你的服务器之间同步。我们只存账号与工作区元数据。",
   ],
   ["可以随时取消吗？", "可以。订阅维持到本期结束，之后不再扣款。你的文件不会被删除。"],
+  MACOS_DAMAGED_FAQ,
 ];
 
 export const CODEX_FAQS: Array<[string, string]> = [
@@ -55,4 +61,5 @@ export const CODEX_FAQS: Array<[string, string]> = [
     "它会修改官方 Codex 吗？",
     "不会。官方应用保持原样；本工具只写入自己管理的连接配置，写入前先备份，随时可一键恢复。",
   ],
+  MACOS_DAMAGED_FAQ,
 ];

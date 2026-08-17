@@ -44,4 +44,12 @@ describe("帮助中心", () => {
     renderHelp("/help/login");
     expect(screen.getByRole("heading", { name: "登录" })).toBeInTheDocument();
   });
+
+  it("未签名篇按 BestCodex.app 给出隔离标记解除命令", () => {
+    renderHelp("/help/unsigned");
+
+    expect(screen.getByRole("heading", { name: "未签名" })).toBeInTheDocument();
+    expect(screen.getByText(/xattr -cr "\/Applications\/BestCodex.app"/)).toBeInTheDocument();
+    expect(screen.queryByText(/Lumio Codex\.app/)).not.toBeInTheDocument();
+  });
 });

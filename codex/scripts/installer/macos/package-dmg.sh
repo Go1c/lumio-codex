@@ -21,7 +21,7 @@ case "$STAGE_PARENT" in
 esac
 
 STAGE="$(mktemp -d "$STAGE_PARENT/lumio-codex-package.XXXXXX")"
-APP_DIR="$STAGE/Lumio Codex.app"
+APP_DIR="$STAGE/BestCodex.app"
 
 cleanup_stage() {
   case "$STAGE" in

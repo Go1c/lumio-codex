@@ -159,6 +159,24 @@ describe("Codex 页内容", () => {
     expect(start.nextElementSibling?.textContent ?? "").not.toMatch(/官方 Codex 需单独安装/);
   });
 
+  it("FAQ 说明 macOS 提示已损坏时怎么打开", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/");
+
+    const question = screen.getByRole("button", { name: /已损坏，无法打开/ });
+    expect(question).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(question);
+
+    expect(question).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/xattr -cr "\/Applications\/BestCodex.app"/)).toBeInTheDocument();
+    expect(screen.queryByText(/Lumio Codex\.app/)).not.toBeInTheDocument();
+  });
+
   it("下载区是三平台，没有长说明", () => {
     vi.stubGlobal(
       "fetch",

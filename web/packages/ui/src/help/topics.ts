@@ -26,7 +26,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     body: [
       "内测包尚未签名。系统会把从浏览器下载的应用标上隔离标记，看起来像坏了，其实没有。",
       "这是 Gatekeeper / SmartScreen 的拦截，不是 BestCodex 自己的错误提示。",
-      "第一期安装目录名仍是 Lumio Codex.app。放到「应用程序」后，在终端执行：xattr -cr \"/Applications/Lumio Codex.app\"",
+      "把应用放到「应用程序」后，在终端执行：xattr -cr \"/Applications/BestCodex.app\"",
       "然后再次打开。仍不行时，按住 Control 再点图标，选「打开」。",
     ],
   },

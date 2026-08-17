@@ -189,8 +189,8 @@ fn macos_packager_keeps_launcher_inside_single_visible_lumio_app() {
     assert!(script.contains("ARCH=\"${2:-$(uname -m)}\""));
     assert!(script.contains("BINARY_DIR=\"${BINARY_DIR:-$ROOT/target/release}\""));
     assert!(script.contains("LumioCodex-${VERSION}-macos-${ARCH}-internal-unsigned.dmg"));
-    // First period: keep Lumio Codex.app on disk; CFBundleDisplayName is BestCodex.
-    assert!(script.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
+    assert!(script.contains("APP_DIR=\"$STAGE/BestCodex.app\""));
+    assert!(!script.contains("APP_DIR=\"$STAGE/Lumio Codex.app\""));
     assert!(script.contains("Contents/Helpers/lumio-codex-launcher"));
     assert!(!script.contains("LSUIElement"));
     assert!(!script.contains("CFBundleURLTypes"));
