@@ -21,7 +21,17 @@ Your code stays between your machine and your server. We store account and works
 
 ## Install
 
-Supported platforms: **macOS 13+ (Apple silicon and Intel are separate builds)** and **Windows 10/11 64-bit**. One installer covers both tabs. Download from [bestcodex.app](https://bestcodex.app).
+Supported platforms: **macOS 13+ (Apple silicon and Intel are separate builds)** and **Windows 10/11 64-bit**. One installer covers both tabs. Download from [bestcodex.app](https://bestcodex.app), or install from the command line:
+
+```bash
+# macOS
+curl -fsSL https://bestcodex.app/install.sh | sh
+
+# Windows (PowerShell)
+irm https://bestcodex.app/install.ps1 | iex
+```
+
+The script picks the build for your chip, verifies it against `SHA256SUMS.txt`, installs into `/Applications`, and clears the quarantine attribute for you — so the `xattr -cr` step below is already handled. No sudo, and it writes no configuration.
 
 > **These are unsigned beta builds.** On macOS, Gatekeeper flags the quarantine attribute and reports *"BestCodex is damaged and can't be opened"* — the app is not actually damaged. Move it to `/Applications`, then clear the attribute:
 >

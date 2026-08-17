@@ -16,6 +16,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       "BestCodex 只有一个安装包。按你的系统选 Mac · Apple 芯片、Mac · Intel 或 Windows。",
       "macOS：打开 DMG，把 BestCodex 拖进「应用程序」，再从启动台打开。",
       "Windows：运行安装器，按提示完成。若 SmartScreen 拦截，先核对来源再继续。",
+      "想用命令行装：macOS 执行 curl -fsSL https://bestcodex.app/install.sh | sh，Windows 在 PowerShell 里执行 irm https://bestcodex.app/install.ps1 | iex。脚本按芯片挑包、校验 SHA256、装进「应用程序」，并替你清掉隔离标记。",
       "官方 Codex 应用不捆绑在这个安装包里，需要的话请另外安装。",
     ],
   },
@@ -28,6 +29,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       "这是 Gatekeeper / SmartScreen 的拦截，不是 BestCodex 自己的错误提示。",
       "把应用放到「应用程序」后，在终端执行：xattr -cr \"/Applications/BestCodex.app\"",
       "然后再次打开。仍不行时，按住 Control 再点图标，选「打开」。",
+      "用 curl -fsSL https://bestcodex.app/install.sh | sh 安装的话，这一步脚本已经做过了。",
     ],
   },
   {

@@ -170,6 +170,26 @@ rsync -a /tmp/latest-internal.json user@host:/var/www/lumio-codex/latest-interna
 `*-macos-x64-internal-unsigned.dmg`、`*-windows-x64-setup-internal-unsigned.exe`），
 改产物命名要同步改那里，否则下载卡片会退化成「暂无该平台包」。
 
+## 4.1 命令行安装脚本
+
+`web/apps/bestcodex/public/install.sh` 与 `install.ps1` 随站点静态发布，落点必须是根目录：
+
+```bash
+curl -fsSL https://bestcodex.app/install.sh | sh     # macOS
+irm https://bestcodex.app/install.ps1 | iex          # Windows PowerShell
+```
+
+它们**不读同源指针**，直接取 S3 那份 `latest-internal.json`（脚本可能在任何机器上跑，
+不保证站点已经同步），再按资产 URL 的同级目录取 `SHA256SUMS.txt` 校验。所以：
+
+- 改产物命名 → 除 `releases.ts` 外，这两个脚本也要改。
+- CI 不再产出 `SHA256SUMS.txt` → 脚本会**中止安装**（有意为之，不静默降级）。
+- 部署后核对：`curl -fsSL https://bestcodex.app/install.sh | BESTCODEX_DRY_RUN=1 sh`
+  应打印解析出的版本与包名，不下载任何东西。
+
+用 Homebrew cask 暂时不行：Homebrew 自 2026-09-01 起停止支持通不过 Gatekeeper 的 cask，
+未签名公证的包连自建 tap 也上不了。签名闸门开了再评估。
+
 ## 5. 发布节奏
 
 三站没有互相依赖，可以分别发。建议顺序：**先产品站、后门户**——产品站的账号入口只是

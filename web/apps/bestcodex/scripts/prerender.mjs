@@ -187,6 +187,23 @@ function llmsTxt(routes, markdown) {
     "or Anthropic. The desktop app is an AGPL-3.0 fork of the repository above. Unrelated services",
     "share this name; bestcodex.app is the only site belonging to this project.",
     "",
+    // 安装命令放在页面清单之前：Agent 被问「怎么装」时，最有用的回答是一条可直接执行的命令。
+    "## 安装 / Install",
+    "",
+    "```",
+    "# macOS (Apple silicon and Intel)",
+    "curl -fsSL https://bestcodex.app/install.sh | sh",
+    "",
+    "# Windows (PowerShell)",
+    "irm https://bestcodex.app/install.ps1 | iex",
+    "```",
+    "",
+    "脚本按芯片挑安装包、校验 SHA256、装进「应用程序」，并清掉未签名包的隔离标记。",
+    "The script picks the build for your chip, verifies SHA256, installs into /Applications, and",
+    "clears the quarantine attribute that unsigned builds carry. No sudo. It writes no configuration.",
+    "",
+    "macOS 13+ / Windows 10-11 x64. 官方 Codex 应用需单独安装 / the official Codex app is not bundled.",
+    "",
   ];
 
   for (const section of sections) {

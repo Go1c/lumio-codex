@@ -27,6 +27,16 @@ metadata:
 ## 硬事实（防漂移）
 
 - 公开签名发布闸门未开前，只分发 `-internal-unsigned`。
+- **改产物命名会同时打断三处消费者**：下载区的匹配正则
+  （`web/packages/ui/src/lib/releases.ts`）、命令行安装脚本
+  （`web/apps/bestcodex/public/install.sh`、`install.ps1`）、以及各处文档里的
+  `xattr -cr "/Applications/BestCodex.app"` 路径。脚本靠
+  `latest-internal.json` + 同目录的 `SHA256SUMS.txt` 工作，两者缺一即中止安装；
+  `src/__tests__/install-scripts.node.test.ts` 会把这些约定钉住。
+- **Homebrew cask 暂时走不通**，不是没做，是被签名闸门挡着：Homebrew 自
+  2026-09-01 起停止支持通不过 Gatekeeper 检查的 cask，并移除了
+  `--no-quarantine`。未签名公证的包上不了 cask（自建 tap 也一样），所以命令行
+  安装只能走自己的脚本。签名公证落地后再评估。
 - `api.lumio.games` 被存量桌面客户端硬编码，**不可变更**；账号 / 充值都在它那里。
 - 桌面端生产常量以 `codex/crates/codex-plus-core/src/lumio/product.rs` 为准
   （`API_BASE_URL` 未变，`SITE_BASE_URL` 为 `https://bestcodex.app`）。

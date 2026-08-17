@@ -11,7 +11,17 @@
 
 ## 安装
 
-支持 **macOS（Apple 芯片 / Intel）** 与 **Windows**，一个安装包覆盖两个 Tab。到 [bestcodex.app](https://bestcodex.app) 选择平台下载。
+支持 **macOS（Apple 芯片 / Intel）** 与 **Windows**，一个安装包覆盖两个 Tab。到 [bestcodex.app](https://bestcodex.app) 选择平台下载，或用一行命令：
+
+```bash
+# macOS
+curl -fsSL https://bestcodex.app/install.sh | sh
+
+# Windows（PowerShell）
+irm https://bestcodex.app/install.ps1 | iex
+```
+
+脚本按芯片挑安装包、对 `SHA256SUMS.txt` 校验、装进「应用程序」，并替你清掉隔离标记（免掉手动 `xattr -cr`）。不需要 sudo，不写任何配置。
 
 > **当前是未签名内测包。** macOS 会以隔离标记拦截，提示「已损坏，无法打开」——应用本身没坏。把它拖进「应用程序」后执行 `xattr -cr "/Applications/BestCodex.app"` 再打开；Windows 上 SmartScreen 会提示，核对来源后继续。详见 [未签名说明](https://bestcodex.app/help/unsigned)。
 

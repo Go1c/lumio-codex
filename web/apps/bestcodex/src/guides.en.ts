@@ -103,6 +103,15 @@ export const GUIDES_EN: Guide[] = [
         ],
       },
       {
+        heading: "One-line install",
+        body: [
+          "macOS: `curl -fsSL https://bestcodex.app/install.sh | sh`",
+          "Windows (PowerShell): `irm https://bestcodex.app/install.ps1 | iex`",
+          "The script picks the build for your chip, verifies it against `SHA256SUMS.txt`, installs into Applications, and clears the quarantine attribute for you — so you don't have to run `xattr -cr` by hand. No sudo, and it writes no configuration.",
+          "You still sign in inside the app afterwards; the command line only puts the app in place.",
+        ],
+      },
+      {
         heading: "What it changes on your machine",
         body: [
           "Only the connection config it manages, and it backs that up before writing. If existing local config conflicts with what needs to be written, the launcher takes you to a repair screen for confirmation rather than overwriting in place.",
@@ -141,6 +150,7 @@ export const GUIDES_EN: Guide[] = [
           "Move the app to Applications first, then run: `xattr -cr \"/Applications/BestCodex.app\"`.",
           "`-c` clears extended attributes and `-r` recurses through everything inside the bundle. The path has to match the actual app name.",
           "Don't run it across your whole Applications folder, and you don't need sudo.",
+          "To skip this step entirely, install with `curl -fsSL https://bestcodex.app/install.sh | sh`: the script verifies the SHA256, installs into Applications, and clears the quarantine attribute for you.",
         ],
       },
       {

@@ -127,6 +127,15 @@ export const GUIDES: Guide[] = [
         ],
       },
       {
+        heading: "命令行装（一行）",
+        body: [
+          "macOS：`curl -fsSL https://bestcodex.app/install.sh | sh`",
+          "Windows（PowerShell）：`irm https://bestcodex.app/install.ps1 | iex`",
+          "脚本按芯片挑安装包、对 `SHA256SUMS.txt` 校验、装进「应用程序」，并替你清掉隔离标记——也就是免掉手动 `xattr -cr` 那一步。不需要 sudo，不写任何配置。",
+          "装完还是要在 App 内登录一次；命令行只负责把应用放好。",
+        ],
+      },
+      {
         heading: "它到底改了我机器上的什么",
         body: [
           "只写它自己管理的连接配置，并在写入前备份。若本机已有配置与要写的内容冲突，启动器会进入修复页让你确认，不会在主窗口里硬改。",
@@ -165,6 +174,7 @@ export const GUIDES: Guide[] = [
           "先把应用拖进「应用程序」，再执行：`xattr -cr \"/Applications/BestCodex.app\"`。",
           "`-c` 清空扩展属性，`-r` 递归到包内所有文件。路径要和实际应用名一致。",
           "不建议对整个「应用程序」目录批量执行，也不需要 sudo。",
+          "不想手动敲这一步，可以用 `curl -fsSL https://bestcodex.app/install.sh | sh` 安装：脚本会先校验 SHA256，再装进「应用程序」并清掉隔离标记。",
         ],
       },
       {
