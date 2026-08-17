@@ -186,6 +186,10 @@ irm https://bestcodex.app/install.ps1 | iex          # Windows PowerShell
 - CI 不再产出 `SHA256SUMS.txt` → 脚本会**中止安装**（有意为之，不静默降级）。
 - 部署后核对：`curl -fsSL https://bestcodex.app/install.sh | BESTCODEX_DRY_RUN=1 sh`
   应打印解析出的版本与包名，不下载任何东西。
+- **部署前这条命令是危险的**：2026-08-17 实测线上仍带 `/* → index.html 200` 兜底，
+  `/install.sh` 返回的是 `content-type: text/html` 的首页，管道会把一段 HTML 喂给 `sh`。
+  所以对外公布安装命令之前，先确认 `curl -sI https://bestcodex.app/install.sh` 的
+  content-type 不是 `text/html`。
 
 用 Homebrew cask 暂时不行：Homebrew 自 2026-09-01 起停止支持通不过 Gatekeeper 的 cask，
 未签名公证的包连自建 tap 也上不了。签名闸门开了再评估。
