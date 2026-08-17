@@ -19,9 +19,9 @@ const MANIFEST = {
   ],
 };
 
-function renderApp() {
+function renderApp(path = "/") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <App />
     </MemoryRouter>,
   );
@@ -117,6 +117,34 @@ describe("Codex 产品站", () => {
     await waitFor(() =>
       expect(screen.getAllByText(/CDN 暂不可用/).length).toBeGreaterThanOrEqual(3),
     );
+  });
+
+  it("页脚链到隐私政策与服务条款，并保留 AGPL 说明", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp();
+
+    expect(screen.getByRole("link", { name: "隐私政策" })).toHaveAttribute("href", "/privacy");
+    expect(screen.getByRole("link", { name: "服务条款" })).toHaveAttribute("href", "/terms");
+    expect(screen.getByText(/AGPL-3.0-only/)).toBeInTheDocument();
+  });
+
+  it.each(["/privacy", "/terms"] as const)("%s 披露本机改写与不捆绑官方应用", (path) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp(path);
+
+    expect(screen.getByText(/config\.toml/)).toBeInTheDocument();
+    expect(screen.getAllByText(/auth\.json/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/api\.lumio\.games/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不捆绑/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/不修改官方应用/)).toBeInTheDocument();
   });
 
   it("账号入口回门户并带 next", () => {
