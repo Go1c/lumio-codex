@@ -588,20 +588,24 @@ a:focus-visible {
   border-right: 1px solid var(--line);
 }
 
-.lumio-settings-side a {
+.lumio-settings-side button {
   display: block;
+  width: 100%;
   padding: 7px 10px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: var(--ink);
+  font: inherit;
   font-size: 13px;
-  text-decoration: none;
+  text-align: left;
 }
 
-.lumio-settings-side a:hover {
+.lumio-settings-side button:hover {
   background: var(--pill);
 }
 
-.lumio-settings-side a.is-on {
+.lumio-settings-side button.is-on {
   background: var(--field);
   font-weight: 560;
 }

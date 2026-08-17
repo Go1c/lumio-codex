@@ -401,6 +401,20 @@ test("settings is five groups rather than a third product tab", async () => {
   assert.match(view, /支持/);
 });
 
+test("settings sidebar switches panes instead of jumping to in-page anchors", async () => {
+  const view = await readFile(new URL("./views/SettingsView.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(view, /href="#account"/);
+  assert.doesNotMatch(view, /href="#codex"/);
+  assert.doesNotMatch(view, /href="#claude"/);
+  assert.doesNotMatch(view, /href="#general"/);
+  assert.doesNotMatch(view, /href="#support"/);
+  assert.match(view, /role="tablist"/);
+  assert.match(view, /role="tab"/);
+  assert.match(view, /role="tabpanel"/);
+  assert.match(view, /useState<SettingsSection>\("account"\)/);
+});
+
 /**
  * 只断言「离线 / 修复文案存在」证明不了用户走得到它们——上一轮离线缺口正是这样通过审查的。
  * 这里把启动编排整段取出来断言，语义是：这两个阶段的入口与探活 / 健康检查的结果绑在同一处决策里。
