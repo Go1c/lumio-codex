@@ -3,11 +3,12 @@ import { ProductDownloads, Reveal } from "@lumio/ui";
 import { Faq } from "@/components/Faq";
 import { PlanCard } from "@/components/PlanCard";
 import { CLAUDE_FAQS, TERMINAL_SHOT, VALUES } from "@/content";
+import { CLAUDE_FAQS_EN, CLAUDE_HERO_EN, TERMINAL_SHOT_EN, VALUES_EN } from "@/content.en";
 
-function TerminalShot() {
-  const lastIndex = TERMINAL_SHOT.length - 1;
+function TerminalShot({ lines, label }: { lines: string[]; label: string }) {
+  const lastIndex = lines.length - 1;
   return (
-    <div className="term-window" role="img" aria-label="Claude 终端界面">
+    <div className="term-window" role="img" aria-label={label}>
       <div className="term-bar" aria-hidden="true">
         <span className="term-dot r" />
         <span className="term-dot y" />
@@ -15,7 +16,7 @@ function TerminalShot() {
         <span className="term-title">claude · my-project</span>
       </div>
       <div className="term-body" aria-hidden="true">
-        {TERMINAL_SHOT.map((line, index) => (
+        {lines.map((line, index) => (
           <div
             key={index}
             className="term-line"
@@ -36,39 +37,48 @@ function TerminalShot() {
   );
 }
 
-export function ClaudeHome() {
+export function ClaudeHome({ locale = "zh" }: { locale?: "zh" | "en" } = {}) {
+  const en = locale === "en";
+  const hero = CLAUDE_HERO_EN;
+  const values = en ? VALUES_EN : VALUES;
+
   return (
     <>
       <div className="hero-split">
         <section className="hero is-claude">
           <Reveal immediate>
-            <p className="hero-kicker">为了防封</p>
+            <p className="hero-kicker">{en ? hero.kicker : "为了防封"}</p>
           </Reveal>
           <Reveal immediate delay={0.08}>
             <h1>
-              安心使用 Claude Code
+              {en ? hero.titleLead : "安心使用 Claude Code"}
               <br />
-              <em>不再担心封号</em>
+              <em>{en ? hero.titleEm : "不再担心封号"}</em>
             </h1>
           </Reveal>
           <Reveal immediate delay={0.16}>
             <p className="sub">
-              官方 Claude Code 跑在你自己的服务器上——独立环境、固定 IP、持久会话。文件双向同步，编辑体验如同本机。
+              {en
+                ? hero.sub
+                : "官方 Claude Code 跑在你自己的服务器上——独立环境、固定 IP、持久会话。文件双向同步，编辑体验如同本机。"}
             </p>
           </Reveal>
           <Reveal immediate delay={0.24}>
             <div className="ctas">
               <a className="btn btn-primary btn-lg" href="#downloads">
-                下载 BestCodex
+                {en ? hero.download : "下载 BestCodex"}
               </a>
               <a className="btn btn-secondary btn-lg" href="#pricing">
-                查看定价
+                {en ? hero.pricing : "查看定价"}
               </a>
             </div>
           </Reveal>
         </section>
         <Reveal immediate delay={0.2} y={36}>
-          <TerminalShot />
+          <TerminalShot
+            lines={en ? TERMINAL_SHOT_EN : TERMINAL_SHOT}
+            label={en ? hero.termLabel : "Claude 终端界面"}
+          />
         </Reveal>
       </div>
 
@@ -76,11 +86,11 @@ export function ClaudeHome() {
         <Reveal>
           <span className="section-kicker">Why</span>
           <h2 className="section-title" id="why-title">
-            防封，以及同步
+            {en ? hero.whyTitle : "防封，以及同步"}
           </h2>
         </Reveal>
         <div className="value-cols">
-          {VALUES.map((value, index) => (
+          {values.map((value, index) => (
             <Reveal className="card" key={value.title} delay={index * 0.1}>
               <h3>{value.title}</h3>
               <p>{value.body}</p>
@@ -93,17 +103,17 @@ export function ClaudeHome() {
         <Reveal>
           <span className="section-kicker">Pricing</span>
           <h2 className="section-title" id="price-title">
-            简单定价
+            {en ? hero.priceTitle : "简单定价"}
           </h2>
         </Reveal>
         <Reveal delay={0.08}>
-          <PlanCard />
+          <PlanCard locale={locale} />
         </Reveal>
       </section>
 
-      <ProductDownloads />
+      <ProductDownloads locale={locale} />
 
-      <Faq items={CLAUDE_FAQS} />
+      <Faq items={en ? CLAUDE_FAQS_EN : CLAUDE_FAQS} />
     </>
   );
 }

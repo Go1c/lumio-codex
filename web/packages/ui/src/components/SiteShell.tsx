@@ -41,6 +41,8 @@ export interface SiteShellProps {
    * 评估页面，所以指南、帮助与语言版本必须每页可达。
    */
   footerLinks?: SiteNavItem[];
+  /** 产品切换的落点。英文页指 `/en` 与 `/en/claude`，默认中文路径。 */
+  productHrefs?: { codex: string; cc: string };
   footerExtra?: ReactNode;
   /** 产品站顶栏「下载」的落点。帮助页应指回首页锚点。 */
   downloadHref?: string;
@@ -148,6 +150,7 @@ export function SiteShell({
   footerLinks = [],
   footerExtra,
   downloadHref = "/#downloads",
+  productHrefs = { codex: "/codex", cc: "/claude" },
   helpHref = "/help",
   labels,
   children,
@@ -173,7 +176,7 @@ export function SiteShell({
             {PRODUCT_SWITCH.map((item) => (
               <Link
                 key={item.id}
-                to={item.to}
+                to={productHrefs[item.id]}
                 aria-current={site === item.id ? "page" : undefined}
               >
                 {item.label}

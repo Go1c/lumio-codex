@@ -2,8 +2,9 @@ import { ProductDownloads, Reveal } from "@lumio/ui";
 
 import { Faq } from "@/components/Faq";
 import { CODEX_FAQS } from "@/content";
+import { CODEX_FAQS_EN, CODEX_HERO_EN, CODEX_STEPS_EN } from "@/content.en";
 
-const STEPS = [
+const STEPS_ZH = [
   {
     num: "01",
     title: "下载安装",
@@ -21,32 +22,38 @@ const STEPS = [
   },
 ];
 
-export function CodexHome() {
+export function CodexHome({ locale = "zh" }: { locale?: "zh" | "en" } = {}) {
+  const en = locale === "en";
+  const steps = en ? CODEX_STEPS_EN : STEPS_ZH;
+  const hero = CODEX_HERO_EN;
+
   return (
     <>
       <section className="hero" id="top">
         <Reveal immediate>
-          <p className="hero-kicker">官方原版</p>
+          <p className="hero-kicker">{en ? hero.kicker : "官方原版"}</p>
         </Reveal>
         <Reveal immediate delay={0.08}>
           <h1>
-            更快开始使用
+            {en ? hero.titleLead : "更快开始使用"}
             <br />
-            <em>官方 Codex</em>
+            <em>{en ? hero.titleEm : "官方 Codex"}</em>
           </h1>
         </Reveal>
         <Reveal immediate delay={0.16}>
           <p className="sub">
-            帮你完成注册、登录和本机配置。你使用的始终是官方 Codex 应用，不捆绑、不修改。
+            {en
+              ? hero.sub
+              : "帮你完成注册、登录和本机配置。你使用的始终是官方 Codex 应用，不捆绑、不修改。"}
           </p>
         </Reveal>
         <Reveal immediate delay={0.24}>
           <div className="ctas">
             <a className="btn btn-primary btn-lg" href="#downloads">
-              下载 BestCodex
+              {en ? hero.download : "下载 BestCodex"}
             </a>
             <a className="btn btn-secondary btn-lg" href="#faq">
-              常见问题
+              {en ? hero.faq : "常见问题"}
             </a>
           </div>
         </Reveal>
@@ -56,11 +63,11 @@ export function CodexHome() {
         <Reveal>
           <span className="section-kicker">Get started</span>
           <h2 className="section-title" id="start-title">
-            三步开始
+            {en ? hero.startTitle : "三步开始"}
           </h2>
         </Reveal>
         <div className="steps3">
-          {STEPS.map((step, index) => (
+          {steps.map((step, index) => (
             <Reveal className="step" key={step.num} delay={index * 0.1}>
               <div className="num" aria-hidden="true">
                 {step.num}
@@ -72,9 +79,9 @@ export function CodexHome() {
         </div>
       </section>
 
-      <ProductDownloads />
+      <ProductDownloads locale={locale} />
 
-      <Faq items={CODEX_FAQS} defaultOpen={0} />
+      <Faq items={en ? CODEX_FAQS_EN : CODEX_FAQS} defaultOpen={0} />
     </>
   );
 }

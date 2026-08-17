@@ -10,6 +10,7 @@ import { CDN_LATEST_URL, PLATFORMS } from "@lumio/ui";
 
 // `?raw` 让脚本原样进来，不必给这个包引入 node 类型。
 import powershell from "../../public/install.ps1?raw";
+import installPlain from "../../public/install?raw";
 import shell from "../../public/install.sh?raw";
 
 describe("macOS 安装脚本", () => {
@@ -54,6 +55,10 @@ describe("macOS 安装脚本", () => {
 
   it("应用包名与帮助中心让用户敲的路径一致", () => {
     expect(shell).toContain('APP_NAME="BestCodex.app"');
+  });
+
+  it("无扩展名的 /install 与 install.sh 同文——.sh 在部分托管上会被拦", () => {
+    expect(installPlain).toBe(shell);
   });
 });
 

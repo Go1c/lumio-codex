@@ -13,6 +13,7 @@
 import { HELP_TOPICS, productSiteOrigin } from "@lumio/ui";
 
 import { CLAUDE_FAQS, CODEX_FAQS, PLAN } from "@/content";
+import { CLAUDE_FAQS_EN, CODEX_FAQS_EN, PLAN_EN } from "@/content.en";
 import { GUIDES } from "@/guides";
 import { GUIDES_EN } from "@/guides.en";
 
@@ -97,30 +98,39 @@ function website(): Record<string, unknown> {
  * 桌面启动器本体。`offers` 只在 Claude 页给出：Claude 侧是充值制（¥19.9 为参考额度，
  * 不是自动续费包月），Codex 侧走账户余额、营销站不报价，所以首页不带 offers。
  */
-function softwareApplication(withOffer: boolean): Record<string, unknown> {
+function softwareApplication(
+  withOffer: boolean,
+  locale: Locale = "zh-CN",
+): Record<string, unknown> {
+  const en = locale === "en";
   const base: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     name: "BestCodex",
     applicationCategory: "DeveloperApplication",
     operatingSystem: "macOS 13+, Windows 10/11 64-bit",
-    url: absoluteUrl("/"),
-    downloadUrl: absoluteUrl("/#downloads"),
-    softwareHelp: absoluteUrl("/help"),
+    url: absoluteUrl(en ? "/en" : "/"),
+    downloadUrl: absoluteUrl(en ? "/en#downloads" : "/#downloads"),
+    softwareHelp: absoluteUrl(en ? "/en/guides" : "/help"),
     isBasedOn: UPSTREAM_URL,
     license: "https://www.gnu.org/licenses/agpl-3.0.html",
-    description:
-      "一个启动器，两种工作方式：零配置接入官方 Codex，以及把官方 Claude Code 跑在你自己的服务器上。",
+    inLanguage: locale,
+    description: en
+      ? "One launcher, two ways to work: official Codex with zero configuration, and official Claude Code on your own server."
+      : "一个启动器，两种工作方式：零配置接入官方 Codex，以及把官方 Claude Code 跑在你自己的服务器上。",
     publisher: { "@type": "Organization", name: "BestCodex", url: absoluteUrl("/") },
   };
 
   if (withOffer) {
+    const plan = en ? PLAN_EN : PLAN;
     base.offers = {
       "@type": "Offer",
-      price: PLAN.price.replace(/[^\d.]/g, ""),
+      price: plan.price.replace(/[^\d.]/g, ""),
       priceCurrency: "CNY",
-      url: absoluteUrl("/claude#pricing"),
-      description: `${PLAN.name}：按用量计费，${PLAN.price} 为参考额度，不是自动续费的包月。`,
+      url: absoluteUrl(en ? "/en/claude#pricing" : "/claude#pricing"),
+      description: en
+        ? `${plan.name}: usage-based, ${plan.price} is a reference top-up, not an auto-renewing monthly plan.`
+        : `${plan.name}：按用量计费，${plan.price} 为参考额度，不是自动续费的包月。`,
     };
   }
   return base;
@@ -162,10 +172,16 @@ function techArticle(fields: {
 const HOME_TITLE = "BestCodex · 零配置用上官方 Codex";
 const HOME_DESCRIPTION =
   "下载一次、登录一次，本机配置自动写好，启动的是官方 Codex 应用本身。窗口里另一个 Tab 把官方 Claude Code 跑在你自己的服务器上。";
+const HOME_TITLE_EN = "BestCodex · official Codex with zero configuration";
+const HOME_DESCRIPTION_EN =
+  "Sign in once and the local config is written for you. What launches is the official Codex app. A second tab runs Claude Code on your own server.";
 
 const CLAUDE_TITLE = "把 Claude Code 跑在自己的服务器上 · BestCodex";
 const CLAUDE_DESCRIPTION =
   "官方 Claude Code 跑在你自己的服务器上：独立环境、固定 IP、持久会话，显著降低封号风险。文件双向同步，机密文件默认不同步，冲突不静默覆盖。";
+const CLAUDE_TITLE_EN = "Run Claude Code on your own server · BestCodex";
+const CLAUDE_DESCRIPTION_EN =
+  "Official Claude Code on your server: isolated environment, stable IP, persistent sessions. Two-way sync; secrets stay out; no silent overwrite.";
 
 function staticRoutes(): RouteSeo[] {
   const routes: Omit<RouteSeo, "locale">[] = [
@@ -179,6 +195,7 @@ function staticRoutes(): RouteSeo[] {
       priority: 1,
       jsonLd: [organization(), website(), softwareApplication(false), faqPage(CODEX_FAQS)],
       llmsNote: "产品首页：BestCodex 是什么、三步开始、下载与常见问题。",
+      alternatePath: "/en",
     },
     {
       // 与首页同内容，canonical 指回 `/`，避免重复内容分散权重。
@@ -201,6 +218,31 @@ function staticRoutes(): RouteSeo[] {
       priority: 0.9,
       jsonLd: [softwareApplication(true), faqPage(CLAUDE_FAQS)],
       llmsNote: "Claude Tab：防封思路、双向同步、定价（充值制）与常见问题。",
+      alternatePath: "/en/claude",
+    },
+    {
+      path: "/en",
+      title: HOME_TITLE_EN,
+      description: HOME_DESCRIPTION_EN,
+      canonicalPath: "/en",
+      lastmod: LAST_REVIEWED,
+      changefreq: "weekly",
+      priority: 1,
+      jsonLd: [softwareApplication(false, "en"), faqPage(CODEX_FAQS_EN)],
+      llmsNote: "English home: what BestCodex is, three steps, download, FAQ.",
+      alternatePath: "/",
+    },
+    {
+      path: "/en/claude",
+      title: CLAUDE_TITLE_EN,
+      description: CLAUDE_DESCRIPTION_EN,
+      canonicalPath: "/en/claude",
+      lastmod: LAST_REVIEWED,
+      changefreq: "weekly",
+      priority: 0.9,
+      jsonLd: [softwareApplication(true, "en"), faqPage(CLAUDE_FAQS_EN)],
+      llmsNote: "English Claude tab: ban-risk approach, sync, usage-based pricing, FAQ.",
+      alternatePath: "/claude",
     },
     {
       path: "/help",

@@ -10,8 +10,8 @@
 
 | 产物 | 作用 |
 |---|---|
-| 21 份静态 HTML（每条路由一份，正文已在 `#root` 里） | 不执行 JS 的爬虫也能读到内容。这是所有收录的前提 |
-| `sitemap.xml` | 20 条可索引正本；`/codex` 因 canonical 指向 `/` 被排除。中英配对的页面带 `xhtml:link` |
+| 23 份静态 HTML（每条路由一份，正文已在 `#root` 里） | 不执行 JS 的爬虫也能读到内容。这是所有收录的前提 |
+| `sitemap.xml` | 22 条可索引正本；`/codex` 因 canonical 指向 `/` 被排除。中英配对的页面带 `xhtml:link` |
 | `robots.txt` | 全部放开，含 Google / Bing / 百度 / 搜狗 / 360 / 神马 与各家 AI 爬虫 |
 | `llms.txt` | 给 AI 引擎的站点摘要与页面清单 |
 | 15 份 `.md` 纯文本镜像 | 编程 Agent 更愿意吃 Markdown |

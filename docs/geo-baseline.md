@@ -40,6 +40,19 @@ HTML 喂给 sh——命令行安装要等这次部署上线才真正可用。
 
 结论顺序不能颠倒：**先部署 + 解 Cloudflare 封锁，再谈排名与推荐率**。
 
+**2026-08-17 晚间复测（`publish` 已推送一轮之后）：**
+
+| 探针 | 结果 |
+|---|---|
+| 首页 `#root` | 已有预渲染正文（「三步开始」），title 正确 |
+| `sitemap.xml` / `llms.txt` / `.md` | 真文件，content-type 正确 |
+| `/install.sh` | 仍是 `text/html`（首页）。另发无扩展名的 `/install` 作备用 |
+| `/en`、`/en/guides` | 返回的是中文首页 title——要么新路由还没进这次构建，要么边缘仍有 SPA 回写 |
+| 未知路径 | 仍是软 200。Cloudflare Pages 控制台若开了 SPA 模式，会覆盖仓库里刻意删掉的 `/*` 兜底 |
+| `robots.txt` | **仍是 Cloudflare Managed**，`ai-train=no`，Bytespider 等仍被 Disallow |
+
+预渲染已经部分上线，但边缘层两件事没动：**托管 robots.txt** 和 **SPA 回写**。这两项不关，英文层、安装脚本和真 404 都到不了爬虫。
+
 ## 一、AI 引擎推荐率
 
 这是"被 Codex 用户问到时会不会被推荐"的直接度量，也是目前唯一真正重要的指标。
@@ -132,7 +145,7 @@ Claude Code 这条线：
 
 ## 三、收录量
 
-`site:bestcodex.app` 在各家搜索框里手动查（预期上限是 sitemap 里的 20 条）。同样别用自动化
+`site:bestcodex.app` 在各家搜索框里手动查（预期上限是 sitemap 里的 22 条）。同样别用自动化
 浏览器——见上一节。
 
 后台指标（更准，但要等数据积累）：

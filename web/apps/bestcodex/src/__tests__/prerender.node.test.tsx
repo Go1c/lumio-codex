@@ -70,8 +70,16 @@ describe("预渲染产出爬虫可读的正文", () => {
   });
 
   it("两种语言在任何一页都能互相到达", () => {
-    expect(renderRoute("/")).toContain('href="/en/guides"');
-    expect(renderRoute("/en/guides")).toContain('href="/guides"');
+    expect(renderRoute("/")).toContain('href="/en"');
+    expect(renderRoute("/en")).toContain('href="/"');
+  });
+
+  it("英文首页是英文正文，不是中文页套英文外壳", () => {
+    const html = renderRoute("/en");
+    expect(html).toContain("Start using");
+    expect(html).toContain("official Codex");
+    expect(html).toContain("Three steps");
+    expect(html).not.toContain("三步开始");
   });
 
   it("未命中路由渲染 404 页而不是空白", () => {

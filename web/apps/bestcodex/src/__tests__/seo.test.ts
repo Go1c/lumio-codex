@@ -86,7 +86,7 @@ describe("SEO 路由元数据", () => {
 
   it("/en 下的路由都标成英文，其余都是中文", () => {
     for (const route of SEO_ROUTES) {
-      const expected = route.path.startsWith("/en/") ? "en" : "zh-CN";
+      const expected = route.path === "/en" || route.path.startsWith("/en/") ? "en" : "zh-CN";
       expect(route.locale, `${route.path} 语言标错`).toBe(expected);
     }
   });

@@ -34,7 +34,7 @@ metadata:
 
 ## 中英双语与 hreflang
 
-英文层目前只覆盖指南（`/en/guides`）。约束：
+英文层覆盖落地页（`/en`、`/en/claude`）与指南（`/en/guides`）。约束：
 
 - **`guides.en.ts` 的 slug 必须与 `guides.ts` 一一对应**，`alternatePath` 靠相同 slug 互指。
 - **hreflang 必须双向。** 单向声明会被搜索引擎直接忽略，等于没写。`x-default` 一律指中文版。只有一种语言存在的页面不发 hreflang。

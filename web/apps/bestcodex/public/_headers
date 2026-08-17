@@ -1,0 +1,13 @@
+# Cloudflare Pages 响应头。没有扩展名的 /install 必须显式标成文本，
+# 否则会被当成 octet-stream；.sh 在部分边缘策略里会被拦，所以两条都给。
+/install
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+
+/install.sh
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
+
+/install.ps1
+  Content-Type: text/plain; charset=utf-8
+  X-Content-Type-Options: nosniff
