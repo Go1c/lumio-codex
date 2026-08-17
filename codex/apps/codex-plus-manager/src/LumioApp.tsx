@@ -560,7 +560,7 @@ export function LumioApp() {
       </main>
 
       <footer className="lumio-footer">
-        <span>内部测试渠道</span>
+        <span>BestCodex</span>
         <span className="lumio-footer-separator" />
         <span>官方应用需单独安装</span>
         {state.bootstrap ? <span className="lumio-footer-version">v{state.bootstrap.version}</span> : null}

@@ -133,7 +133,9 @@ export function AffiliateCard({
       )}
       <p className="note">
         累计获得 {formatBalance(detail.affHistoryQuota)}；已邀请 {detail.affCount} 人
-        {detail.nextTier ? nextTierText(detail.nextTier, detail.affCount) : ""}。
+        {detail.nextTier
+          ? nextTierText(detail.nextTier, detail.affCount, detail.inviteeRechargeTotal)
+          : ""}。
       </p>
 
       {detail.invitees.length > 0 && (
@@ -177,11 +179,22 @@ function rulesText(rules: AffiliateRuntimeRules | null): string {
   return parts.length > 0 ? parts.join("；") + "。" : "";
 }
 
-function nextTierText(tier: AffiliateDetail["nextTier"], affCount: number): string {
+function nextTierText(
+  tier: AffiliateDetail["nextTier"],
+  affCount: number,
+  inviteeRechargeTotal: number,
+): string {
   if (!tier) return "";
-  const need = Math.max(tier.minInvitees - affCount, 0);
+  const needPeople = Math.max(tier.minInvitees - affCount, 0);
+  const needRecharge = Math.max(tier.minRecharge - inviteeRechargeTotal, 0);
   const rate = tier.rebateRatePercent === null ? "" : `（比例升至 ${tier.rebateRatePercent}%）`;
-  return need > 0 ? `；再邀请 ${need} 人升至 ${tier.level}${rate}` : `；已达到 ${tier.level}${rate}`;
+  if (needPeople <= 0 && needRecharge <= 0) {
+    return `；已达到 ${tier.level}${rate}`;
+  }
+  const parts: string[] = [];
+  if (needPeople > 0) parts.push(`再邀请 ${needPeople} 人`);
+  if (needRecharge > 0) parts.push(`好友再累计充值 ${formatBalance(needRecharge)}`);
+  return `；${parts.join("、")}升至 ${tier.level}${rate}`;
 }
 
 function formatDay(iso: string): string {
