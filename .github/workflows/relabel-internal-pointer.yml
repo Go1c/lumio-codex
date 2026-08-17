@@ -1,0 +1,69 @@
+# Rewrite latest-internal.json display version without rebuilding packages.
+# Asset URLs stay on the existing unsigned objects. Channel stays internal-unsigned.
+name: Relabel internal pointer
+
+on:
+  workflow_dispatch:
+    inputs:
+      display_version:
+        description: "Site-visible version. Empty = desktop version + current internal-N suffix."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  relabel:
+    name: Relabel S3 latest-internal.json
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_BUCKET: ${{ secrets.S3_BUCKET }}
+      S3_PUBLIC_BASE: ${{ secrets.S3_PUBLIC_BASE }}
+      DISPLAY_VERSION: ${{ inputs.display_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Relabel pointer
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in S3_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY S3_BUCKET S3_PUBLIC_BASE; do
+            if [ -z "${!key:-}" ]; then
+              echo "Missing secret mapped to $key" >&2
+              exit 1
+            fi
+          done
+
+          pointer_url="${S3_PUBLIC_BASE%/}/latest-internal.json"
+          curl -fsS -A 'Mozilla/5.0' "$pointer_url" -o /tmp/pointer.json
+          python3 - <<'PY'
+          import json, os, re, pathlib
+          p = json.load(open("/tmp/pointer.json"))
+          desktop = json.load(open("codex/apps/codex-plus-manager/src-tauri/tauri.conf.json"))["version"]
+          override = os.environ.get("DISPLAY_VERSION", "").strip()
+          old = str(p.get("version") or "")
+          m = re.search(r"(internal-\d+)$", old)
+          suffix = m.group(1) if m else "internal"
+          version = override or f"{desktop}-{suffix}"
+          if "internal" not in version.lower() and "unsigned" not in version.lower():
+              version = f"{version}-internal"
+          if not p.get("assets"):
+              raise SystemExit("pointer has no assets; refuse to rewrite")
+          p["version"] = version
+          p["channel"] = "internal-unsigned"
+          if not p.get("tag"):
+              p["tag"] = suffix
+          pathlib.Path("/tmp/pointer.out.json").write_text(json.dumps(p, indent=2) + "\n")
+          print(json.dumps({"old": old, "new": version, "channel": p["channel"], "assets": len(p["assets"])}, indent=2))
+          PY
+
+          aws --endpoint-url "$S3_ENDPOINT" s3 cp /tmp/pointer.out.json \
+            "s3://${S3_BUCKET}/releases/latest-internal.json" \
+            --content-type application/json --no-progress
+          echo "Wrote ${pointer_url}"

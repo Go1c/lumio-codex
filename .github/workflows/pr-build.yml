@@ -66,7 +66,8 @@ jobs:
         run: |
           $version = "${{ github.ref_name }}" -replace '^[vV]', '' -replace '[^0-9A-Za-z._-]', '-'
           if (-not $version -or $version -eq "publish") {
-            $version = "0.0.0-internal-${{ github.run_number }}"
+            $desktop = (Get-Content "apps/codex-plus-manager/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
+            $version = "$desktop-internal-${{ github.run_number }}"
           }
           "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
 
@@ -169,7 +170,7 @@ jobs:
           VERSION="${VERSION#V}"
           VERSION="$(printf '%s' "$VERSION" | tr -c '0-9A-Za-z._-' '-')"
           if [ -z "$VERSION" ] || [ "$VERSION" = "publish" ]; then
-            VERSION="0.0.0-internal-${GITHUB_RUN_NUMBER}"
+            VERSION="$(python3 -c 'import json; print(json.load(open("apps/codex-plus-manager/src-tauri/tauri.conf.json"))["version"])')-internal-${GITHUB_RUN_NUMBER}"
           fi
           BINARY_DIR="$PWD/target/${{ matrix.target }}/release" bash scripts/installer/macos/package-dmg.sh "$VERSION" "${{ matrix.arch }}"
 
@@ -192,7 +193,7 @@ jobs:
           trap cleanup_mount EXIT
           hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT" >/dev/null
           ATTACHED=1
-          APP="$MOUNT_POINT/Lumio Codex.app"
+          APP="$MOUNT_POINT/BestCodex.app"
           test -L "$MOUNT_POINT/Applications"
           test "$(readlink "$MOUNT_POINT/Applications")" = "/Applications"
           test -f "$APP/Contents/Info.plist"
@@ -263,7 +264,7 @@ jobs:
             VERSION="${VERSION#V}"
             TAG="$GITHUB_REF_NAME"
           else
-            VERSION="0.0.0-internal-${GITHUB_RUN_NUMBER}"
+            VERSION="$(python3 -c 'import json; print(json.load(open("codex/apps/codex-plus-manager/src-tauri/tauri.conf.json"))["version"])')-internal-${GITHUB_RUN_NUMBER}"
             TAG="internal-run-${GITHUB_RUN_NUMBER}"
           fi
           VERSION="$(printf '%s' "$VERSION" | tr -c '0-9A-Za-z._-' '-')"
