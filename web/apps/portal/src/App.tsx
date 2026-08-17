@@ -8,6 +8,7 @@ import { Home } from "@/pages/Home";
 import { Login } from "@/pages/Login";
 import { Logout } from "@/pages/Logout";
 import { NotFound } from "@/pages/NotFound";
+import { ProductRedirect } from "@/pages/ProductRedirect";
 import { Signup } from "@/pages/Signup";
 import { SessionProvider, usePortalSession } from "@/state/session";
 
@@ -48,6 +49,8 @@ function Shell() {
         <Route path="/logout" element={<Logout />} />
         <Route path="/help" element={<HelpIndex />} />
         <Route path="/help/:slug" element={<HelpArticle />} />
+        <Route path="/codex" element={<ProductRedirect path="/codex" label="Codex" />} />
+        <Route path="/claude" element={<ProductRedirect path="/claude" label="Claude" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SiteShell>

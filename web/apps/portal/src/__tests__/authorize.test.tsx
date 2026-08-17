@@ -28,7 +28,7 @@ function authorizeQuery(overrides: Record<string, string> = {}): string {
 }
 
 const CONTEXT = {
-  client_name: "CC避风港 macOS",
+  client_name: "BestCodex macOS",
   scopes: [
     { id: "profile", label: "读取你的账号邮箱与订阅状态" },
     { id: "workspace", label: "代表你连接与同步你的工作区" },
@@ -71,8 +71,10 @@ describe("授权确认页", () => {
     const query = authorizeQuery();
     renderApp(`/authorize?${query}`);
 
-    expect(await screen.findByText(/CC避风港 macOS/)).toBeInTheDocument();
+    expect(await screen.findByText(/BestCodex macOS/)).toBeInTheDocument();
     expect(screen.getByText("代表你连接与同步你的工作区")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/CC避风港|避风港/);
+    expect(document.body.textContent).toMatch(/Claude 桌面端|BestCodex/);
 
     const next = encodeURIComponent(`/authorize?${query}`);
     expect(screen.getByRole("link", { name: "去登录" })).toHaveAttribute(
