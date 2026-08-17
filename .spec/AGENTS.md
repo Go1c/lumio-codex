@@ -11,7 +11,7 @@
 
 - `codex/`：**Lumio Codex** 桌面客户端，[`BigPizzaV3/CodexPlusPlus`](https://github.com/BigPizzaV3/CodexPlusPlus) 的 AGPL fork（Rust 2024 workspace + Tauri 2 + React 19 + TypeScript）。核心库 `codex/crates/codex-plus-core/`（含 `lumio/` 账户模块），桌面前端 `codex/apps/codex-plus-manager/`，数据层 `codex/crates/codex-plus-data/`，产品文档 `codex/docs/`（含运维手册 `docs/ops/`）。
 - `cchaven/`：**CC避风港（CCHaven）**——Claude Code 远端运行与双向同步（自 FNS-workspace 以 subtree 合入）。Go 控制面 `cchaven/services/cchaven-control`（chi + pgx + PostgreSQL），旧官网 `cchaven/apps/web`，运营后台 `cchaven/apps/admin`，Tauri 桌面端 `cchaven/apps/desktop`，同步 agent `cchaven/bins/fns-agent`，产品文档 `cchaven/docs/`。
-- `web/`：统一官网门户（npm workspaces）——`lumiogame.com` 总站（账号中心，对接 Sub2API）、`cc.lumiogame.com` 与 `codex.lumiogame.com` 产品站、共享 UI 包。
+- `web/`：统一官网（npm workspaces）——门户（账号中心，对接 Sub2API）与 BestCodex 产品单站（`bestcodex.app`，`/codex` / `/claude`），共享 UI 包。旧 `apps/cc` / `apps/codex` 已退役。
 
 功能级设计与计划落**所属产品目录**的 `docs/specs/` 与 `docs/plans/`（如 `codex/docs/plans/`）；跨产品的仓库级文档落根 `docs/`。
 

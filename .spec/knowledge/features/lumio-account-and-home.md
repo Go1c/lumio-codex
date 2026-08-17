@@ -27,19 +27,21 @@ metadata:
   - 网关面（`/v1/*`，无管理 API 信封）错误体是 `{"code","message"}`：`api.rs` 的 `gateway_error_reason` 按 `code` → `reason` → `error.code` 解析后交给 `normalize_reason`；余额不足（`INSUFFICIENT_BALANCE`）归 `ACCOUNT_INSUFFICIENT_BALANCE`（用户可操作，禁止伪装成宕机），空模型目录归 `SERVICE_MODEL_CATALOG_EMPTY`（D-16）。
   - **交互面**：文案与账户流程以 UX 交互规格为准，Codex 首页壳以 BestCodex 规格为准。顶栏分段控件 `[ Codex | Claude ]`，冷启动落在 Codex；`?` 打开 `https://bestcodex.app/help`。恢复动作按整文件回滚诚实描述；支付 / 遥测本期禁用并附说明（开机启动已交付，见下；更新为「提示 + 用户点击 + 应用内下载 + 安装向导」的手动流程，见「官网与更新提醒」，后台自动安装未开放）。
     **Codex 首页**主区永远是：问候 + **一行**「邮箱 · 余额 · 充值」+ 一张玻璃启动卡。不要余额 / 套餐 / 模型三张指标墙。启动卡三态：已就绪（Codex 已就绪 · 可启动，主按钮「启动 Codex」）；未安装（尚未安装官方 Codex，进度 / 失败都留在这张卡里，主按钮「安装并启动官方 Codex」）；离线（离线可用 · 缓存，充值需要网络、启动不需要）。安装中按钮禁用成「正在安装…」加阶段（下载 / 校验 / 安装），进度条在卡内（下载带百分比与已下载 / 总量，未知总量 / 校验 / 安装为往复动画，D-19）；失败 / 取消原因常驻卡内（警示色 + 错误码，主按钮即重试，D-20），后台提前失败同样收敛为 failed 不许停在「正在安装」；切到 Claude 时安装继续。无应用且离线禁用并注明「安装官方应用需要网络」。配置冲突仍走无 Tab 的修复页，不在这三态里。设置里的重新检测 / 手动选择只留给装过但路径异常的人。
-    **工作区 Tab**：`workspace` 是 UI 选择（默认 `codex`），不是 `LumioPhase`。仅 `ready-online` / `ready-offline` 露 `[ Codex | Claude ]`；`signed-out` / `authenticating` / `provisioning` / `needs-repair` 无 Tab。`HomeView` 与 `ClaudeWorkspace` 用 `hidden` 保活，切 Tab 不卸载。Claude 订阅问 `https://api.cc.bestcodex.app/api/v1/me/entitlement`（Sub2API Bearer，成功体 `{data}`）；`none` = 开通卡，开通打开 `https://bestcodex.app/account`，禁止把 `/purchase` 当 Claude 支付。控制面不可达且本地有项目 → 工作台只读/已缓存。四步 sheet 状态在 `lumio/claude/store.ts`；密码只留内存 Map，不进 persistable JSON。PTY / 双向同步未接：终端 Tab 可见，降级为远程命令 + 系统终端。
+    **工作区 Tab**：`workspace` 是 UI 选择（默认 `codex`），不是 `LumioPhase`。仅 `ready-online` / `ready-offline` 露 `[ Codex | Claude ]`；`signed-out` / `authenticating` / `provisioning` / `needs-repair` 无 Tab。`HomeView` 与 `ClaudeWorkspace` 用 `hidden` 保活，切 Tab 不卸载。Claude 订阅问 `https://api.cc.bestcodex.app/api/v1/me/entitlement`（Sub2API Bearer，成功体 `{data}`）；`none` = 开通卡，开通打开 `https://bestcodex.app/account`，禁止把 `/purchase` 当 Claude 支付。控制面不可达且本地有项目 → 工作台只读/已缓存。四步 sheet 状态在 `lumio/claude/store.ts`；密码只留内存 Map，不进 persistable JSON。装组件把远端同步组件拷到服务器（失败停在该步，不得进首次同步）。首次同步经本机 sidecar + SSH 隧道拉文件，未确认拷贝不得关 sheet 进工作台。右工作台默认嵌入式 PTY（`portable-pty` + xterm）；文件树本机/远端可浏览预览；冲突 keepLocal / keepRemote / keepBoth，不静默覆盖。高级选项接本机 SSH config / Host 别名。用户可见文案不出现 agent / tmux。
 - **实现面**：
   - Rust：`codex/crates/codex-plus-core/src/lumio/`（api / credentials / secret_file / session / config_takeover / account / launch / official_app_install / autostart / claude_control）
   - 开机启动（壳自身，非官方 Codex）：`autostart.rs` 默认开启（opt-out）——bootstrap 时对从未表达偏好的用户注册一次，用户关闭后偏好落 `state_dir()/launch-at-login.json` 永不自动重开；偏好开着但注册指向旧路径（应用被移动/重装，D-26）时 bootstrap 重对齐到当前 exe；macOS 写 `~/Library/LaunchAgents/games.lumio.codex.plist`（launchd 拉起，第一期不改此名），Windows 经 `reg.exe` 写 HKCU Run（参数走 `Command::args`，无 shell 解析）；cargo 直跑（非 .app bundle / target 目录）不支持并报 `PREFERENCE_LAUNCH_AT_LOGIN_UNSUPPORTED`；系统现状为权威上报，注册被用户从系统设置移除不自动恢复；零新依赖
   - 首次安装：`official_app_install/` 按计划 → 下载 → 校验 → Windows / macOS 适配切开；默认镜像，官方直链 / FE3 备用；进度可轮询，不堵 UI；缓存文件按平台带 `.msix`/`.dmg` 扩展名（裸名会让 Windows 签名/部署工具认不出包，D-21）；镜像 v5 起 sha 缺位时用 per-arch `contentLength` 做尺寸防线；Windows Authenticode 预检三态——钉选通过 / 确凿不匹配拒绝 / 预检不可用仅在侧载路线放行（`Add-AppxPackage` 系统级签名验证 + 装后包族钉选双兜底），便携路线无系统兜底必须硬失败（D-21）；**安装位置可选**（ADR-0006 / D-23）：主按钮先弹「选择安装位置」——Windows「标准安装（MSIX，默认）」与「选择安装目录（便携解压，钉选校验不降级）」并列，macOS 默认 /Applications 可任选；自选目录在下载前先 `create_dir_all` 并探测可写（坏目录不等到 745MB 下载完才暴露，D-28）；安装成功即删安装包（失败保留重试）；自选目录的最终安装路径持久化到 `state_dir()/official-app-path.json` 并优先于自动探测（失效回落，防重启后误判未安装重复装）
-  - Tauri：仅 `lumio_` 命令白名单（含 `lumio_install_official_app` / `lumio_official_app_status` / `lumio_cancel_official_app`）；秘密不跨 IPC
+  - Tauri：仅 `lumio_` 命令白名单（含 `lumio_install_official_app` / `lumio_official_app_status` / `lumio_cancel_official_app` 与 `lumio_claude_*`）；秘密不跨 IPC。Claude 引擎胶水在 `src-tauri/src/claude_*.rs`；fns 以 sidecar / 远端制品接入，不把 `fns-*` 焊进 Codex workspace
+  - 前端 Claude：`src/lumio/claude/**` 与 `views/claude/**`；终端用 `@xterm/xterm`（及 fit / web-links）
   - 前端：`codex/apps/codex-plus-manager/src/LumioApp.tsx` 的 `planStartup` 负责探活 + 接管健康检查后再决定 provisioning / offline-ready / needs-repair（状态机仍有效）；安装进度挂在 Codex 启动卡内，不新增全屏阶段；余额只出现在首页那一行（可刷新），不要独立指标卡。余额刷新三通道（D-29）——ready-online 时 60s 定时轮询、托盘唤起（Rust `show_main_window` 发 `lumio://window-shown`，前端按距上次同步 ≥10s 节流）补刷、余额行内手动刷新，都走 `account-refreshed` 事件（节流判定在 `lumio/account-refresh.ts`）
   - 配置接管以**快照存在性**判定首次，不以 manifest；敏感文件经 `secret_file::write_secret` 创建即 0600；接管产物里 provider 是**内联表**（`model_providers = { lumio = {...} }`），对它做字段增删必须同时覆盖 inline / 标准表两种形态——只认 `as_table_mut` 的移除是死代码（D-22）；bootstrap 对 Healthy 接管做 legacy `env_key` 愈合并同步 manifest 哈希（D-22：旧接管残留该字段时官方 Codex 聊天必报 Missing environment variable，Healthy 状态永不重接管，必须在启动编排前单独清）
   - 启动仍走 `launch::launch_official_codex`（macOS `open -a`，Windows 直接拉官方可执行文件），无注入 / CDP
 
 ## 待解决
 
-- Claude 终端无应用内 PTY（无 `portable-pty` 依赖）；双向同步 / 冲突引擎未焊 `fns-*`；装组件只建目录。懂 SSH 的本机 SSH config alias 未接
+- Claude 真机：仓内 sidecar / 远端制品是占位文件，需先按 `cchaven/scripts/stage-*.sh` 放入真二进制才能走完部署与首次同步；确认拷贝默认等 60s，超时 fail-closed（`SYNC_COPY_UNCONFIRMED`），重试可能因本机已有文件再次不确认；keepLocal 后按内容重检可能把同一冲突刷回来
+- 干净机真机验收未跑：注册→登录→安装官方 Codex（含取消）→启动；官网主路径浏览器点通。测试服 `vps-108-80-81-15` 可 SSH，本机同步 sidecar 未暂存，首次同步未在桌面端走完
 - 字段级配置恢复（相对整文件回滚）
 - 系统凭据库替换本地文件（需新依赖，另开 ADR）
 - 安全支付交接（一次性 handoff token）；当前为打开 `https://api.lumio.games/purchase`
@@ -52,8 +54,9 @@ metadata:
 ## 官网与更新提醒
 
 - 用户可见站点：[`https://bestcodex.app`](https://bestcodex.app)；帮助：[`https://bestcodex.app/help`](https://bestcodex.app/help)
+- 产品站是单站 `web/apps/bestcodex`：`/` `/codex` 为 Codex 页，`/claude` 为 Claude 页，顶栏站内换页。旧 `web/apps/codex` / `web/apps/cc` 已退役。门户仍是独立 Lumio 账号中心（ADR-0007）；apex 共存窗口待运维切 DNS
 - 旧静态站（过渡）：[`codex/site/`](../../../codex/site/)（历史 `lumio.games`，待 301；DNS 仍待运维）
-- 产品站常量 `SITE_BASE_URL` 现为 `https://bestcodex.app`；充值仍 `https://api.lumio.games/purchase`。Sub2API CORS 放行 `https://bestcodex.app` 仍待运维
+- 充值仍 `https://api.lumio.games/purchase`。Sub2API CORS 放行 `https://bestcodex.app` 仍待运维
 - 更新提醒：`lumio_check_update` 先对照 GitHub Releases latest，404（内测渠道只发 prerelease，latest API 对其恒 404）时回退读 `/releases` 列表（含 prerelease，跳过 draft，D-27）
 - 手动更新（D-30）：不做后台自动安装——检测到新版本时**右下角弹出常驻通知卡**，**绿色标记常驻**于导航「设置」角标、footer 版本旁入口与设置页「发现新版本」条目；任一入口触发 `lumio_download_update`，应用内下载平台安装包（资产按既有 CI 命名选：`-setup-*.exe` / `macos-<arch>-*.dmg`，文件名 `LumioCodex-*` 第一期可不动）到缓存 `updates/` 并打开安装向导，安装由用户在向导里完成。弹窗有频率闸门（`lumio/update_notice.rs`，偏好落 `state_dir()/update-notice.json`）：点「稍后」= 持久忽略该版本（下个版本才恢复弹窗）、同一天最多弹一次（UTC epoch 天）；闸门只静默弹窗，绿色标记常驻不受影响
 
@@ -65,4 +68,6 @@ metadata:
 - [实现计划](../../../codex/docs/plans/2026-08-12-lumio-account-and-home.md)
 - [ADR-0001 凭据本地文件](../../decisions/0001-lumio-credentials-local-file.md)
 - [ADR-0005 首次安装官方桌面应用](../../decisions/0005-lumio-first-official-app-install.md)
-- 可点击原型：`prototypes/lumio-ux/`
+- [ADR-0006 官方应用安装位置](../../decisions/0006-official-app-install-destination.md)
+- [ADR-0007 产品站 apex 与门户共存](../../decisions/0007-bestcodex-apex-portal-coexistence.md)
+- 可点击原型：`codex/prototypes/bestcodex/`

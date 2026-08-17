@@ -1,9 +1,9 @@
 ---
 name: lumio-unified-portal-and-identity
-description: 统一门户与统一身份：三站分工、Sub2API 唯一账号源、跨子域会话、控制面令牌校验、充值落点——改账号面或站点时查
+description: 统一门户与统一身份：门户 + BestCodex 单站、Sub2API 唯一账号源、跨域会话、控制面令牌校验、充值落点——改账号面或站点时查
 metadata:
   type: doc
-  status: 实施中
+  status: 已交付
 ---
 
 # Lumio 统一门户与统一身份
@@ -22,17 +22,17 @@ metadata:
 
 ## 设计
 
-### 三站分工（`web/`，npm workspaces）
+### 站点分工（`web/`，npm workspaces）
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | `lumiogame.com` | 品牌首页 + **唯一**的注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）+ CC 桌面端授权页 `/authorize` |
-| `apps/cc` | `cc.lumiogame.com` | CC避风港产品站（介绍 / 定价 / 下载）|
-| `apps/codex` | `codex.lumiogame.com` | Lumio Codex 产品站（介绍 / 下载）|
+| `apps/portal` | 独立门户（本期部署不变） | 品牌首页 + **唯一**的注册 / 登录 / 2FA / 账户中心（`/login`、`/signup`、`/account`、`/logout`）+ CC 桌面端授权页 `/authorize` |
+| `apps/bestcodex` | `bestcodex.app` | 产品站：`/` `/codex` 为 Codex 落地页，`/claude` 为 Claude 落地页，帮助 `/help` |
 
-三站是纯静态 SPA，共用 `packages/ui`（设计 token 抽自原 CC 站）与 `packages/auth`；
+两站是纯静态 SPA，共用 `packages/ui` 与 `packages/auth`。
 产品站**不做自己的登录**，账号入口一律跳门户并带 `?next=` 回跳（`portalAccountLinks()`）。
 `next` 只放行站内相对路径与根域下的地址（`isAllowedNext()`），防开放重定向。
+门户与产品站在 apex 的共存见 [ADR-0007](../../decisions/0007-bestcodex-apex-portal-coexistence.md)。旧 `apps/cc` / `apps/codex` 已退役。
 
 ### 身份：Sub2API 是唯一真源
 
@@ -48,11 +48,12 @@ metadata:
   **不静默放行**；自有终端用户认证端点保留路由但返回 410 `auth_migrated`，
   `details.portal_url` 指向门户登录页。管理员账号与强制 TOTP 仍完全在控制面本地。
 
-### 跨子域会话
+### 会话
 
-令牌写在父域 Cookie（`.lumiogame.com`，`Path=/`、`SameSite=Lax`、https 下带 `Secure`），
-三站共读（`packages/auth/src/session.ts`）。父域 Cookie 必须前端可读，因此**不是 HttpOnly**，
-风险由「短 access token 有效期 + 收紧 CORS + 三站同属一个可信根域」兜住；
+令牌写在门户父域 Cookie（`.lumiogame.com`，`Path=/`、`SameSite=Lax`、https 下带 `Secure`），
+由 `packages/auth/src/session.ts` 读写。父域 Cookie 必须前端可读，因此**不是 HttpOnly**，
+风险由「短 access token 有效期 + 收紧 CORS + 门户可信根域」兜住。
+产品站 `bestcodex.app` 不做登录，账号入口跳门户并带 `?next=`；两站不共享 Cookie。
 日后接入统一网关时 `session.ts` 是唯一改动点。
 
 ### CC 桌面端授权（门户 `/authorize`）
@@ -80,7 +81,7 @@ CC 桌面端仍由 `cchaven-control` 签发自己的令牌，但授权时的用�
 - `/authorize` 只有单测，未与真库跑的控制面端到端联调；首次联调重点看
   `OPTIONS` 预检与 `redirect_to` 的实际形态。授权请求的设备字段（`device_name` /
   `os_version` / `arch` / `app_version`）浏览器无从得知，当前送空对象。
-- 除 `/authorize` 外，三站都不调用 CC 控制面，门户上没有 CC 的权益 / 邀请视图。
+- 除 `/authorize` 外，门户与产品站都不调用 CC 控制面，门户上没有 CC 的权益 / 邀请视图。
 - CC 的旧站 `cchaven/apps/web` 与旧 Codex 官网 `codex/site/` 待下线。
 - 存量 CC 用户的身份映射需一次性迁移（`cmd/migrate-identities`，高风险，需单独确认）；
   迁移不带口令，这批用户首次登录必须走「忘记密码」。
@@ -88,7 +89,7 @@ CC 桌面端仍由 `cchaven-control` 签发自己的令牌，但授权时的用�
 
 ## 相关
 
-- 跨产品运维手册（三站部署 / 域名切换 / 上线验收）：[`docs/ops/`](../../../docs/ops/README.md)
+- 跨产品运维手册（门户 + 产品站部署 / 域名切换 / 上线验收）：[`docs/ops/`](../../../docs/ops/README.md)
 - 统一官网开发说明：[`web/README.md`](../../../web/README.md)
 - CC 侧线上拓扑与账号体系：[`cchaven/docs/ops/01-architecture.md`](../../../cchaven/docs/ops/01-architecture.md)
 - Codex 侧后台契约：[`codex/docs/ops/04-backend.md`](../../../codex/docs/ops/04-backend.md)
