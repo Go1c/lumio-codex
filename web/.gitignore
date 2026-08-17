@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# 预渲染用的 SSR 中间产物（vite build --ssr 的输出）
+dist-ssr/
 coverage/
 *.tsbuildinfo
 .env

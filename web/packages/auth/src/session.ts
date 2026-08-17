@@ -45,6 +45,8 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
 }
 
 function readCookie(name: string): string | null {
+  // 构建期预渲染没有 document，也没有请求上下文：一律视为未登录。
+  if (typeof document === "undefined") return null;
   const match = document.cookie
     .split(";")
     .map((part) => part.trim())

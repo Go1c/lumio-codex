@@ -1,6 +1,8 @@
 import type { CSSProperties, ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 
+import { isServerRender } from "../lib/ssr";
+
 /** jsdom / 老环境没有 IntersectionObserver：直接静态呈现，不做滚动触发。 */
 const canObserve = typeof IntersectionObserver !== "undefined";
 
@@ -27,7 +29,9 @@ export function Reveal({
 }: RevealProps) {
   const reducedMotion = useReducedMotion();
 
-  if (reducedMotion || (!immediate && !canObserve)) {
+  // 预渲染必须走静态分支：motion 的 initial 是 opacity:0，烙进静态 HTML 会让
+  // 爬虫读到一段「隐藏」的正文。
+  if (isServerRender() || reducedMotion || (!immediate && !canObserve)) {
     return (
       <div className={className} style={style}>
         {children}

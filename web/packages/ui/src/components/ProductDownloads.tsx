@@ -11,6 +11,7 @@ import {
   type PlatformId,
   type ReleaseManifest,
 } from "../lib/releases";
+import { isServerRender } from "../lib/ssr";
 import { Modal } from "./Modal";
 import { Reveal } from "./Reveal";
 
@@ -20,16 +21,21 @@ interface PendingDownload {
 }
 
 type ManifestState =
+  /** 预渲染态：还没发起请求，别把 loading 文案烙进静态 HTML。 */
+  | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; manifest: ReleaseManifest }
   | { status: "error" };
 
 /** 两站共用的一个安装包：Mac Apple / Mac Intel / Windows。 */
 export function ProductDownloads({ headingId }: { headingId?: string } = {}) {
-  const [state, setState] = useState<ManifestState>({ status: "loading" });
+  const [state, setState] = useState<ManifestState>(() =>
+    isServerRender() ? { status: "idle" } : { status: "loading" },
+  );
   const [pending, setPending] = useState<PendingDownload | null>(null);
-  const [recommended, setRecommended] = useState<PlatformId>(() =>
-    detectPlatform(navigator.userAgent),
+  // 预渲染没有 navigator，也不该猜设备：静态 HTML 里不标「你的设备」。
+  const [recommended, setRecommended] = useState<PlatformId | null>(() =>
+    isServerRender() ? null : detectPlatform(navigator.userAgent),
   );
   const baseId = useId();
   const titleId = headingId ?? `${baseId}-title`;
@@ -143,6 +149,7 @@ function DownloadCard({
 }
 
 function metaFor(state: ManifestState, platform: PlatformId): string {
+  if (state.status === "idle") return "内测版 · 未签名";
   if (state.status === "loading") return "读取最新版本…";
   if (state.status === "error") return "CDN 暂不可用 · GitHub 回退";
   const asset = assetForPlatform(state.manifest, platform);
