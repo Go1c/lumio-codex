@@ -50,11 +50,13 @@ metadata:
 
 ### 会话
 
-令牌写在门户父域 Cookie（`.lumiogame.com`，`Path=/`、`SameSite=Lax`、https 下带 `Secure`），
+令牌写在规范账号根域 Cookie（`.bestcodex.app`，`Path=/`、`SameSite=Lax`、https 下带 `Secure`），
 由 `packages/auth/src/session.ts` 读写。父域 Cookie 必须前端可读，因此**不是 HttpOnly**，
 风险由「短 access token 有效期 + 收紧 CORS + 门户可信根域」兜住。
-产品站 `bestcodex.app` 不做登录，账号入口跳门户并带 `?next=`；两站不共享 Cookie。
-日后接入统一网关时 `session.ts` 是唯一改动点。
+产品站不做自己的登录页，账号入口走门户路径（线上 apex 按路径把 `/login` `/account` 指到门户产物）并带 `?next=`。
+遗留主机 `lumiogame.com` 与 `bestcodex.app` 不在同一注册域，Cookie 过不去：门户在遗留主机上会整页搬到规范账号 origin，若本地已有会话则用 URL 片段做一次性令牌交接（`packages/auth/src/handoff.ts`），落地立刻抹掉 hash。
+Sub2API 的 refresh 是轮换式，禁止两套 Cookie 长期并存。独立访问遗留主机且本地无会话时，只做无令牌回跳——规范主机上若已登录即可接上。运维应对 `lumiogame.com` 做 301，前端回跳是未切 DNS 前的兜底。
+日后接入统一网关时 `session.ts` / `handoff.ts` 是改动点。
 
 ### CC 桌面端授权（门户 `/authorize`）
 

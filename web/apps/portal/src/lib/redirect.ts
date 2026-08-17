@@ -1,16 +1,51 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { resolveNext } from "@lumio/ui";
+import { sessionTokensForHandoff, withHandoff, type TokenPair } from "@lumio/auth";
+import {
+  bounceToCanonicalUrl,
+  canonicalAccountOrigin,
+  resolveNext,
+  shouldBounceToCanonical,
+} from "@lumio/ui";
 
 export type RedirectTarget = { kind: "internal"; path: string } | { kind: "external"; url: string };
 
+export interface RedirectContext {
+  currentOrigin?: string;
+  tokens?: TokenPair | null;
+}
+
 /** `next` 是用户可控输入，先过白名单再决定用前端路由还是整页跳转。 */
-export function redirectTarget(next: string | null | undefined, fallback: string): RedirectTarget {
+export function redirectTarget(
+  next: string | null | undefined,
+  fallback: string,
+  context: RedirectContext = {},
+): RedirectTarget {
   const resolved = resolveNext(next, fallback);
-  return resolved.startsWith("/")
-    ? { kind: "internal", path: resolved }
-    : { kind: "external", url: resolved };
+  const currentOrigin = context.currentOrigin;
+
+  let url: string;
+  if (resolved.startsWith("/")) {
+    if (currentOrigin && shouldBounceToCanonical(hostOf(currentOrigin))) {
+      url = `${canonicalAccountOrigin()}${resolved}`;
+    } else {
+      return { kind: "internal", path: resolved };
+    }
+  } else {
+    url = rewriteLegacyOrigin(resolved);
+  }
+
+  if (context.tokens && isCrossOrigin(currentOrigin, url)) {
+    url = withHandoff(url, context.tokens);
+  }
+
+  if (currentOrigin && sameOrigin(currentOrigin, url) && !url.includes("lumio_at=")) {
+    const parsed = new URL(url, currentOrigin);
+    return { kind: "internal", path: `${parsed.pathname}${parsed.search}` };
+  }
+
+  return { kind: "external", url };
 }
 
 export function goExternal(url: string): void {
@@ -21,13 +56,42 @@ export function useAuthRedirect(next: string | null | undefined) {
   const navigate = useNavigate();
 
   return useCallback(() => {
-    const target = redirectTarget(next, "/account");
+    const target = redirectTarget(next, "/account", {
+      currentOrigin: window.location.origin,
+      tokens: sessionTokensForHandoff(),
+    });
     if (target.kind === "internal") {
       navigate(target.path, { replace: true });
     } else {
       goExternal(target.url);
     }
   }, [navigate, next]);
+}
+
+function hostOf(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function sameOrigin(origin: string, url: string): boolean {
+  try {
+    return new URL(url, origin).origin === new URL(origin).origin;
+  } catch {
+    return false;
+  }
+}
+
+function isCrossOrigin(origin: string | undefined, url: string): boolean {
+  if (!origin) return false;
+  return !sameOrigin(origin, url);
+}
+
+/** 登录成功后不要把用户送回遗留门户，改写到规范账号主机。 */
+function rewriteLegacyOrigin(url: string): string {
+  return bounceToCanonicalUrl(url) ?? url;
 }
 
 /** 账号页之间互跳时保留 next，否则用户走一趟注册就丢了回跳目标。 */

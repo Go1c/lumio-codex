@@ -25,6 +25,51 @@ export function rootDomain(): string {
   return env("VITE_ROOT_DOMAIN") ?? DEFAULT_ROOT_DOMAIN;
 }
 
+/** 仍在线上的旧门户主机。Cookie 根域是 bestcodex.app，这里写的是 host-only，不能共享。 */
+const LEGACY_ACCOUNT_HOSTS = ["lumiogame.com", "www.lumiogame.com"];
+
+export function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+/** 规范账号 origin：门户默认就是营销 apex，和产品站共享 `.bestcodex.app` Cookie。 */
+export function canonicalAccountOrigin(): string {
+  try {
+    return new URL(siteUrl("portal")).origin;
+  } catch {
+    return `https://${rootDomain()}`;
+  }
+}
+
+export function isOfficialAccountHost(hostname: string): boolean {
+  const root = rootDomain();
+  if (hostname === root || hostname.endsWith(`.${root}`)) return true;
+  if (LEGACY_ACCOUNT_HOSTS.includes(hostname)) return true;
+  try {
+    if (hostname === new URL(siteUrl("portal")).hostname) return true;
+  } catch {
+    // 覆盖变量不是合法 URL 时，下面按根域判定即可。
+  }
+  return isLocalHostname(hostname);
+}
+
+/** 只有遗留注册域要整页搬到规范主机；bestcodex.app 子域与本地联调不回跳。 */
+export function shouldBounceToCanonical(hostname: string): boolean {
+  return LEGACY_ACCOUNT_HOSTS.includes(hostname);
+}
+
+/** 把遗留官方入口的当前地址改写成规范账号 origin，保留 path / query。 */
+export function bounceToCanonicalUrl(currentHref: string): string | null {
+  let current: URL;
+  try {
+    current = new URL(currentHref);
+  } catch {
+    return null;
+  }
+  if (!shouldBounceToCanonical(current.hostname)) return null;
+  return `${canonicalAccountOrigin()}${current.pathname}${current.search}`;
+}
+
 const PRODUCT_PATH: Record<Exclude<SiteId, "portal">, string> = {
   codex: "/codex",
   cc: "/claude",
@@ -122,12 +167,10 @@ export function isAllowedNext(next: string | null | undefined): boolean {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return false;
 
-  const root = rootDomain();
   const host = url.hostname;
-  if (host === root || host.endsWith(`.${root}`)) return true;
-
-  // 本地联调时三站各占一个端口，主机名退化为 localhost。
-  return url.protocol === "http:" && (host === "localhost" || host === "127.0.0.1");
+  if (!isOfficialAccountHost(host)) return false;
+  if (url.protocol === "https:") return true;
+  return url.protocol === "http:" && isLocalHostname(host);
 }
 
 export function resolveNext(next: string | null | undefined, fallback: string): string {

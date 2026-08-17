@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
-import { useSession } from "@lumio/auth";
+import { isHandoffHash, useSession } from "@lumio/auth";
 import { HelpArticle, HelpIndex, SiteShell, helpTopicBySlug, portalAccountLinks } from "@lumio/ui";
 
 import { ClaudeHome } from "@/pages/ClaudeHome";
@@ -35,7 +35,7 @@ function RouteTitle() {
 function HashScroll() {
   const { hash, pathname } = useLocation();
   useLayoutEffect(() => {
-    if (!hash) return;
+    if (!hash || isHandoffHash(hash)) return;
     const id = decodeURIComponent(hash.replace(/^#/, ""));
     if (!id) return;
     document.getElementById(id)?.scrollIntoView?.();

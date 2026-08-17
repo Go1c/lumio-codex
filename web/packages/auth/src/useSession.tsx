@@ -6,6 +6,7 @@ import {
   logout as logoutRequest,
   type AccountProfile,
 } from "./client";
+import { consumeHandoffFromWindow } from "./handoff";
 import {
   clearSession,
   hasSession,
@@ -30,9 +31,10 @@ export interface SessionState {
  * 先用 refresh 轮换出新令牌再拉资料——否则 30 天 refresh 形同虚设（QA W-1）。
  */
 export function useSession(): SessionState {
-  const [status, setStatus] = useState<SessionState["status"]>(() =>
-    hasSession() ? "authenticated" : "anonymous",
-  );
+  const [status, setStatus] = useState<SessionState["status"]>(() => {
+    consumeHandoffFromWindow();
+    return hasSession() ? "authenticated" : "anonymous";
+  });
   const [profile, setProfile] = useState<AccountProfile | undefined>(undefined);
   const [accessToken, setAccessToken] = useState<string | undefined>(
     () => readSession()?.accessToken,

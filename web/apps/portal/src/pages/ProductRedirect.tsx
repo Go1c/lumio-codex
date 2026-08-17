@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
-import { productSiteOrigin } from "@lumio/ui";
+import { sessionTokensForHandoff, withHandoff } from "@lumio/auth";
+import { cookieDomainFor, productSiteOrigin } from "@lumio/ui";
 
 import { goExternal } from "@/lib/redirect";
 
@@ -11,7 +12,7 @@ export function ProductRedirect({
   path: "/codex" | "/claude";
   label: string;
 }) {
-  const href = `${productSiteOrigin()}${path}`;
+  const href = outboundProductUrl(`${productSiteOrigin()}${path}`);
 
   useEffect(() => {
     goExternal(href);
@@ -26,4 +27,23 @@ export function ProductRedirect({
       </a>
     </div>
   );
+}
+
+function outboundProductUrl(url: string): string {
+  const tokens = sessionTokensForHandoff();
+  if (!tokens) return url;
+  let dest: URL;
+  try {
+    dest = new URL(url);
+  } catch {
+    return url;
+  }
+  if (typeof window !== "undefined") {
+    const here = window.location.hostname;
+    if (here === dest.hostname) return url;
+    const hereJar = cookieDomainFor(here);
+    const destJar = cookieDomainFor(dest.hostname);
+    if (hereJar && destJar && hereJar === destJar) return url;
+  }
+  return withHandoff(url, tokens);
 }
