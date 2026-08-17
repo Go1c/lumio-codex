@@ -14,6 +14,7 @@ export type { AuroraVariant } from "./components/Aurora";
 export { ScrollHint } from "./components/ScrollHint";
 export { ProductDownloads } from "./components/ProductDownloads";
 export * from "./lib/releases";
+export { isServerRender } from "./lib/ssr";
 export { HelpIndex, HelpArticle } from "./help/HelpCenter";
 export { HELP_TOPICS, helpTopicBySlug, helpCanonicalNote } from "./help/topics";
 export type { HelpTopic } from "./help/topics";

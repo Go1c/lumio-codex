@@ -1,0 +1,127 @@
+# bestcodex.app
+#
+# 立场：全部允许——检索、AI 检索、AI 训练都放开。曝光优先于内容管控。
+#
+# 重要：这份文件只有在 Cloudflare 后台关掉「Managed robots.txt」与「AI bots 拦截」
+# 之后才会真正生效。边缘侧的托管规则会覆盖源站的 robots.txt，也会在 HTTP 层直接
+# 挡掉 AI 爬虫——那种情况下这里写什么都不算。
+
+User-agent: *
+Allow: /
+
+# ---------------------------------------------------------------------------
+# 主流搜索引擎（显式列出，便于排查，不改变上面的默认允许）
+# ---------------------------------------------------------------------------
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Baiduspider
+Allow: /
+
+User-agent: Baiduspider-render
+Allow: /
+
+User-agent: Sogou web spider
+Allow: /
+
+User-agent: Sogou inst spider
+Allow: /
+
+# 神马搜索（移动端，UC / 阿里系）
+User-agent: Yisouspider
+Allow: /
+
+# 360 搜索
+User-agent: 360Spider
+Allow: /
+
+User-agent: HaoSouSpider
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+User-agent: SeznamBot
+Allow: /
+
+User-agent: Yeti
+Allow: /
+
+# ---------------------------------------------------------------------------
+# AI 检索与训练爬虫
+# ---------------------------------------------------------------------------
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+# Google 的 AI 训练 / Gemini 独立开关，与 Googlebot 分开控制
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+# 字节（豆包 / 头条搜索）
+User-agent: Bytespider
+Allow: /
+
+User-agent: Amazonbot
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
+User-agent: DuckAssistBot
+Allow: /
+
+User-agent: YouBot
+Allow: /
+
+User-agent: Diffbot
+Allow: /
+
+# Cloudflare 的内容信号提案：把「允许检索 / 允许喂给 AI / 允许训练」写成机器可读的声明。
+# 目前是新兴规范，不是所有爬虫都读，但声明成本为零。
+Content-Signal: search=yes,ai-input=yes,ai-train=yes
+
+Sitemap: https://bestcodex.app/sitemap.xml

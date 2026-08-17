@@ -26,11 +26,13 @@ export function Faq({ items, defaultOpen = null }: { items: Array<[string, strin
               {question}
               <span aria-hidden="true">{expanded ? "−" : "+"}</span>
             </button>
-            {expanded && (
-              <div className="a" id={panelId}>
-                {answer}
-              </div>
-            )}
+            {/*
+              答案始终渲染，折叠时只用 hidden 收起。搜索引擎与 AI 引擎都靠首屏 HTML
+              抽取问答对；条件渲染会让折叠项的答案根本不进 HTML。
+            */}
+            <div className="a" id={panelId} hidden={!expanded}>
+              {answer}
+            </div>
           </div>
         );
       })}

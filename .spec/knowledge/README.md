@@ -20,6 +20,7 @@ metadata:
 | [`standards/testing.md`](standards/testing.md) | 测试与验收:测试分层政策、TDD 时机、验收 DoD 与验证证据——实现功能/修 bug 时查 |
 | [`standards/dispatch.md`](standards/dispatch.md) | 派活模板:worker 派遣与 reviewer 触发的 prompt 骨架——主 loop 扇出任务或触发审查时查 |
 | [`standards/ops-release.md`](standards/ops-release.md) | 部署/打包/发版/后台维护入口——准备上线推送、打安装包、发 Release 或改运维流程时查 |
+| [`standards/seo-geo.md`](standards/seo-geo.md) | 搜索引擎与 AI 引擎可见性:预渲染契约、SSR 守卫、元数据单一权威与回答型内容约定——改产品站页面、路由或文案时查 |
 
 ## features/(功能设计与记录 · 供了解)
 

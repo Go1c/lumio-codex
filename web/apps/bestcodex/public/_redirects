@@ -1,0 +1,10 @@
+# Cloudflare Pages 重定向。nginx 托管时在 conf 里配等价规则。
+#
+# 历史路径 → 现路径。以前靠客户端 <Navigate>，爬虫看不到跳转，权重也传不过去。
+/pricing    /claude#pricing    301
+/download   /#downloads        301
+
+# 刻意没有 `/* /index.html 200` 这条 SPA 兜底：
+# 预渲染后每条路由都是真实文件（/claude/index.html 等），不需要回退；
+# 留着兜底会让任意错误路径都返回 200，形成全站软 404。未命中的路径应落到
+# dist/404.html 并带真 404 状态码。
