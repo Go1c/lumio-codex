@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { GUIDES_EN } from "@/guides.en";
 import { GUIDES } from "@/guides";
 import { SEO_ROUTES, headDataFor, markdownPages, renderRoute } from "@/prerender";
 
@@ -61,6 +62,18 @@ describe("预渲染产出爬虫可读的正文", () => {
     }
   });
 
+  it("指南层不是孤岛：每个落地页都链得到", () => {
+    // 只进 sitemap 的页面爬得慢也评不高，百度尤其依赖站内链接图。
+    for (const path of ["/", "/claude", "/help"]) {
+      expect(renderRoute(path), `${path} 不链向指南`).toContain('href="/guides"');
+    }
+  });
+
+  it("两种语言在任何一页都能互相到达", () => {
+    expect(renderRoute("/")).toContain('href="/en/guides"');
+    expect(renderRoute("/en/guides")).toContain('href="/guides"');
+  });
+
   it("未命中路由渲染 404 页而不是空白", () => {
     const html = renderRoute("/definitely-not-a-page");
     expect(html.length).toBeGreaterThan(200);
@@ -90,10 +103,47 @@ describe("Markdown 镜像", () => {
     expect(pages.length).toBeGreaterThanOrEqual(GUIDES.length);
   });
 
+  it("英文指南也有镜像", () => {
+    const pages = markdownPages();
+    for (const guide of GUIDES_EN) {
+      expect(pages.some((page) => page.path === `/en/guides/${guide.slug}`)).toBe(true);
+    }
+  });
+
   it("每份都是合法 Markdown 且带回源链接", () => {
     for (const page of markdownPages()) {
       expect(page.markdown.startsWith("# "), `${page.path} 缺 h1`).toBe(true);
-      expect(page.markdown).toContain("来源：https://");
+      expect(page.markdown, `${page.path} 缺回源链接`).toMatch(/(来源：|Source: )https:\/\//);
     }
+  });
+});
+
+describe("英文层", () => {
+  it("英文指南正文进 HTML，且外壳文案也是英文", () => {
+    const html = renderRoute("/en/guides");
+    expect(html).toContain("Common questions");
+    expect(html).toContain("Skip to main content");
+    // 中文页脚会把英文页的语言信号搅浑。
+    expect(html).toContain("independent project");
+  });
+
+  it("英文页的 lang 与 hreflang 成对给出，x-default 指中文", () => {
+    const head = headDataFor("/en/guides/claude-code-ban")!;
+    expect(head.locale).toBe("en");
+    const byLang = new Map(head.alternates.map((alt) => [alt.hreflang, alt.href]));
+    expect(byLang.get("en")).toMatch(/\/en\/guides\/claude-code-ban$/);
+    expect(byLang.get("zh-CN")).toMatch(/\/guides\/claude-code-ban$/);
+    expect(byLang.get("x-default")).toBe(byLang.get("zh-CN"));
+  });
+
+  it("中文页也发同一组 hreflang——单向的会被引擎忽略", () => {
+    const zh = headDataFor("/guides/claude-code-ban")!;
+    const en = headDataFor("/en/guides/claude-code-ban")!;
+    expect(zh.locale).toBe("zh-CN");
+    expect(zh.alternates).toEqual(en.alternates);
+  });
+
+  it("没有英文版的页面不发 hreflang", () => {
+    expect(headDataFor("/help")!.alternates).toEqual([]);
   });
 });

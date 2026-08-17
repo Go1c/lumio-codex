@@ -157,6 +157,24 @@
   line-height: 1.55;
 }
 
+.footer-nav-product {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.footer-nav-product a {
+  color: var(--gray-dim);
+  text-decoration: none;
+}
+
+.footer-nav-product a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
 .site.is-product .hero {
   max-width: 980px;
   margin: 0 auto;

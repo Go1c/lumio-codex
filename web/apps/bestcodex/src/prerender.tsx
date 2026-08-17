@@ -12,6 +12,7 @@ import { StaticRouter } from "react-router-dom/server";
 import { HELP_TOPICS } from "@lumio/ui";
 
 import { App } from "./App";
+import { GUIDES_EN } from "./guides.en";
 import { GUIDES } from "./guides";
 import { SEO_ROUTES, absoluteUrl, seoForPath, siteOrigin } from "./seo";
 
@@ -41,21 +42,30 @@ export interface MarkdownPage {
 export function markdownPages(): MarkdownPage[] {
   const pages: MarkdownPage[] = [];
 
-  for (const guide of GUIDES) {
-    const body = [
-      `# ${guide.title}`,
-      "",
-      `> ${guide.question}`,
-      "",
-      guide.answer,
-      "",
-      ...guide.sections.flatMap((section) => [`## ${section.heading}`, "", ...section.body, ""]),
-      `---`,
-      "",
-      `来源：${absoluteUrl(`/guides/${guide.slug}`)} · 最后更新 ${guide.updated}`,
-      "",
-    ].join("\n");
-    pages.push({ path: `/guides/${guide.slug}`, title: guide.title, markdown: body });
+  for (const { base, guides, footer } of [
+    { base: "/guides", guides: GUIDES, footer: (url: string, date: string) => `来源：${url} · 最后更新 ${date}` },
+    {
+      base: "/en/guides",
+      guides: GUIDES_EN,
+      footer: (url: string, date: string) => `Source: ${url} · last updated ${date}`,
+    },
+  ]) {
+    for (const guide of guides) {
+      const body = [
+        `# ${guide.title}`,
+        "",
+        `> ${guide.question}`,
+        "",
+        guide.answer,
+        "",
+        ...guide.sections.flatMap((section) => [`## ${section.heading}`, "", ...section.body, ""]),
+        `---`,
+        "",
+        footer(absoluteUrl(`${base}/${guide.slug}`), guide.updated),
+        "",
+      ].join("\n");
+      pages.push({ path: `${base}/${guide.slug}`, title: guide.title, markdown: body });
+    }
   }
 
   for (const topic of HELP_TOPICS) {
@@ -80,10 +90,23 @@ export function markdownPages(): MarkdownPage[] {
 export function headDataFor(path: string) {
   const route = seoForPath(path);
   if (!route) return undefined;
+  const zh = route.locale === "zh-CN" ? route.canonicalPath : route.alternatePath;
+  const en = route.locale === "en" ? route.canonicalPath : route.alternatePath;
   return {
     title: route.title,
     description: route.description,
     canonical: absoluteUrl(route.canonicalPath),
     jsonLd: route.jsonLd,
+    locale: route.locale,
+    // 只有两种语言都存在时才发 hreflang；单语页发了等于自指，没有意义。
+    // x-default 指中文版：主语言，也是未匹配语言时的落点。
+    alternates:
+      zh && en
+        ? [
+            { hreflang: "zh-CN", href: absoluteUrl(zh) },
+            { hreflang: "en", href: absoluteUrl(en) },
+            { hreflang: "x-default", href: absoluteUrl(zh) },
+          ]
+        : [],
   };
 }

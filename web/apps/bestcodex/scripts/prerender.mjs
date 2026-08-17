@@ -55,13 +55,18 @@ function jsonLdScript(node) {
   return `    <script type="application/ld+json">${json}</script>`;
 }
 
-function headFor(head, { isHome = false } = {}) {
+function headFor(head, { isHome = false, noindex = false } = {}) {
   const title = escapeHtml(head.title);
   const description = escapeHtml(head.description);
   const canonical = escapeHtml(head.canonical);
 
   return [
     `    <title>${title}</title>`,
+    // 摘要与预览尺寸默认由引擎自行裁剪，显式放开：AI 摘要与 SERP 富摘要都靠它取到完整段落。
+    // 404 反过来必须 noindex，否则会以「页面不存在」的标题进索引。
+    noindex
+      ? `    <meta name="robots" content="noindex, follow" />`
+      : `    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />`,
     ...(isHome
       ? VERIFICATIONS.map(
           ([name, token]) =>
@@ -70,9 +75,13 @@ function headFor(head, { isHome = false } = {}) {
       : []),
     `    <meta name="description" content="${description}" />`,
     `    <link rel="canonical" href="${canonical}" />`,
+    ...(head.alternates ?? []).map(
+      (alt) =>
+        `    <link rel="alternate" hreflang="${alt.hreflang}" href="${escapeHtml(alt.href)}" />`,
+    ),
     `    <meta property="og:type" content="website" />`,
     `    <meta property="og:site_name" content="BestCodex" />`,
-    `    <meta property="og:locale" content="zh_CN" />`,
+    `    <meta property="og:locale" content="${head.locale === "en" ? "en_US" : "zh_CN"}" />`,
     `    <meta property="og:title" content="${title}" />`,
     `    <meta property="og:description" content="${description}" />`,
     `    <meta property="og:url" content="${canonical}" />`,
@@ -94,7 +103,12 @@ function stripTemplateHead(template) {
 
 function buildPage(template, head, appHtml, options) {
   const withoutDefaults = stripTemplateHead(template);
-  const withHead = withoutDefaults.replace("</head>", `${headFor(head, options)}\n  </head>`);
+  // `<html lang>` 必须跟着页面语言走：搜索引擎与朗读器都以它为准，模板里写死的是 zh-CN。
+  const withLang = withoutDefaults.replace(
+    /<html([^>]*)\slang="[^"]*"/i,
+    `<html$1 lang="${head.locale === "en" ? "en" : "zh-CN"}"`,
+  );
+  const withHead = withLang.replace("</head>", `${headFor(head, options)}\n  </head>`);
   const marker = '<div id="root"></div>';
   if (!withHead.includes(marker)) {
     throw new Error(`dist/index.html 里找不到 ${marker}，预渲染无法注入正文`);
@@ -116,45 +130,84 @@ function sitemapXml(routes) {
   const entries = routes
     // canonical 不指向自己的路由（例如 /codex → /）不进 sitemap，避免自相矛盾的信号。
     .filter((route) => route.canonicalPath === route.path)
-    .map((route) =>
-      [
+    .map((route) => {
+      // sitemap 里的 xhtml:link 是 Google 认可的第二种 hreflang 写法。<head> 里已经有一份，
+      // 两处都给能提高被正确解析的概率，代价只是 sitemap 变长。
+      const head = headDataFor(route.path);
+      const alternates = (head?.alternates ?? []).map(
+        (alt) =>
+          `    <xhtml:link rel="alternate" hreflang="${alt.hreflang}" href="${alt.href}" />`,
+      );
+      return [
         "  <url>",
         `    <loc>${absoluteUrl(route.path)}</loc>`,
+        ...alternates,
         `    <lastmod>${route.lastmod}</lastmod>`,
         `    <changefreq>${route.changefreq}</changefreq>`,
         `    <priority>${route.priority.toFixed(1)}</priority>`,
         "  </url>",
-      ].join("\n"),
-    )
+      ].join("\n");
+    })
     .join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries}\n</urlset>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">\n${entries}\n</urlset>\n`;
 }
 
 function llmsTxt(routes, markdown) {
   const mdByPath = new Map(markdown.map((page) => [page.path, page]));
+
+  // 中英分节，各用本语言的标点与措辞。混排会让引擎判不准每条条目的语言。
+  const sections = [
+    {
+      heading: "## 页面（中文）",
+      locale: "zh-CN",
+      entry: (title, url, note, md) =>
+        `- [${title}](${url})：${note}${md ? ` （纯文本：${md}）` : ""}`,
+    },
+    {
+      heading: "## Pages (English)",
+      locale: "en",
+      entry: (title, url, note, md) =>
+        `- [${title}](${url}): ${note}${md ? ` (plain text: ${md})` : ""}`,
+    },
+  ];
+
   const lines = [
     "# BestCodex",
     "",
     "> 一个启动器，两种工作方式：零配置接入官方 Codex，以及把官方 Claude Code 跑在你自己的服务器上（独立环境、固定 IP、持久会话、双向同步）。",
     "",
+    "> One launcher, two ways to work: use the official Codex with zero configuration, and run the official Claude Code on your own server (isolated environment, stable IP, persistent sessions, two-way sync).",
+    "",
     "BestCodex 是独立项目，与 OpenAI、Anthropic 无从属、赞助或认可关系。桌面端是",
     "https://github.com/BigPizzaV3/CodexPlusPlus 的 AGPL-3.0 fork。",
     "网上存在同名但无关的第三方服务，本项目只有 bestcodex.app 一个站点。",
     "",
-    "## 页面",
+    "BestCodex is an independent project, not affiliated with, sponsored by, or endorsed by OpenAI",
+    "or Anthropic. The desktop app is an AGPL-3.0 fork of the repository above. Unrelated services",
+    "share this name; bestcodex.app is the only site belonging to this project.",
     "",
   ];
 
-  for (const route of routes) {
-    if (route.canonicalPath !== route.path) continue;
-    const note = route.llmsNote ?? route.description;
-    const md = mdByPath.get(route.path);
-    const suffix = md ? ` （纯文本：${absoluteUrl(`${route.path}.md`)}）` : "";
-    lines.push(`- [${route.title}](${absoluteUrl(route.path)})：${note}${suffix}`);
+  for (const section of sections) {
+    lines.push(section.heading, "");
+    for (const route of routes) {
+      if (route.canonicalPath !== route.path) continue;
+      if (route.locale !== section.locale) continue;
+      const md = mdByPath.get(route.path) ? absoluteUrl(`${route.path}.md`) : undefined;
+      lines.push(
+        section.entry(
+          route.title,
+          absoluteUrl(route.path),
+          route.llmsNote ?? route.description,
+          md,
+        ),
+      );
+    }
+    lines.push("");
   }
 
-  lines.push("", "## 其他", "", `- [源码仓库](https://github.com/Go1c/lumio-codex)`, "");
+  lines.push("## 其他 / Other", "", `- [源码仓库 / Source](https://github.com/Go1c/lumio-codex)`, "");
   return lines.join("\n");
 }
 
@@ -181,7 +234,7 @@ async function main() {
   };
   await writeFileEnsured(
     "404.html",
-    buildPage(template, notFoundHead, renderRoute("/__not_found__")),
+    buildPage(template, notFoundHead, renderRoute("/__not_found__"), { noindex: true }),
   );
 
   const markdown = markdownPages();

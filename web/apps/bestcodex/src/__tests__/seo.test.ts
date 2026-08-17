@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { GUIDES_EN } from "@/guides.en";
 import { GUIDES } from "@/guides";
 import { REPO_URL, SEO_ROUTES, pageTitle, seoForPath } from "@/seo";
 
@@ -11,8 +12,10 @@ describe("SEO 路由元数据", () => {
     for (const route of SEO_ROUTES) {
       expect(route.title.length, `${route.path} 缺标题`).toBeGreaterThan(0);
       expect(route.description.length, `${route.path} 缺描述`).toBeGreaterThan(0);
-      // 过长的 description 会被搜索结果截断，等于白写。
-      expect(route.description.length, `${route.path} 描述过长`).toBeLessThanOrEqual(130);
+      // 过长的 description 会被搜索结果截断，等于白写。SERP 按像素宽度截断，中文字符是
+      // 英文的两倍宽，所以两种语言的字数上限不同。
+      const limit = route.locale === "en" ? 160 : 130;
+      expect(route.description.length, `${route.path} 描述过长`).toBeLessThanOrEqual(limit);
     }
   });
 
@@ -64,6 +67,28 @@ describe("SEO 路由元数据", () => {
     expect(claude.offers).toBeDefined();
     // 充值制不是自动续费包月，结构化数据的措辞必须与页面一致。
     expect(String((claude.offers as Record<string, unknown>).description)).toMatch(/不是自动续费/);
+  });
+
+  it("hreflang 双向互指，且指向的路径真实存在", () => {
+    const byPath = new Map(SEO_ROUTES.map((route) => [route.path, route]));
+    const paired = SEO_ROUTES.filter((route) => route.alternatePath);
+    // 只有中文版存在英文层是没意义的，至少要有一对。
+    expect(paired.length).toBeGreaterThan(0);
+
+    for (const route of paired) {
+      const other = byPath.get(route.alternatePath!);
+      expect(other, `${route.path} 的 alternatePath 指向不存在的路由`).toBeDefined();
+      // 单向 hreflang 会被搜索引擎忽略：对方必须指回来。
+      expect(other!.alternatePath, `${route.path} 与 ${other!.path} 没有互指`).toBe(route.path);
+      expect(other!.locale, `${route.path} 的另一语言版本语言相同`).not.toBe(route.locale);
+    }
+  });
+
+  it("/en 下的路由都标成英文，其余都是中文", () => {
+    for (const route of SEO_ROUTES) {
+      const expected = route.path.startsWith("/en/") ? "en" : "zh-CN";
+      expect(route.locale, `${route.path} 语言标错`).toBe(expected);
+    }
   });
 
   it("sitemap 的 lastmod 是合法 ISO 日期", () => {
@@ -133,6 +158,51 @@ describe("指南内容", () => {
     for (const guide of GUIDES) {
       const routeTitle = seoForPath(`/guides/${guide.slug}`)!.title;
       expect(routeTitle.match(/BestCodex/g)?.length ?? 0, `${guide.slug} 品牌名重复`).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe("英文指南", () => {
+  it("slug 与中文版一一对应——hreflang 靠它互指", () => {
+    expect(GUIDES_EN.map((guide) => guide.slug)).toEqual(GUIDES.map((guide) => guide.slug));
+  });
+
+  it("每篇都有分节正文与自包含答案", () => {
+    for (const guide of GUIDES_EN) {
+      expect(guide.answer.length, `${guide.slug} 答案过短`).toBeGreaterThanOrEqual(80);
+      expect(guide.sections.length, `${guide.slug} 没有分节`).toBeGreaterThan(0);
+      for (const section of guide.sections) {
+        expect(section.body.length, `${guide.slug} / ${section.heading} 空节`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("英文正文里没有残留中文，避免混排", () => {
+    for (const guide of GUIDES_EN) {
+      const text = [
+        guide.title,
+        guide.question,
+        guide.summary,
+        guide.answer,
+        ...guide.sections.flatMap((section) => [section.heading, ...section.body]),
+      ].join(" ");
+      // ¥ 是价格单位，两种语言都用同一口径，不算中文残留。
+      expect(text.match(/[\u4e00-\u9fff]/g), `${guide.slug} 混了中文`).toBeNull();
+    }
+  });
+
+  it("封号这篇英文版同样只说降低风险，不做保证", () => {
+    const ban = GUIDES_EN.find((guide) => guide.slug === "claude-code-ban")!;
+    expect(ban.answer).toMatch(/no approach can guarantee/i);
+  });
+
+  it("英文站内链接都指向 /en 下的页面，不把读者甩回中文页", () => {
+    for (const guide of GUIDES_EN) {
+      const body = guide.sections.flatMap((section) => section.body).join(" ");
+      const links = [...`${guide.answer} ${body}`.matchAll(/\]\((\/[^)]+)\)/g)].map((m) => m[1]);
+      for (const link of links) {
+        expect(link.startsWith("/en/"), `${guide.slug} 链到中文页 ${link}`).toBe(true);
+      }
     }
   });
 });

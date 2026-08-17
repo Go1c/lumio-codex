@@ -14,11 +14,14 @@ import { HELP_TOPICS, productSiteOrigin } from "@lumio/ui";
 
 import { CLAUDE_FAQS, CODEX_FAQS, PLAN } from "@/content";
 import { GUIDES } from "@/guides";
+import { GUIDES_EN } from "@/guides.en";
 
 /** GitHub 仓库：结构化数据用它做实体绑定，和同名无关站点区分开。 */
 export const REPO_URL = "https://github.com/Go1c/lumio-codex";
 const UPSTREAM_URL = "https://github.com/BigPizzaV3/CodexPlusPlus";
 const LAST_REVIEWED = "2026-08-17";
+
+export type Locale = "zh-CN" | "en";
 
 export interface RouteSeo {
   /** 站内路径，同时是预渲染产物的目录名。 */
@@ -34,6 +37,13 @@ export interface RouteSeo {
   jsonLd: Record<string, unknown>[];
   /** llms.txt 用的一句话说明；缺省用 description。 */
   llmsNote?: string;
+  /** 页面语言，决定预渲染产出的 `<html lang>`。 */
+  locale: Locale;
+  /**
+   * 另一语言版本的路径。只在两种语言都存在时填，双向互指——单向 hreflang 会被引擎忽略。
+   * x-default 一律指中文版（主语言）。
+   */
+  alternatePath?: string;
 }
 
 export function siteOrigin(): string {
@@ -134,6 +144,7 @@ function techArticle(fields: {
   description: string;
   path: string;
   updated: string;
+  locale: Locale;
 }): Record<string, unknown> {
   return {
     "@context": "https://schema.org",
@@ -141,7 +152,7 @@ function techArticle(fields: {
     headline: fields.headline,
     description: fields.description,
     url: absoluteUrl(fields.path),
-    inLanguage: "zh-CN",
+    inLanguage: fields.locale,
     dateModified: fields.updated,
     author: { "@type": "Organization", name: "BestCodex" },
     publisher: { "@type": "Organization", name: "BestCodex", url: absoluteUrl("/") },
@@ -157,7 +168,7 @@ const CLAUDE_DESCRIPTION =
   "官方 Claude Code 跑在你自己的服务器上：独立环境、固定 IP、持久会话，显著降低封号风险。文件双向同步，机密文件默认不同步，冲突不静默覆盖。";
 
 function staticRoutes(): RouteSeo[] {
-  return [
+  const routes: Omit<RouteSeo, "locale">[] = [
     {
       path: "/",
       title: HOME_TITLE,
@@ -212,8 +223,26 @@ function staticRoutes(): RouteSeo[] {
       priority: 0.8,
       jsonLd: [breadcrumb([{ name: "指南", path: "/guides" }])],
       llmsNote: "指南索引：比帮助中心更长的回答型内容。",
+      alternatePath: "/en/guides",
+    },
+    {
+      path: "/en/guides",
+      title: "Guides · BestCodex",
+      description:
+        "Lowering Claude Code ban risk, running it on your own server, zero-config Codex, and the macOS “damaged app” fix.",
+      canonicalPath: "/en/guides",
+      lastmod: LAST_REVIEWED,
+      changefreq: "weekly",
+      priority: 0.8,
+      jsonLd: [breadcrumb([{ name: "Guides", path: "/en/guides" }])],
+      llmsNote: "English guide index.",
+      alternatePath: "/guides",
     },
   ];
+  return routes.map((route) => ({
+    ...route,
+    locale: route.path.startsWith("/en") ? "en" : "zh-CN",
+  }));
 }
 
 function helpRoutes(): RouteSeo[] {
@@ -225,12 +254,14 @@ function helpRoutes(): RouteSeo[] {
     lastmod: LAST_REVIEWED,
     changefreq: "monthly" as const,
     priority: 0.6,
+    locale: "zh-CN" as const,
     jsonLd: [
       techArticle({
         headline: topic.title,
         description: topic.summary,
         path: `/help/${topic.slug}`,
         updated: LAST_REVIEWED,
+        locale: "zh-CN",
       }),
       breadcrumb([
         { name: "帮助", path: "/help" },
@@ -241,29 +272,42 @@ function helpRoutes(): RouteSeo[] {
   }));
 }
 
-function guideRoutes(): RouteSeo[] {
-  return GUIDES.map((guide) => ({
-    path: `/guides/${guide.slug}`,
+/**
+ * 指南路由，中英同构。slug 两种语言一致，所以 `alternatePath` 直接互指，
+ * 满足 hreflang 必须双向的要求。
+ */
+function guideRoutes(locale: Locale): RouteSeo[] {
+  const en = locale === "en";
+  const guides = en ? GUIDES_EN : GUIDES;
+  const base = en ? "/en/guides" : "/guides";
+  const otherBase = en ? "/guides" : "/en/guides";
+  const crumb = en ? "Guides" : "指南";
+
+  return guides.map((guide) => ({
+    path: `${base}/${guide.slug}`,
     // 标题里已经带品牌就不再加后缀，避免「BestCodex 与 Codex++ 的区别 · BestCodex」这种重复。
     // 关键词在前、品牌在后：SERP 截断时丢掉的是品牌而不是查询词。
     title: guide.title.includes("BestCodex") ? guide.title : `${guide.title} · BestCodex`,
     description: guide.summary,
-    canonicalPath: `/guides/${guide.slug}`,
+    canonicalPath: `${base}/${guide.slug}`,
     lastmod: guide.updated,
     changefreq: "monthly" as const,
     priority: 0.7,
+    locale,
+    alternatePath: `${otherBase}/${guide.slug}`,
     jsonLd: [
       techArticle({
         headline: guide.title,
         description: guide.summary,
-        path: `/guides/${guide.slug}`,
+        path: `${base}/${guide.slug}`,
         updated: guide.updated,
+        locale,
       }),
       // 指南本身就是在回答一个具体问题，用 FAQPage 把「问题 → 自包含答案」显式喂给引擎。
       faqPage([[guide.question, guide.answer]]),
       breadcrumb([
-        { name: "指南", path: "/guides" },
-        { name: guide.title, path: `/guides/${guide.slug}` },
+        { name: crumb, path: base },
+        { name: guide.title, path: `${base}/${guide.slug}` },
       ]),
     ],
     llmsNote: guide.question,
@@ -271,7 +315,12 @@ function guideRoutes(): RouteSeo[] {
 }
 
 /** 需要预渲染并进 sitemap 的全部路由。 */
-export const SEO_ROUTES: RouteSeo[] = [...staticRoutes(), ...helpRoutes(), ...guideRoutes()];
+export const SEO_ROUTES: RouteSeo[] = [
+  ...staticRoutes(),
+  ...helpRoutes(),
+  ...guideRoutes("zh-CN"),
+  ...guideRoutes("en"),
+];
 
 export function seoForPath(pathname: string): RouteSeo | undefined {
   const normalized = pathname !== "/" && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
@@ -284,6 +333,7 @@ export function pageTitle(pathname: string): string {
   if (route) return route.title;
   if (pathname === "/download") return HOME_TITLE;
   if (pathname === "/pricing") return CLAUDE_TITLE;
+  if (pathname.startsWith("/en/guides/")) return "No such guide · BestCodex";
   if (pathname.startsWith("/help/")) return "没有这篇说明 · BestCodex";
   if (pathname.startsWith("/guides/")) return "没有这篇指南 · BestCodex";
   return "页面不存在 · BestCodex";

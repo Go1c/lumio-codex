@@ -3,8 +3,13 @@ export * from "./components/ui";
 export * from "./components/fields";
 export { Modal } from "./components/Modal";
 export { ToastProvider, useToast } from "./components/Toast";
-export { SiteShell, SiteLink } from "./components/SiteShell";
-export type { SiteShellProps, SiteNavItem, SiteAccountState } from "./components/SiteShell";
+export { SiteShell, SiteLink, EN_SITE_LABELS } from "./components/SiteShell";
+export type {
+  SiteShellProps,
+  SiteShellLabels,
+  SiteNavItem,
+  SiteAccountState,
+} from "./components/SiteShell";
 export { OpenAIMark, ClaudeMark, LumioLogo, BestCodexMark } from "./components/brand";
 export type { BrandMarkProps } from "./components/brand";
 export { Reveal } from "./components/Reveal";

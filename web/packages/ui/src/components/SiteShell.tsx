@@ -15,16 +15,38 @@ export interface SiteAccountState {
   email?: string;
 }
 
+/** 外壳里的固定文案。默认中文；英文页传 `EN_SITE_LABELS` 覆盖。 */
+export interface SiteShellLabels {
+  skipToContent: string;
+  productNav: string;
+  accountNav: string;
+  siteLinks: string;
+  help: string;
+  account: string;
+  login: string;
+  signup: string;
+  download: string;
+  productFooter: string;
+}
+
 export interface SiteShellProps {
   brand: { name: string; nameEn?: string; href?: string };
   site?: SiteId;
+  /** 产品站顶栏中间是 Codex / Claude 切换，所以这些条目渲染在右侧账号区之前。 */
   nav?: SiteNavItem[];
   account?: SiteAccountState;
   accountLinks: AccountLinks;
+  /**
+   * 页脚互链。只进 sitemap 的页面对爬虫是孤岛——百度尤其依赖站内链接图去发现和
+   * 评估页面，所以指南、帮助与语言版本必须每页可达。
+   */
+  footerLinks?: SiteNavItem[];
   footerExtra?: ReactNode;
   /** 产品站顶栏「下载」的落点。帮助页应指回首页锚点。 */
   downloadHref?: string;
   helpHref?: string;
+  /** 只需覆盖要改的几条，其余用中文默认值。 */
+  labels?: Partial<SiteShellLabels>;
   children: ReactNode;
 }
 
@@ -33,8 +55,34 @@ const PRODUCT_SWITCH = [
   { id: "cc" as const, label: "Claude", to: "/claude" },
 ];
 
-const PRODUCT_FOOTER =
-  "BestCodex 是独立项目，与 OpenAI、Anthropic 无从属关系。OpenAI、ChatGPT、Codex、Claude、Anthropic 为其各自所有者的商标。官方应用需单独安装。开源软件，AGPL-3.0-only。";
+const ZH_LABELS: SiteShellLabels = {
+  skipToContent: "跳到主要内容",
+  productNav: "产品",
+  accountNav: "账号导航",
+  siteLinks: "站内导航",
+  help: "帮助",
+  account: "账户",
+  login: "登录",
+  signup: "注册",
+  download: "下载",
+  productFooter:
+    "BestCodex 是独立项目，与 OpenAI、Anthropic 无从属关系。OpenAI、ChatGPT、Codex、Claude、Anthropic 为其各自所有者的商标。官方应用需单独安装。开源软件，AGPL-3.0-only。",
+};
+
+/** 英文页用。免责声明的口径必须与中文版一致，只是换语言。 */
+export const EN_SITE_LABELS: SiteShellLabels = {
+  skipToContent: "Skip to main content",
+  productNav: "Products",
+  accountNav: "Account",
+  siteLinks: "Site links",
+  help: "Help",
+  account: "Account",
+  login: "Sign in",
+  signup: "Sign up",
+  download: "Download",
+  productFooter:
+    "BestCodex is an independent project, not affiliated with OpenAI or Anthropic. OpenAI, ChatGPT, Codex, Claude, and Anthropic are trademarks of their respective owners. Official applications must be installed separately. Open source, AGPL-3.0-only.",
+};
 
 const DOWNLOAD_BTN_STYLE: CSSProperties = {
   color: "#ffffff",
@@ -97,17 +145,20 @@ export function SiteShell({
   nav = [],
   account,
   accountLinks,
+  footerLinks = [],
   footerExtra,
   downloadHref = "/#downloads",
   helpHref = "/help",
+  labels,
   children,
 }: SiteShellProps) {
   const product = isProductSite(site);
+  const t = labels ? { ...ZH_LABELS, ...labels } : ZH_LABELS;
 
   return (
     <div className={`site theme-${site ?? "portal"}${product ? " is-product" : ""}`}>
       <a className="skip-link" href="#main">
-        跳到主要内容
+        {t.skipToContent}
       </a>
       <header className={`site-header${product ? " site-header-product" : ""}`}>
         <SiteLink href={brand.href ?? "/"} className="logo">
@@ -118,7 +169,7 @@ export function SiteShell({
           {brand.nameEn && <span className="logo-en">{brand.nameEn}</span>}
         </SiteLink>
         {product ? (
-          <nav className="product-switch" aria-label="产品">
+          <nav className="product-switch" aria-label={t.productNav}>
             {PRODUCT_SWITCH.map((item) => (
               <Link
                 key={item.id}
@@ -141,27 +192,33 @@ export function SiteShell({
           )
         )}
         <span className="spacer" />
-        <nav className="site-nav site-nav-end" aria-label="账号导航">
-          {product && <SiteLink href={helpHref}>帮助</SiteLink>}
+        <nav className="site-nav site-nav-end" aria-label={t.accountNav}>
+          {product &&
+            nav.map((item) => (
+              <SiteLink key={item.href} href={item.href}>
+                {item.label}
+              </SiteLink>
+            ))}
+          {product && <SiteLink href={helpHref}>{t.help}</SiteLink>}
           {account?.status === "authenticated" && (
             <SiteLink href={accountLinks.account} className="account-link">
               <span className="avatar" aria-hidden="true">
                 {account.email?.[0]?.toUpperCase() ?? "U"}
               </span>
-              账户
+              {t.account}
             </SiteLink>
           )}
           {account?.status === "anonymous" && (
             <>
-              <SiteLink href={accountLinks.login}>登录</SiteLink>
+              <SiteLink href={accountLinks.login}>{t.login}</SiteLink>
               <SiteLink href={accountLinks.signup} className="btn btn-primary btn-sm">
-                注册
+                {t.signup}
               </SiteLink>
             </>
           )}
           {product && (
             <SiteLink href={downloadHref} className="btn-download" style={DOWNLOAD_BTN_STYLE}>
-              下载
+              {t.download}
             </SiteLink>
           )}
         </nav>
@@ -171,7 +228,16 @@ export function SiteShell({
 
       {product ? (
         <footer className="site-footer site-footer-product">
-          <p>{PRODUCT_FOOTER}</p>
+          {footerLinks.length > 0 && (
+            <nav className="footer-nav-product" aria-label={t.siteLinks}>
+              {footerLinks.map((item) => (
+                <SiteLink key={item.href} href={item.href}>
+                  {item.label}
+                </SiteLink>
+              ))}
+            </nav>
+          )}
+          <p>{t.productFooter}</p>
           {footerExtra}
         </footer>
       ) : (

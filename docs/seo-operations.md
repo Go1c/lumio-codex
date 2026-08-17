@@ -10,14 +10,16 @@
 
 | 产物 | 作用 |
 |---|---|
-| 15 份静态 HTML（每条路由一份，正文已在 `#root` 里） | 不执行 JS 的爬虫也能读到内容。这是所有收录的前提 |
-| `sitemap.xml` | 14 条可索引正本；`/codex` 因 canonical 指向 `/` 被排除 |
+| 21 份静态 HTML（每条路由一份，正文已在 `#root` 里） | 不执行 JS 的爬虫也能读到内容。这是所有收录的前提 |
+| `sitemap.xml` | 20 条可索引正本；`/codex` 因 canonical 指向 `/` 被排除。中英配对的页面带 `xhtml:link` |
 | `robots.txt` | 全部放开，含 Google / Bing / 百度 / 搜狗 / 360 / 神马 与各家 AI 爬虫 |
 | `llms.txt` | 给 AI 引擎的站点摘要与页面清单 |
-| 10 份 `.md` 纯文本镜像 | 编程 Agent 更愿意吃 Markdown |
-| `404.html` | 未命中路径返回真 404，而不是全站软 200 |
+| 15 份 `.md` 纯文本镜像 | 编程 Agent 更愿意吃 Markdown |
+| `404.html` | 未命中路径返回真 404，而不是全站软 200；带 `noindex` |
 | `_redirects` | `/pricing`、`/download` 走真 301 |
 | 每页 JSON-LD | Organization / WebSite / SoftwareApplication / FAQPage / TechArticle / BreadcrumbList |
+| 每页 `<meta name="robots">` | 放开 `max-snippet:-1` 与 `max-image-preview:large`，让 SERP 与 AI 摘要能取完整段落 |
+| `<html lang>` + `hreflang` | 中英指南双向互指，`x-default` 指中文；`<head>` 与 sitemap 各一份 |
 
 ## 二、必须手动做的
 
@@ -38,6 +40,7 @@
 2. 验证：把令牌写进环境变量 `SITE_VERIFY_GOOGLE`，重新构建部署即可（会注入首页 `<meta name="google-site-verification">`）。
 3. 提交 `https://bestcodex.app/sitemap.xml`。
 4. 用「网址检查」对 `/`、`/claude`、`/guides/claude-code-ban` 各跑一次，确认「网页可编入索引」且渲染后的 HTML 有正文。
+5. 在「国际定位」里核对 hreflang 无报错。报「没有返回标记」通常是单向互指，检查 `seo.ts` 里两侧的 `alternatePath`。
 
 Google **没有开放的推送端点**——Indexing API 只对招聘与直播类结构化数据开放，普通页面只能靠 sitemap 加 URL 检查里的「请求编入索引」。
 
@@ -53,6 +56,8 @@ Google **没有开放的推送端点**——Indexing API 只对招聘与直播�
 1. 添加站点，验证走 `SITE_VERIFY_BAIDU`（注入 `<meta name="baidu-site-verification">`）。
 2. 提交 sitemap。注意百度基本不读 `robots.txt` 里的 `Sitemap:` 指令，必须在后台提交。
 3. 在「普通收录 → 主动推送」拿 token，配到 `BAIDU_PUSH_TOKEN`，用 `npm run seo:push` 推。
+
+4. 百度不读 hreflang，`/en/` 那一层在百度眼里就是另一批页面；只按中文页做优化即可。
 
 **关于预期，说实话：** `bestcodex.app` 是境外托管、`.app` 域名、**没有 ICP 备案**。百度对这类站点的排名有明显天花板——能收录，但很难拿到靠前位置。想认真做百度流量，前提是备案 + 国内节点，那是另一个决策，不是 SEO 能补的。搜狗、360 同理，程度轻一些。
 
@@ -108,6 +113,10 @@ curl -sI https://bestcodex.app/pricing | head -3
 # 未知路径是真 404，不是 200 软 404
 curl -sI https://bestcodex.app/definitely-not-a-page | head -1
 
+# 语言标记与 hreflang（中英两侧应给出同一组三条）
+curl -s https://bestcodex.app/guides/claude-code-ban | grep -o '<html lang="[^"]*"'
+curl -s https://bestcodex.app/en/guides/claude-code-ban | grep -o 'hreflang="[^"]*"'
+
 # AI 引擎入口
 curl -s https://bestcodex.app/llms.txt | head -10
 curl -s https://bestcodex.app/guides/claude-code-ban.md | head -5
@@ -127,8 +136,9 @@ done
 
 新增页面时同步三处，否则会漂移：
 
-1. `web/apps/bestcodex/src/seo.ts` —— 路由的 title / description / canonical / JSON-LD（sitemap 与 llms.txt 都由它生成）。
-2. `web/apps/bestcodex/src/guides.ts` —— 指南正文。`answer` 必须**自包含**：被引擎单独摘出来引用时也说得通。
-3. 价格与能力口径要与 `content.ts`、帮助中心、Sub2API 收银台一致。
+1. `web/apps/bestcodex/src/seo.ts` —— 路由的 title / description / canonical / locale / JSON-LD（sitemap 与 llms.txt 都由它生成）。
+2. `web/apps/bestcodex/src/guides.ts` 与 `guides.en.ts` —— 指南正文。两边 **slug 必须一一对应**，hreflang 靠它配对。`answer` 必须**自包含**：被引擎单独摘出来引用时也说得通。
+3. 价格与能力口径要与 `content.ts`、帮助中心、Sub2API 收银台一致，中英两版口径也必须一致。
+4. 新页面必须从某个落地页或页脚链得到。只进 sitemap 的页面是孤岛，百度尤其依赖站内链接图。
 
 写回答型内容的要点：标题就是用户的原话问句；第一段直接给结论；不做无法兑现的承诺（例如封号只能说降低风险，不能说保证不封）——过度承诺在 AI 引擎里反而更难被引用。

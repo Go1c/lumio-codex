@@ -1,3 +1,5 @@
+**中文** · [English](README.en.md)
+
 # BestCodex
 
 **一个启动器，两种工作方式。** 下载一次、登录一次，窗口里两个 Tab：
@@ -5,7 +7,7 @@
 - **Codex** —— 零配置用上**官方 Codex**。不用填 Base URL、不用贴 API Key，登录后本机配置自动写好。不捆绑、不修改官方应用。
 - **Claude** —— 把**官方 Claude Code** 跑在你自己的服务器上：独立环境、固定 IP、持久会话，文件与本机双向同步。
 
-官网 [bestcodex.app](https://bestcodex.app) · 帮助 [bestcodex.app/help](https://bestcodex.app/help)
+官网 [bestcodex.app](https://bestcodex.app) · 指南 [bestcodex.app/guides](https://bestcodex.app/guides) · 帮助 [bestcodex.app/help](https://bestcodex.app/help)
 
 ## 安装
 

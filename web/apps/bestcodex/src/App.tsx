@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { isHandoffHash, useSession } from "@lumio/auth";
 import {
+  EN_SITE_LABELS,
   HelpArticle,
   HelpIndex,
   SiteShell,
@@ -16,6 +17,21 @@ import { CodexHome } from "@/pages/CodexHome";
 import { GuideArticle, GuideIndex } from "@/pages/Guides";
 import { NotFound } from "@/pages/NotFound";
 import { pageTitle } from "@/seo";
+
+/**
+ * 每页可达的站内互链。只进 sitemap 的页面对爬虫是孤岛，指南层必须从落地页链得到。
+ * 语言互链放这里而不只放正文里，是为了让两种语言在任何一页都能互相到达。
+ */
+const ZH_FOOTER_LINKS = [
+  { label: "指南", href: "/guides" },
+  { label: "帮助中心", href: "/help" },
+  { label: "English", href: "/en/guides" },
+];
+
+const EN_FOOTER_LINKS = [
+  { label: "Guides", href: "/en/guides" },
+  { label: "中文", href: "/guides" },
+];
 
 function RouteTitle() {
   const { pathname } = useLocation();
@@ -48,6 +64,8 @@ export function App() {
   const origin = isServerRender() ? productSiteOrigin() : window.location.origin;
   const currentUrl = `${origin}${location.pathname}${location.search}`;
   const onClaude = location.pathname.startsWith("/claude");
+  // 英文页只有指南层；外壳文案跟着换，「帮助」指回英文指南索引而不是中文帮助中心。
+  const onEnglish = location.pathname.startsWith("/en/");
 
   return (
     <SiteShell
@@ -56,6 +74,12 @@ export function App() {
       account={{ status: session.status, email: session.profile?.email }}
       accountLinks={portalAccountLinks(currentUrl)}
       downloadHref={onClaude ? "/claude#downloads" : "/#downloads"}
+      // 中文站顶栏「指南 / 帮助」两条；英文层只有指南，把那一格换成它，不留死链。
+      nav={onEnglish ? [] : [{ label: "指南", href: "/guides" }]}
+      footerLinks={onEnglish ? EN_FOOTER_LINKS : ZH_FOOTER_LINKS}
+      {...(onEnglish
+        ? { labels: { ...EN_SITE_LABELS, help: "Guides" }, helpHref: "/en/guides" }
+        : {})}
     >
       <RouteTitle />
       <HashScroll />
@@ -70,6 +94,8 @@ export function App() {
         <Route path="/help/:slug" element={<HelpArticle />} />
         <Route path="/guides" element={<GuideIndex />} />
         <Route path="/guides/:slug" element={<GuideArticle />} />
+        <Route path="/en/guides" element={<GuideIndex locale="en" />} />
+        <Route path="/en/guides/:slug" element={<GuideArticle locale="en" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SiteShell>
