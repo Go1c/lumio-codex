@@ -2,6 +2,8 @@
 
 面向 `bestcodex.app`。分三部分：构建已经自动做掉的、必须你在各家后台手动做的、以及上线后怎么核对。
 
+效果怎么量、复测怎么记 → [`geo-baseline.md`](geo-baseline.md)。**基线要在解封与部署之前测**，否则失去对照。
+
 ## 一、构建已经自动做掉的
 
 跑 `npm run build -w @lumio/bestcodex` 会产出：
