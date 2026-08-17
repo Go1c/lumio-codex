@@ -84,6 +84,41 @@ describe("注册页尊重 settings/public", () => {
     );
   });
 
+  it("协议标题可打开已拉取的全文，不再是死数据", async () => {
+    stubFetch({
+      "/settings/public": () =>
+        envelope({
+          ...OPEN_SETTINGS,
+          login_agreement_enabled: true,
+          login_agreement_revision: "r1",
+          login_agreement_documents: [
+            { id: "terms", title: "服务条款", content_md: "# 服务条款正文\n这是条款全文。" },
+            { id: "policy", title: "使用政策", content_md: "使用政策必须可读。" },
+            { id: "region", title: "服务区域声明", content_md: "服务仅在声明区域提供。" },
+          ],
+        }),
+    });
+
+    renderApp("/signup");
+
+    const terms = await screen.findByRole("button", { name: "《服务条款》" });
+    expect(screen.getByRole("button", { name: "《使用政策》" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "《服务区域声明》" })).toBeInTheDocument();
+
+    await userEvent.click(terms);
+    const dialog = await screen.findByRole("dialog", { name: "服务条款" });
+    expect(dialog).toHaveTextContent("服务条款正文");
+    expect(dialog).toHaveTextContent("这是条款全文。");
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "《使用政策》" }));
+    expect(await screen.findByRole("dialog", { name: "使用政策" })).toHaveTextContent(
+      "使用政策必须可读。",
+    );
+  });
+
   it("站点开启协议时必须先勾选才能提交", async () => {
     const fetchMock = stubFetch({
       "/settings/public": () =>

@@ -127,6 +127,39 @@ describe("账户中心 · 邀请返利", () => {
     expect(screen.queryByText(/天内的充值计入返利/)).not.toBeInTheDocument();
   });
 
+  it("当前 1% 且未满足 L2 充值门槛时，不谎称已达到 3%", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch({
+      "/auth/me": () => envelope(PROFILE),
+      "/user/aff": () =>
+        envelope({
+          ...AFF_DETAIL,
+          aff_count: 2,
+          invitee_recharge_total: 0,
+          effective_rebate_rate_percent: 1,
+          current_affiliate_tier: {
+            level: "L1",
+            min_invitees: 0,
+            min_recharge: 0,
+            rebate_rate_percent: 1,
+          },
+          next_affiliate_tier: {
+            level: "L2",
+            min_invitees: 2,
+            min_recharge: 100,
+            rebate_rate_percent: 3,
+          },
+        }),
+    });
+
+    renderApp("/account");
+
+    expect(await screen.findByText(/当前比例 1%/)).toBeInTheDocument();
+    expect(screen.getByText(/好友再累计充值/)).toBeInTheDocument();
+    expect(screen.getByText(/升至 L2（比例升至 3%）/)).toBeInTheDocument();
+    expect(screen.queryByText(/已达到 L2/)).not.toBeInTheDocument();
+  });
+
   it("划转到余额成功后给出提示并刷新余额", async () => {
     const fetchMock = stubFetch({
       "/aff/transfer": () => envelope({ transferred_quota: 5.5, balance: 18 }),

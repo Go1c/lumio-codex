@@ -11,7 +11,7 @@
 
 import { ccControlBaseUrl } from "@lumio/ui/config";
 
-const UNAVAILABLE = "无法连接 CC避风港 服务，请稍后重试。";
+const UNAVAILABLE = "无法连接授权服务，请稍后重试。";
 
 export interface AuthorizeScope {
   id: string;

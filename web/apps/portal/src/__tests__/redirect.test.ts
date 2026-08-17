@@ -21,6 +21,39 @@ describe("redirectTarget", () => {
     });
     expect(redirectTarget(null, "/account")).toEqual({ kind: "internal", path: "/account" });
   });
+
+  it("在遗留门户主机上，站内 next 改走规范账号主机", () => {
+    expect(
+      redirectTarget("/account", "/account", { currentOrigin: "https://lumiogame.com" }),
+    ).toEqual({
+      kind: "external",
+      url: "https://bestcodex.app/account",
+    });
+  });
+
+  it("跨官方入口跳转时把令牌放进 hash", () => {
+    const target = redirectTarget("https://bestcodex.app/codex", "/account", {
+      currentOrigin: "https://lumiogame.com",
+      tokens: { accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 },
+    });
+    expect(target.kind).toBe("external");
+    if (target.kind !== "external") return;
+    expect(target.url).toContain("https://bestcodex.app/codex");
+    expect(target.url).toContain("lumio_at=at-1");
+    expect(target.url).toContain("lumio_rt=rt-1");
+  });
+
+  it("外站 next 被丢弃后，令牌只跟去规范账号主机", () => {
+    const target = redirectTarget("https://evil.com/steal", "/account", {
+      currentOrigin: "https://lumiogame.com",
+      tokens: { accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 },
+    });
+    expect(target.kind).toBe("external");
+    if (target.kind !== "external") return;
+    expect(target.url.startsWith("https://bestcodex.app/account")).toBe(true);
+    expect(target.url).toContain("lumio_at=at-1");
+    expect(target.url).not.toContain("evil.com");
+  });
 });
 
 describe("isAllowedDesktopRedirect", () => {

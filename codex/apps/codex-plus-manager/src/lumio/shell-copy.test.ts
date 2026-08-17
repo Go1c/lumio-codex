@@ -362,6 +362,17 @@ test("the Codex tab is a greeting, a balance line, and one launch card", async (
   assert.match(home, /需要网络/);
 });
 
+test("the shell footer names BestCodex and the version, not Lumio or an internal-channel brand line", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+
+  assert.match(shell, /lumio-footer/);
+  assert.match(shell, /<span>BestCodex<\/span>/);
+  assert.match(shell, /lumio-footer-version/);
+  assert.match(shell, /state\.bootstrap\.version/);
+  assert.doesNotMatch(shell, /内部测试渠道/);
+  assert.doesNotMatch(shell, />Lumio</);
+});
+
 test("the shell chrome uses Codex and Claude tabs and keeps HomeView mounted", async () => {
   const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
 

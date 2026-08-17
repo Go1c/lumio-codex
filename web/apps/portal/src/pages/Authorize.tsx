@@ -31,7 +31,7 @@ export function Authorize() {
     return (
       <AuthorizeShell>
         <h2>授权请求无效</h2>
-        <p className="sub">回调地址不在允许范围内，无法继续授权。请回到 CC避风港 重新发起登录。</p>
+        <p className="sub">回调地址不在允许范围内，无法继续授权。请回到 Claude 桌面端重新发起登录。</p>
         <Link to="/" className="btn btn-secondary btn-block">
           返回首页
         </Link>
@@ -90,7 +90,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
     try {
       const approved = await approveAuthorization(new URLSearchParams(search), accessToken);
       if (!isAllowedDesktopRedirect(approved.redirectTo)) {
-        setError("授权服务返回了不受信任的回调地址，已阻止跳转。请回到 CC避风港 重新发起登录。");
+        setError("授权服务返回了不受信任的回调地址，已阻止跳转。请回到 Claude 桌面端重新发起登录。");
         return;
       }
       setResult(approved);
@@ -147,7 +147,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
     return (
       <AuthorizeShell>
         <h2>授权成功</h2>
-        <p className="sub">正在唤起 CC避风港。如果没有自动跳转，可以用下面的授权码手动完成登录。</p>
+        <p className="sub">正在唤起 Claude 桌面端。如果没有自动跳转，可以用下面的授权码手动完成登录。</p>
         <div className="code-display">
           <code>{result.code}</code>
           <button
@@ -162,7 +162,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
           授权码 {Math.max(1, Math.round(result.expiresIn / 60))} 分钟内有效，只能使用一次。
         </p>
         <a href={result.redirectTo} className="btn btn-primary btn-block">
-          打开 CC避风港
+          打开 Claude 桌面端
         </a>
       </AuthorizeShell>
     );
@@ -172,7 +172,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
     return (
       <AuthorizeShell>
         <h2>已拒绝授权</h2>
-        <p className="sub">没有向 CC避风港 桌面端授予任何权限，可以关闭此页面。</p>
+        <p className="sub">没有向 Claude 桌面端授予任何权限，可以关闭此页面。</p>
         <Link to="/" className="btn btn-secondary btn-block">
           返回首页
         </Link>
@@ -187,7 +187,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
   return (
     <AuthorizeShell>
       <h2>授权 {data.clientName}</h2>
-      <p className="sub">CC避风港 桌面端请求以你的 Lumio 账号身份访问以下内容：</p>
+      <p className="sub">Claude 桌面端请求以你的 BestCodex 账号身份访问以下内容：</p>
 
       <ul className="scopes">
         {data.scopes.map((scope) => (
@@ -226,7 +226,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
         </>
       ) : (
         <>
-          <Banner kind="warn">请先登录 Lumio 账号，登录后会回到本页继续授权。</Banner>
+          <Banner kind="warn">请先登录 BestCodex 账号，登录后会回到本页继续授权。</Banner>
           <Link to={`/login?next=${encodeURIComponent(next)}`} className="btn btn-primary btn-block">
             去登录
           </Link>
@@ -237,7 +237,7 @@ function AuthorizeFlow({ query, redirectUri }: { query: URLSearchParams; redirec
       )}
 
       <p className="terms">
-        Lumio 不会把你的密码交给任何客户端；授权后可在 CC避风港 桌面端随时退出登录。
+        BestCodex 不会把你的密码交给任何客户端；授权后可在 Claude 桌面端随时退出登录。
       </p>
     </AuthorizeShell>
   );

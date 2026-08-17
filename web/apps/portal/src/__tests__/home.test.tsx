@@ -6,9 +6,42 @@ import { siteUrl } from "@lumio/ui";
 
 import { renderApp, stubFetch } from "@/test/utils";
 
+const navigation = vi.hoisted(() => ({ urls: [] as string[] }));
+vi.mock("@/lib/redirect", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/redirect")>();
+  return { ...actual, goExternal: (url: string) => void navigation.urls.push(url) };
+});
+
 afterEach(() => {
+  navigation.urls.length = 0;
   clearSession();
   vi.unstubAllGlobals();
+});
+
+describe("门户产品路径", () => {
+  it("/codex 不渲染门户 404，而是指向产品站 /codex", () => {
+    stubFetch({});
+    renderApp("/codex");
+
+    expect(screen.queryByRole("heading", { name: "页面不存在" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "前往 Codex" })).toHaveAttribute(
+      "href",
+      "https://bestcodex.app/codex",
+    );
+    expect(navigation.urls).toEqual(["https://bestcodex.app/codex"]);
+  });
+
+  it("/claude 不渲染门户 404，而是指向产品站 /claude", () => {
+    stubFetch({});
+    renderApp("/claude");
+
+    expect(screen.queryByRole("heading", { name: "页面不存在" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "前往 Claude" })).toHaveAttribute(
+      "href",
+      "https://bestcodex.app/claude",
+    );
+    expect(navigation.urls).toEqual(["https://bestcodex.app/claude"]);
+  });
 });
 
 describe("门户首页交叉文案", () => {

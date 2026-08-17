@@ -1,8 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { loginTwoFactor, register, sendVerifyCode, type PublicSettings } from "@lumio/auth";
-import { Banner, ErrorBlock, LoadingBlock, PasswordField, Spinner, TextField } from "@lumio/ui";
+import {
+  loginTwoFactor,
+  register,
+  sendVerifyCode,
+  type AgreementDocument,
+  type PublicSettings,
+} from "@lumio/auth";
+import { Banner, ErrorBlock, LoadingBlock, Modal, PasswordField, Spinner, TextField } from "@lumio/ui";
 
 import { TwoFactorStep } from "@/components/TwoFactorStep";
 import { useCountdown } from "@/hooks/useCountdown";
@@ -41,6 +47,7 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
     () => (params.get("invite") ?? "").trim() || (affCode ? affCode.toUpperCase() : ""),
   );
   const [agreed, setAgreed] = useState(false);
+  const [openDoc, setOpenDoc] = useState<AgreementDocument | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [remaining, startCountdown] = useCountdown();
@@ -170,10 +177,27 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
               <span>
                 我已阅读并同意
                 {settings.agreementDocuments.map((doc) => (
-                  <span key={doc.id}>《{doc.title}》</span>
+                  <button
+                    key={doc.id}
+                    type="button"
+                    className="agreement-doc-link"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setOpenDoc(doc);
+                    }}
+                  >
+                    《{doc.title}》
+                  </button>
                 ))}
               </span>
             </label>
+          )}
+
+          {openDoc && (
+            <Modal title={openDoc.title} onClose={() => setOpenDoc(null)}>
+              <div className="agreement-doc-body">{openDoc.contentMd}</div>
+            </Modal>
           )}
 
           <button type="submit" className="btn btn-primary btn-block">

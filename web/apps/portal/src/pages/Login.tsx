@@ -2,9 +2,10 @@ import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { login, loginTwoFactor } from "@lumio/auth";
-import { Banner, PasswordField, Spinner, TextField } from "@lumio/ui";
+import { Banner, PasswordField, Spinner, TextField, apiBaseUrl } from "@lumio/ui";
 
 import { TwoFactorStep } from "@/components/TwoFactorStep";
+import { usePublicSettings } from "@/hooks/usePublicSettings";
 import { messageOf, useAuthOutcome } from "@/lib/authFlow";
 import { withNext } from "@/lib/redirect";
 
@@ -12,6 +13,9 @@ export function Login() {
   const [params] = useSearchParams();
   const next = params.get("next");
   const { challenge, apply } = useAuthOutcome(next);
+  const settings = usePublicSettings();
+  const showPasswordReset =
+    settings.status === "ready" && settings.data?.passwordResetEnabled === true;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -79,6 +83,12 @@ export function Login() {
           </fieldset>
         </form>
         <p className="auth-links">
+          {showPasswordReset && (
+            <>
+              <a href={`${apiBaseUrl()}/reset-password`}>忘记密码</a>
+              <span aria-hidden="true"> · </span>
+            </>
+          )}
           还没有账号？<Link to={withNext("/signup", next)}>创建账号</Link>
         </p>
       </div>

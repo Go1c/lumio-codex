@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -101,6 +101,45 @@ describe("登录页", () => {
     await submitLogin();
 
     expect(await screen.findByRole("heading", { name: "账户中心" })).toBeInTheDocument();
+  });
+
+  it("password_reset_enabled 时展示忘记密码，并指向 Sub2API 重置页", async () => {
+    stubFetch({
+      "/settings/public": () =>
+        envelope({
+          registration_enabled: true,
+          email_verify_enabled: false,
+          registration_email_suffix_whitelist: [],
+          password_reset_enabled: true,
+          login_agreement_enabled: false,
+        }),
+    });
+
+    renderApp("/login");
+
+    const link = await screen.findByRole("link", { name: "忘记密码" });
+    expect(link).toHaveAttribute("href", "https://api.lumio.games/reset-password");
+  });
+
+  it("password_reset_enabled 为 false 时不露出忘记密码入口", async () => {
+    stubFetch({
+      "/settings/public": () =>
+        envelope({
+          registration_enabled: true,
+          email_verify_enabled: false,
+          registration_email_suffix_whitelist: [],
+          password_reset_enabled: false,
+          login_agreement_enabled: false,
+        }),
+    });
+
+    renderApp("/login");
+
+    expect(await screen.findByRole("heading", { name: "登录" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: /读取/ })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("link", { name: "忘记密码" })).not.toBeInTheDocument();
   });
 
   it("注册入口保留 next，跨页不丢回跳目标", async () => {

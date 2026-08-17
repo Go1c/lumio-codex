@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "@/App";
 
@@ -31,7 +31,10 @@ function renderApp(path = "/") {
   );
 }
 
+const DEFAULT_TITLE = "BestCodex · 一个启动器，两种工作方式";
+
 afterEach(() => {
+  document.title = DEFAULT_TITLE;
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -138,6 +141,22 @@ describe("BestCodex 单站", () => {
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("更快开始使用官方 Codex");
     expect(screen.getByRole("heading", { name: "三步开始" })).toBeInTheDocument();
+  });
+
+  it("未知路径展示 404 页，主区不只剩顶栏页脚", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/this-path-does-not-exist");
+
+    expect(screen.getByRole("heading", { name: "页面不存在" })).toBeInTheDocument();
+    expect(screen.getByText(/链接可能已过期，或地址输错了/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "回到首页" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("heading", { name: /更快开始使用官方 Codex/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("banner")).toBeInTheDocument();
+    expect(screen.getByRole("contentinfo")).toBeInTheDocument();
   });
 });
 
@@ -311,7 +330,7 @@ describe("Claude 页内容", () => {
     expect(screen.queryByText(/你好 Mary/)).not.toBeInTheDocument();
   });
 
-  it("简单定价 ¥19.9，邀请两行在订阅按钮下面", () => {
+  it("定价按钮与说明是充值语义，不假装包月订阅", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.reject(new Error("offline"))),
@@ -320,16 +339,18 @@ describe("Claude 页内容", () => {
     renderApp("/claude");
 
     expect(screen.getByRole("heading", { name: "简单定价" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Claude 包月" })).toBeInTheDocument();
     expect(screen.getByText("¥19.9")).toBeInTheDocument();
-    expect(screen.getByText(/\/ 月/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Claude 包月" })).not.toBeInTheDocument();
+    expect(screen.queryByText("随时取消")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "立即订阅" })).not.toBeInTheDocument();
 
-    const subscribe = screen.getByRole("link", { name: "立即订阅" });
-    expect(subscribe).toHaveAttribute("href", "https://api.lumio.games/purchase");
+    const topup = screen.getByRole("link", { name: "去充值" });
+    expect(topup).toHaveAttribute("href", "https://api.lumio.games/purchase");
+    expect(screen.getByText(/不是自动续费的包月/)).toBeInTheDocument();
 
     const invite = screen.getByText(/经朋友邀请注册并登录 APP/);
     const once = screen.getByText("首月免费（每个账号限一次）");
-    expect(subscribe.compareDocumentPosition(invite) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(topup.compareDocumentPosition(invite) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(invite.compareDocumentPosition(once) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(invite.textContent).not.toContain("首月免费（每个账号限一次）");
   });
@@ -349,6 +370,104 @@ describe("Claude 页内容", () => {
 
     expect(question).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(/免费试用一个月/)).toBeInTheDocument();
+  });
+});
+
+describe("hash 锚点滚动", () => {
+  const scrolled: string[] = [];
+
+  beforeEach(() => {
+    scrolled.length = 0;
+    HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+      scrolled.push(this.id);
+    };
+  });
+
+  function stubOffline() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+  }
+
+  it("/pricing 落到 /claude#pricing 并滚到定价区块", async () => {
+    stubOffline();
+    renderApp("/pricing");
+
+    await waitFor(() => expect(document.getElementById("pricing")).toBeTruthy());
+    expect(screen.getByRole("heading", { name: "简单定价" })).toBeInTheDocument();
+    await waitFor(() => expect(scrolled).toContain("pricing"));
+  });
+
+  it("直接打开 /claude#pricing 冷加载滚到定价", async () => {
+    stubOffline();
+    renderApp("/claude#pricing");
+    await waitFor(() => expect(scrolled).toContain("pricing"));
+  });
+
+  it("直接打开 /#downloads 与 /claude#downloads 滚到下载区", async () => {
+    stubOffline();
+    const first = renderApp("/#downloads");
+    await waitFor(() => expect(scrolled).toContain("downloads"));
+    first.unmount();
+    scrolled.length = 0;
+
+    renderApp("/claude#downloads");
+    await waitFor(() => expect(scrolled).toContain("downloads"));
+  });
+
+  it("直接打开 /#faq 与 /claude#faq 滚到常见问题", async () => {
+    stubOffline();
+    const first = renderApp("/#faq");
+    await waitFor(() => expect(scrolled).toContain("faq"));
+    first.unmount();
+    scrolled.length = 0;
+
+    renderApp("/claude#faq");
+    await waitFor(() => expect(scrolled).toContain("faq"));
+  });
+});
+
+describe("document.title 随路由变化", () => {
+  function stubOffline() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+  }
+
+  it("/、/claude、/help、/help/:slug、404 各有可区分标题", () => {
+    stubOffline();
+
+    const { unmount: unmountHome } = renderApp("/");
+    const homeTitle = document.title;
+    expect(homeTitle).toMatch(/BestCodex/);
+    expect(homeTitle).toMatch(/Codex/);
+    unmountHome();
+
+    const { unmount: unmountClaude } = renderApp("/claude");
+    const claudeTitle = document.title;
+    expect(claudeTitle).toMatch(/Claude/);
+    expect(claudeTitle).not.toBe(homeTitle);
+    unmountClaude();
+
+    const { unmount: unmountHelp } = renderApp("/help");
+    const helpTitle = document.title;
+    expect(helpTitle).toMatch(/帮助/);
+    expect(helpTitle).not.toBe(homeTitle);
+    expect(helpTitle).not.toBe(claudeTitle);
+    unmountHelp();
+
+    const { unmount: unmountArticle } = renderApp("/help/install");
+    const articleTitle = document.title;
+    expect(articleTitle).toMatch(/安装/);
+    expect(articleTitle).not.toBe(helpTitle);
+    unmountArticle();
+
+    renderApp("/no-such-page");
+    const missingTitle = document.title;
+    expect(missingTitle).toMatch(/不存在|404|找不到/);
+    expect(new Set([homeTitle, claudeTitle, helpTitle, articleTitle, missingTitle]).size).toBe(5);
   });
 });
 

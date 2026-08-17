@@ -2,14 +2,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   apiBaseUrl,
+  bounceToCanonicalUrl,
   ccControlBaseUrl,
   cookieDomainFor,
   helpProductUrl,
   isAllowedNext,
+  isOfficialAccountHost,
   portalAccountLinks,
   portalUrl,
   purchaseUrl,
   resolveNext,
+  shouldBounceToCanonical,
   siteUrl,
 } from "../config";
 
@@ -80,10 +83,11 @@ describe("门户回跳链接", () => {
 });
 
 describe("回跳目标校验", () => {
-  it("接受站内相对路径与 bestcodex.app 子域", () => {
+  it("接受站内相对路径、bestcodex.app 子域与遗留门户 lumiogame.com", () => {
     expect(isAllowedNext("/account")).toBe(true);
     expect(isAllowedNext("https://cc.bestcodex.app/pricing")).toBe(true);
     expect(isAllowedNext("https://bestcodex.app/")).toBe(true);
+    expect(isAllowedNext("https://lumiogame.com/account")).toBe(true);
   });
 
   it("拒绝外站、协议相对地址与伪协议，避免开放重定向", () => {
@@ -98,6 +102,28 @@ describe("回跳目标校验", () => {
   it("非法目标退回默认落点", () => {
     expect(resolveNext("https://evil.com", "/account")).toBe("/account");
     expect(resolveNext("/account", "/")).toBe("/account");
+  });
+});
+
+describe("遗留账号入口回跳", () => {
+  it("lumiogame.com 是官方入口，但不是规范账号主机", () => {
+    expect(isOfficialAccountHost("lumiogame.com")).toBe(true);
+    expect(isOfficialAccountHost("bestcodex.app")).toBe(true);
+    expect(isOfficialAccountHost("evil.com")).toBe(false);
+    expect(shouldBounceToCanonical("lumiogame.com")).toBe(true);
+    expect(shouldBounceToCanonical("bestcodex.app")).toBe(false);
+    expect(shouldBounceToCanonical("localhost")).toBe(false);
+  });
+
+  it("把遗留主机的路径搬到规范账号 origin，保留查询串", () => {
+    expect(bounceToCanonicalUrl("https://lumiogame.com/account")).toBe(
+      "https://bestcodex.app/account",
+    );
+    expect(bounceToCanonicalUrl("https://lumiogame.com/login?next=%2Faccount")).toBe(
+      "https://bestcodex.app/login?next=%2Faccount",
+    );
+    expect(bounceToCanonicalUrl("https://bestcodex.app/account")).toBeNull();
+    expect(bounceToCanonicalUrl("http://localhost:5280/login")).toBeNull();
   });
 });
 

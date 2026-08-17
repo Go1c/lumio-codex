@@ -1,6 +1,15 @@
+import { useLayoutEffect } from "react";
 import { Route, Routes } from "react-router-dom";
 
-import { HelpArticle, HelpIndex, SiteShell, ToastProvider, siteUrl } from "@lumio/ui";
+import { sessionTokensForHandoff, withHandoff } from "@lumio/auth";
+import {
+  HelpArticle,
+  HelpIndex,
+  SiteShell,
+  ToastProvider,
+  bounceToCanonicalUrl,
+  siteUrl,
+} from "@lumio/ui";
 
 import { Account } from "@/pages/Account";
 import { Authorize } from "@/pages/Authorize";
@@ -8,6 +17,7 @@ import { Home } from "@/pages/Home";
 import { Login } from "@/pages/Login";
 import { Logout } from "@/pages/Logout";
 import { NotFound } from "@/pages/NotFound";
+import { ProductRedirect } from "@/pages/ProductRedirect";
 import { Signup } from "@/pages/Signup";
 import { SessionProvider, usePortalSession } from "@/state/session";
 
@@ -15,10 +25,22 @@ export function App() {
   return (
     <SessionProvider>
       <ToastProvider>
+        <LegacyHostBounce />
         <Shell />
       </ToastProvider>
     </SessionProvider>
   );
+}
+
+/** 遗留门户主机（lumiogame.com）整页搬到规范账号 origin，有会话则带一次性 hash。 */
+function LegacyHostBounce() {
+  useLayoutEffect(() => {
+    const next = bounceToCanonicalUrl(window.location.href);
+    if (!next) return;
+    const tokens = sessionTokensForHandoff();
+    window.location.replace(tokens ? withHandoff(next, tokens) : next);
+  }, []);
+  return null;
 }
 
 function Shell() {
@@ -48,6 +70,8 @@ function Shell() {
         <Route path="/logout" element={<Logout />} />
         <Route path="/help" element={<HelpIndex />} />
         <Route path="/help/:slug" element={<HelpArticle />} />
+        <Route path="/codex" element={<ProductRedirect path="/codex" label="Codex" />} />
+        <Route path="/claude" element={<ProductRedirect path="/claude" label="Claude" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SiteShell>
