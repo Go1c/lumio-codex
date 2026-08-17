@@ -32,6 +32,7 @@ describe("SiteShell", () => {
       "https://codex.lumiogame.com",
     );
     expect(screen.getByText("内容")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "客服与反馈" })).toBeInTheDocument();
   });
 
   it("未登录时账号入口跳门户并带 next 回跳", () => {

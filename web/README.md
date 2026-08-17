@@ -84,6 +84,8 @@ npm run lint    # eslint（可选，不在收口门槛内）
 | `VITE_CC_DOWNLOAD_ARM_URL` | 空 | CC 桌面端 Apple Silicon 安装包地址 | `apps/cc` |
 | `VITE_CC_DOWNLOAD_INTEL_URL` | 空 | CC 桌面端 Intel 安装包地址 | `apps/cc` |
 | `VITE_CC_VERSION` | 空 | CC 桌面端版本号（仅展示） | `apps/cc` |
+| `VITE_SUPPORT_QQ_NUMBER` | `1073671738` | 客服气泡的 QQ 群号（点击复制）；写 `off` 可关掉 | 三站 |
+| `VITE_SUPPORT_FEISHU_URL` | Lumio 飞书客服群 | 客服气泡的飞书群加入链接；写 `off` 可关掉 | 三站 |
 
 未配置 CC 下载地址时，下载页显示空态而不是坏链接。
 

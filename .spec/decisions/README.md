@@ -32,3 +32,5 @@
 | [0002](0002-sub2api-single-account-source.md) | 以 Sub2API 为唯一账号中心，cchaven-control 降级为纯业务服务 | 生效 |
 | [0003](0003-monorepo-three-way-merge.md) | 双仓合并为 codex/ + cchaven/ + web/ 三块并列的 monorepo，subtree 保留历史 | 生效 |
 | [0004](0004-cchaven-desktop-union-merge-recovery.md) | CC避风港桌面端以引擎兼容的 P2 为骨架，把 P1 的产品外壳整段移植上去 | 生效 |
+| [0005](0005-web-support-bubble-static-channels.md) | 官网客服气泡初版把社群入口写进前端配置，不接后台 | 生效 |
+| [0006](0006-web-support-qq-group-number.md) | 客服气泡的 QQ 入口是群号（可复制），不是加群 URL | 生效 |

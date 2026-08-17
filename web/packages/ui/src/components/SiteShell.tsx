@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { siteUrl, type AccountLinks, type SiteId } from "../config";
 import { ClaudeMark, LumioLogo, OpenAIMark } from "./brand";
+import { SupportBubble } from "./SupportBubble";
 
 export interface SiteNavItem {
   label: string;
@@ -152,6 +153,7 @@ export function SiteShell({
           {footerExtra}
         </div>
       </footer>
+      <SupportBubble />
     </div>
   );
 }

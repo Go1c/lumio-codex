@@ -10,6 +10,7 @@ import {
   purchaseUrl,
   resolveNext,
   siteUrl,
+  supportChannels,
 } from "../config";
 
 afterEach(() => {
@@ -81,6 +82,29 @@ describe("回跳目标校验", () => {
   it("非法目标退回默认落点", () => {
     expect(resolveNext("https://evil.com", "/account")).toBe("/account");
     expect(resolveNext("/account", "/")).toBe("/account");
+  });
+});
+
+describe("客服社群入口", () => {
+  it("默认给出 QQ 群号与飞书群链接", () => {
+    expect(supportChannels()).toEqual({
+      qqGroupNumber: "1073671738",
+      feishuGroupUrl:
+        "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=802t132e-f554-4ec2-9b18-5f83276fcb9f",
+    });
+  });
+
+  it("环境变量可分别覆盖群号与飞书链接", () => {
+    vi.stubEnv("VITE_SUPPORT_QQ_NUMBER", "123456");
+    vi.stubEnv(
+      "VITE_SUPPORT_FEISHU_URL",
+      "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=override",
+    );
+
+    expect(supportChannels()).toEqual({
+      qqGroupNumber: "123456",
+      feishuGroupUrl: "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=override",
+    });
   });
 });
 
