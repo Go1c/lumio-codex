@@ -33,10 +33,12 @@ describe("账户中心", () => {
 
     expect(await screen.findByText("user@example.com")).toBeInTheDocument();
     expect(screen.getByText("¥12.50")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /充值/ })).toHaveAttribute(
-      "href",
-      "https://api.lumio.games/purchase",
-    );
+    const topup = screen.getByRole("link", { name: /充值/ });
+    expect(topup.getAttribute("href")).toMatch(/^https:\/\/api\.lumio\.games\/auth\/bridge#/);
+    const hash = new URL(topup.getAttribute("href") ?? "").hash.slice(1);
+    const params = new URLSearchParams(hash);
+    expect(params.get("t")).toBe("at-1");
+    expect(params.get("r")).toBe("/purchase");
     expect(
       screen.getAllByRole("link", { name: "BestCodex" }).some(
         (link) => link.getAttribute("href") === "https://bestcodex.app/codex",

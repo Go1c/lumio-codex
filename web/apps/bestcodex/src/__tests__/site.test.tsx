@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearSession, writeSession } from "@lumio/auth";
+
 import { App } from "@/App";
 
 const MANIFEST = {
@@ -35,6 +37,7 @@ const DEFAULT_TITLE = "BestCodex · 一个启动器，两种工作方式";
 
 afterEach(() => {
   document.title = DEFAULT_TITLE;
+  clearSession();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
@@ -353,6 +356,23 @@ describe("Claude 页内容", () => {
     expect(topup.compareDocumentPosition(invite) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(invite.compareDocumentPosition(once) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(invite.textContent).not.toContain("首月免费（每个账号限一次）");
+  });
+
+  it("产品站已登录时「去充值」走 LumioAPI bridge，不直开收银台", () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/claude");
+
+    const topup = screen.getByRole("link", { name: "去充值" });
+    const hash = new URL(topup.getAttribute("href") ?? "").hash.slice(1);
+    const params = new URLSearchParams(hash);
+    expect(topup.getAttribute("href")).toMatch(/^https:\/\/api\.lumio\.games\/auth\/bridge#/);
+    expect(params.get("t")).toBe("at-1");
+    expect(params.get("r")).toBe("/purchase");
   });
 
   it("FAQ 手风琴同时只展开一项", async () => {

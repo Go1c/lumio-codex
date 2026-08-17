@@ -38,7 +38,7 @@ Authorization: Bearer <现有 access token>
 
 **验收**：主站登录后点「充值」→ 直达 `/purchase` 且为登录态；地址栏与浏览器历史不残留 `#t=`；伪造/过期 `t` 落在登录页。
 
-**主站侧配合**（本仓库，等上游上线后再做）：门户「充值」按钮在有会话时生成
+**主站侧配合**（本仓库已接）：门户与产品站「充值」在有会话时生成
 `https://api.lumio.games/auth/bridge#t=<access_token>&r=/purchase`，无会话时维持 `/purchase`。桌面端与 CC 站不改（无浏览器会话，落登录页合理）。
 
 ## 改动二：左上角 logo 可配置返回主站

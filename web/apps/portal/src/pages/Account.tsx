@@ -53,7 +53,7 @@ export function Account() {
               <span className="price mono">{formatBalance(profile.balance)}</span>
               <a
                 className="btn btn-primary"
-                href={purchaseUrl()}
+                href={purchaseUrl(session.accessToken)}
                 target="_blank"
                 rel="noreferrer"
               >

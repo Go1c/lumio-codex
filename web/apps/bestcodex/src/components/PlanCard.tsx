@@ -1,9 +1,11 @@
+import { readSession } from "@lumio/auth";
 import { purchaseUrl } from "@lumio/ui";
 
 import { PLAN } from "@/content";
 
 /** 充值走 Sub2API 收银台，产品站不接自己的支付流程。 */
 export function PlanCard() {
+  const href = purchaseUrl(readSession()?.accessToken);
   return (
     <div className="pricing-grid">
       <div className="plan featured">
@@ -17,7 +19,7 @@ export function PlanCard() {
           ))}
         </ul>
         <p className="no-limits">{PLAN.noLimits}</p>
-        <a className="btn btn-primary btn-block" href={purchaseUrl()} target="_blank" rel="noreferrer">
+        <a className="btn btn-primary btn-block" href={href} target="_blank" rel="noreferrer">
           去充值
         </a>
         <div className="invite-note">

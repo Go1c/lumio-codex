@@ -114,9 +114,17 @@ export function ccControlBaseUrl(): string {
   return trimSlash(env("VITE_CC_CONTROL_URL") ?? DEFAULT_CC_CONTROL_BASE_URL);
 }
 
-/** 充值走 Sub2API 托管的收银台页面，不是接口调用：浏览器直接打开。 */
-export function purchaseUrl(): string {
-  return `${apiBaseUrl()}/purchase`;
+/**
+ * 充值走 Sub2API 托管的收银台，不是本仓接口。
+ * 有 access token 时经 /auth/bridge 交接（令牌只放 hash）；没有则直开 /purchase。
+ * 桌面端与 CC 控制面仍走无会话的 /purchase。
+ */
+export function purchaseUrl(accessToken?: string | null): string {
+  const checkout = `${apiBaseUrl()}/purchase`;
+  const token = accessToken?.trim();
+  if (!token) return checkout;
+  const hash = new URLSearchParams({ t: token, r: "/purchase" }).toString();
+  return `${apiBaseUrl()}/auth/bridge#${hash}`;
 }
 
 export function portalUrl(path: string, next?: string | null): string {

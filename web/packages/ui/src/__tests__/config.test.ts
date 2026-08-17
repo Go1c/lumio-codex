@@ -53,6 +53,23 @@ describe("站点地址", () => {
     expect(purchaseUrl()).toBe("https://api.lumio.games/purchase");
   });
 
+  it("有 access token 时走 /auth/bridge，令牌只放 hash，不带 refresh", () => {
+    const url = purchaseUrl("at-1");
+    expect(url.startsWith("https://api.lumio.games/auth/bridge#")).toBe(true);
+    const hash = new URL(url).hash.slice(1);
+    const params = new URLSearchParams(hash);
+    expect(params.get("t")).toBe("at-1");
+    expect(params.get("r")).toBe("/purchase");
+    expect(params.has("rt")).toBe(false);
+    expect(url).not.toContain("refresh");
+  });
+
+  it("空 token 仍直开收银台，避免交出半截交接地址", () => {
+    expect(purchaseUrl(null)).toBe("https://api.lumio.games/purchase");
+    expect(purchaseUrl("")).toBe("https://api.lumio.games/purchase");
+    expect(purchaseUrl("   ")).toBe("https://api.lumio.games/purchase");
+  });
+
   it("CC 控制面地址独立于 Sub2API，可用环境变量覆盖", () => {
     expect(ccControlBaseUrl()).toBe("https://api.cc.bestcodex.app");
 

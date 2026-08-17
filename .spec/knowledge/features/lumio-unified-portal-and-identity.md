@@ -73,10 +73,11 @@ CC 桌面端仍由 `cchaven-control` 签发自己的令牌，但授权时的用�
 
 ### 充值
 
-只有一个落点 `https://api.lumio.games/purchase`：门户账户中心按钮（`purchaseUrl()`）、
-桌面端「充值」（`product.rs` 的 `payment_url()`）、CC 控制面
-`POST /api/v1/billing/checkout`（返回 303，`Location` 即该地址）三条路径殊途同归。
-本仓不收集任何付款信息。
+收银台仍是 Sub2API：`https://api.lumio.games/purchase`。本仓不收集任何付款信息。
+浏览器里已登录时，门户与产品站的「充值」走
+`{api}/auth/bridge#t=<access>&r=/purchase`（`purchaseUrl(accessToken)`），把已有令牌交给
+LumioAPI 控制台会话；未登录仍直开 `/purchase`。桌面端 `payment_url()` 与 CC 控制面
+`PurchaseURL()` 不带浏览器会话，保持 `/purchase`。
 
 ## 待解决
 
