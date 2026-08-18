@@ -10,6 +10,12 @@ export type SiteId = "portal" | "cc" | "codex";
 const DEFAULT_ROOT_DOMAIN = "bestcodex.app";
 const DEFAULT_API_BASE_URL = "https://api.lumio.games";
 const DEFAULT_CC_CONTROL_BASE_URL = "https://api.cc.bestcodex.app";
+/** Lumio 飞书客服群；换群改这里或覆盖环境变量。 */
+const DEFAULT_SUPPORT_FEISHU_URL =
+  "https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=802t132e-f554-4ec2-9b18-5f83276fcb9f";
+const DEFAULT_SUPPORT_QQ_NUMBER = "1073671738";
+/** 显式写 `off` 可关掉一条已有默认值的通道。 */
+const CHANNEL_OFF = "off";
 
 function env(key: string): string | undefined {
   const value = (import.meta.env as Record<string, string | undefined>)[key];
@@ -193,4 +199,24 @@ export function cookieDomainFor(hostname: string): string | undefined {
   const root = rootDomain();
   if (hostname === root || hostname.endsWith(`.${root}`)) return `.${root}`;
   return undefined;
+}
+
+export interface SupportChannels {
+  qqGroupNumber: string;
+  feishuGroupUrl: string;
+}
+
+function channelValue(key: string, fallback: string, trimTrailingSlash = false): string {
+  const value = env(key);
+  if (value === CHANNEL_OFF) return "";
+  if (!value) return fallback;
+  return trimTrailingSlash ? trimSlash(value) : value;
+}
+
+/** 右下角客服气泡的社群入口。空字符串表示这条通道未提供，界面不渲染。 */
+export function supportChannels(): SupportChannels {
+  return {
+    qqGroupNumber: channelValue("VITE_SUPPORT_QQ_NUMBER", DEFAULT_SUPPORT_QQ_NUMBER),
+    feishuGroupUrl: channelValue("VITE_SUPPORT_FEISHU_URL", DEFAULT_SUPPORT_FEISHU_URL, true),
+  };
 }

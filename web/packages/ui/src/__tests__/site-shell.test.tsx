@@ -67,6 +67,7 @@ describe("SiteShell · 产品站", () => {
     expect(claude).not.toHaveAttribute("aria-current");
     expect(claude).not.toHaveAttribute("hidden");
     expect(screen.getByText("内容")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "客服与反馈" })).toBeInTheDocument();
   });
 
   it("顶栏下载按钮可访问且前景与背景有对比", () => {

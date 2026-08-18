@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { rootDomain, siteUrl, type AccountLinks, type SiteId } from "../config";
 import { BestCodexMark, LumioLogo } from "./brand";
+import { SupportBubble } from "./SupportBubble";
 
 export interface SiteNavItem {
   label: string;
@@ -267,6 +268,7 @@ export function SiteShell({
           </div>
         </footer>
       )}
+      <SupportBubble />
     </div>
   );
 }
