@@ -86,6 +86,8 @@ npm run lint    # eslint（可选，不在收口门槛内）
 | `VITE_CC_DOWNLOAD_ARM_URL` | 空 | 历史 Claude 独立包地址（现已并入同一启动器） | 保留兼容 |
 | `VITE_CC_DOWNLOAD_INTEL_URL` | 空 | 同上 | 保留兼容 |
 | `VITE_CC_VERSION` | 空 | 历史版本号展示 | 保留兼容 |
+| `VITE_SUPPORT_QQ_NUMBER` | `1073671738` | 客服气泡的 QQ 群号（点击复制）；写 `off` 可关掉 | 两站 |
+| `VITE_SUPPORT_FEISHU_URL` | Lumio 飞书客服群 | 客服气泡的飞书群加入链接；写 `off` 可关掉 | 两站 |
 
 未配置下载清单时，下载区回退 GitHub 发布页而不是坏链接。
 
