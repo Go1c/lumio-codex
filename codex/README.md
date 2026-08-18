@@ -31,6 +31,7 @@ Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测�
 5. [后台 API（Sub2API）](docs/ops/04-backend.md)  
 6. [日常维护与文档同步](docs/ops/05-maintenance.md)  
 7. [Code signing policy](docs/ops/06-code-signing-policy.md) — Windows 签名政策（SignPath）
+8. [Microsoft Store 与双轨分发](docs/ops/07-microsoft-store.md) — 官网/GitHub Release vs 商店 MSIX
 
 ## 产品流程
 

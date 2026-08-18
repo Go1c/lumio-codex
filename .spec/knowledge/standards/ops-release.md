@@ -20,7 +20,7 @@ metadata:
 
 - 部署 `lumiogame.com` / `cc.lumiogame.com` / `codex.lumiogame.com`、加 DNS 记录、
   配旧域名 301 → 根 `docs/ops/`
-- 本机或 CI 编译、打内部包（未签名或 SignPath 已签的 Windows）、打 tag / GitHub Release、验证更新提醒 → `codex/docs/ops/`
+- 本机或 CI 编译、打内部包（未签名或 SignPath 已签的 Windows）、打 tag / GitHub Release、验证更新提醒、Microsoft Store unsigned MSIX → `codex/docs/ops/`（商店与双轨签名见 `codex/docs/ops/07-microsoft-store.md`）
 - 起 PostgreSQL / 控制面 / 网关、建首个管理员、跑身份迁移 → `cchaven/docs/ops/`
 - 对接或验收 `api.lumio.games`（Sub2API）→ `codex/docs/ops/04-backend.md` +
   根 `docs/ops/03-service-prerequisites.md`
@@ -28,7 +28,7 @@ metadata:
 ## 硬事实（防漂移）
 
 - 公开签名发布闸门未开前，不写 `latest.json`、不分发正式公开通道。内部指针仍是 `latest-internal.json`；Windows 在 SignPath token 可用时出已签名文件名，macOS 仍为 `-internal-unsigned`。
-- Windows Store MSIX 是平行脚手架：CI 额外产出 `LumioCodex-*-windows-x64-store-unsigned.msix`；`Identity.Name` / `Identity.Publisher` / `PublisherDisplayName` 仍为 Partner Center 占位。不得改 NSIS / 便携 ZIP 产物名，不得打开 `tauri.conf.json` 的 `bundle.active`，也不得用第三方商店扒包 Action。
+- Windows 两条分发轨并存：官网 / GitHub Release 用 NSIS + ZIP（SignPath 签 PE 和 setup）；Microsoft Store 用 unsigned MSIX，上架后微软重签。CI 额外产出 `LumioCodex-*-windows-x64-store-unsigned.msix`；`Identity.Name` / `Identity.Publisher` / `PublisherDisplayName` 仍为 Partner Center 占位。不得改 NSIS / 便携 ZIP 产物名，不得打开 `tauri.conf.json` 的 `bundle.active`，不得把 MSIX 接进 SignPath，也不得用第三方商店扒包 Action。步骤见 `codex/docs/ops/07-microsoft-store.md`。
 - `api.lumio.games` 被存量桌面客户端硬编码，**不可变更**；账号 / 充值都在它那里。
 - 桌面端生产常量以 `codex/crates/codex-plus-core/src/lumio/product.rs` 为准
   （`API_BASE_URL` 未变，`SITE_BASE_URL` 已改为 `codex.lumiogame.com`）。

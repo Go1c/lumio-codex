@@ -64,7 +64,7 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 
 分支名为 `publish` 时 CI 版本号常为 `0.0.0-internal-<run>`。要 semver 文件名：打 `v*` tag（§2.1）。
 
-Windows CI 还会额外打一份 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名）。这是商店轨脚手架，**不是**本节内部下载通道，也不走 SignPath。
+Windows CI 还会额外打一份 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名）。这是商店轨脚手架，**不是**本节内部下载通道，也不走 SignPath。完整商店流程与双轨签名见 [07-microsoft-store.md](./07-microsoft-store.md)。
 
 ### 2.3 用本地打包 + 手工上传
 
@@ -110,9 +110,18 @@ git push origin v1.2.46
 3. 冷启动 → 首页应出现更新条 → 「查看更新」打开 Release 页  
 4. 点「稍后」横幅消失（当次会话）  
 
-## 4. 公开签名发布（门槛未打开）
+## 4. 两条 Windows 分发轨（并存，不互相替换）
 
-Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-signing-policy.md)（SignPath Foundation，发布路径有 token 时只出已签名 Windows 文件名）。那不是公开正式包。
+| 轨 | 产物 | 签名 | 手册 |
+|----|------|------|------|
+| 官网 / GitHub Release（本节 §2–§3） | NSIS setup.exe + 便携 ZIP | SignPath Authenticode 签两个 PE 和 setup（有 token 时） | [06](./06-code-signing-policy.md) |
+| Microsoft Store | `*-windows-x64-store-unsigned.msix` | **不走 SignPath**。交 Partner Center，上架后微软重签 | [07](./07-microsoft-store.md) |
+
+不要把商店 MSIX 接进 SignPath，也不要用商店轨替换 NSIS / ZIP。Partner Center Identity 仍是占位（`LumioGames.BestCodex` / `CN=PLACEHOLDER-PARTNER-CENTER` / `Lumio`）；账号注册归 IT，入口 <https://aka.ms/microsoftstoredeveloper>，本仓不注册。上架后可选从 Partner Center 下载商店重签包，或再评估把已签 MSIX 挂到 GitHub Release——**现在不加**回传 Action，也不接第三方扒包。决策：[0007](../../../.spec/decisions/0007-windows-msix-store-scaffold.md)。
+
+## 5. 公开签名发布（门槛未打开）
+
+Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-signing-policy.md)（SignPath Foundation，发布路径有 token 时只出已签名 Windows 文件名）。那是轨 1，不是公开正式包，也不是商店重签。
 
 [`.github/workflows/release-assets.yml`](../../.github/workflows/release-assets.yml) 名称为 **Public release gate**，当前逻辑是 **直接失败**，文案要求齐备：
 
@@ -130,7 +139,7 @@ Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-s
 
 开启时另开变更：改 workflow、注入 secrets、产出 `latest.json`（若恢复双源更新安装），并更新本文。
 
-## 5. 发版检查清单（复制用）
+## 6. 发版检查清单（复制用）
 
 - [ ] 版本号三处（+ workspace）一致  
 - [ ] `cargo fmt` / `lumio` 测 / manager 测 / `npm test` / `npm run check` 通过  
@@ -141,8 +150,9 @@ Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-s
 - [ ] Tag + Release 已发布；更新提醒在旧版上可复现  
 - [ ] CHANGELOG / 发布说明已写  
 - [ ] 无秘密进仓库  
+- [ ] 若本批含 Windows：确认 NSIS / ZIP 仍走轨 1，商店 MSIX 仍是 unsigned 脚手架且未进 SignPath（[07](./07-microsoft-store.md)）  
 
-## 6. 回滚
+## 7. 回滚
 
 1. **客户端**：Release 页保留上一版制品；通知用户安装上一 tag；必要时删除或标记最新 Release 为不可用（谨慎）。  
 2. **官网**：Git revert `site/` 后重新部署 Pages。  

@@ -151,6 +151,8 @@ Pop-Location
 `PACKAGE_VERSION` `1.2.46-internal-38` 映射为 Identity.Version `1.2.46.38`；映射不了第四位则用 `1.2.46.0`。
 `Identity.Name` / `Identity.Publisher` / `PublisherDisplayName` 仍是 Partner Center 占位，拿到商店身份后再改模板。本机找不到 `makeappx.exe` 会明确报错。
 
+完整商店流程、与 SignPath 轨如何并存，见 [07-microsoft-store.md](./07-microsoft-store.md)。
+
 ## 6. 用 GitHub Actions 打包（推荐）
 
 推送到 `publish`、对 PR，或手动 `workflow_dispatch`：
