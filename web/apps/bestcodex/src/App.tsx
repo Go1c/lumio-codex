@@ -15,6 +15,7 @@ import {
 import { ClaudeHome } from "@/pages/ClaudeHome";
 import { CodexHome } from "@/pages/CodexHome";
 import { GuideArticle, GuideIndex } from "@/pages/Guides";
+import { LegalPage } from "@/pages/Legal";
 import { NotFound } from "@/pages/NotFound";
 import { pageTitle } from "@/seo";
 
@@ -25,12 +26,16 @@ import { pageTitle } from "@/seo";
 const ZH_FOOTER_LINKS = [
   { label: "指南", href: "/guides" },
   { label: "帮助中心", href: "/help" },
+  { label: "隐私政策", href: "/privacy" },
+  { label: "服务条款", href: "/terms" },
   { label: "English", href: "/en" },
 ];
 
 const EN_FOOTER_LINKS = [
   { label: "Claude", href: "/en/claude" },
   { label: "Guides", href: "/en/guides" },
+  { label: "Privacy", href: "/en/privacy" },
+  { label: "Terms", href: "/en/terms" },
   { label: "中文", href: "/" },
 ];
 
@@ -105,11 +110,15 @@ export function App() {
         <Route path="/help/:slug" element={<HelpArticle />} />
         <Route path="/guides" element={<GuideIndex />} />
         <Route path="/guides/:slug" element={<GuideArticle />} />
+        <Route path="/privacy" element={<LegalPage kind="privacy" />} />
+        <Route path="/terms" element={<LegalPage kind="terms" />} />
         <Route path="/en" element={<CodexHome locale="en" />} />
         <Route path="/en/codex" element={<Navigate to="/en" replace />} />
         <Route path="/en/claude" element={<ClaudeHome locale="en" />} />
         <Route path="/en/guides" element={<GuideIndex locale="en" />} />
         <Route path="/en/guides/:slug" element={<GuideArticle locale="en" />} />
+        <Route path="/en/privacy" element={<LegalPage kind="privacy" locale="en" />} />
+        <Route path="/en/terms" element={<LegalPage kind="terms" locale="en" />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </SiteShell>
