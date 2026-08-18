@@ -224,6 +224,70 @@ describe("Codex 页内容", () => {
     expect(screen.getByText(/与 OpenAI、Anthropic 无从属/)).toBeInTheDocument();
   });
 
+  it("页脚链到隐私政策与服务条款", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/");
+
+    expect(screen.getByRole("link", { name: "隐私政策" })).toHaveAttribute("href", "/privacy");
+    expect(screen.getByRole("link", { name: "服务条款" })).toHaveAttribute("href", "/terms");
+  });
+
+  it("英文页脚链到 Privacy 与 Terms", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp("/en");
+
+    expect(screen.getByRole("link", { name: "Privacy" })).toHaveAttribute("href", "/en/privacy");
+    expect(screen.getByRole("link", { name: "Terms" })).toHaveAttribute("href", "/en/terms");
+  });
+
+  it.each(["/privacy", "/terms"] as const)("%s 披露本机改写且不捆绑官方应用", (path) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp(path);
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      path === "/privacy" ? "隐私政策" : "服务条款",
+    );
+    expect(screen.getByText(/config\.toml/)).toBeInTheDocument();
+    expect(screen.getAllByText(/auth\.json/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/api\.lumio\.games/)).toBeInTheDocument();
+    expect(screen.getAllByText(/不捆绑/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
+    const other = path === "/privacy" ? "/en/privacy" : "/en/terms";
+    expect(
+      screen.getAllByRole("link", { name: "English" }).some((link) => link.getAttribute("href") === other),
+    ).toBe(true);
+  });
+
+  it.each(["/en/privacy", "/en/terms"] as const)("%s 是英文披露页", (path) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
+
+    renderApp(path);
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      path === "/en/privacy" ? "Privacy Policy" : "Terms of Service",
+    );
+    expect(screen.getByText(/config\.toml/)).toBeInTheDocument();
+    expect(screen.getByText(/api\.lumio\.games/)).toBeInTheDocument();
+    expect(screen.getAllByText(/does not bundle/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Lumio Codex/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /隐私政策|服务条款/ })).not.toBeInTheDocument();
+  });
+
   it("带 Intel 字样的 Mac UA 把「你的设备」标在 Apple 芯片卡上", () => {
     vi.stubGlobal(
       "fetch",
