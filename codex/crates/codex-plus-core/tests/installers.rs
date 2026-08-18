@@ -261,7 +261,7 @@ fn lumio_desktop_metadata_uses_branded_contract() {
     )
     .expect("read Tauri config");
 
-    assert!(workspace.contains("https://github.com/Go1c/lumio-codex"));
+    assert!(workspace.contains("https://github.com/LumioGames/lumio-codex"));
     assert!(package_json.contains("\"name\": \"lumio-codex\""));
     assert!(package_lock.contains("\"name\": \"lumio-codex\""));
     assert!(manager_manifest.contains("name = \"lumio-codex\""));
@@ -288,9 +288,12 @@ fn lumio_windows_installer_is_branded_current_user_and_internal_unsigned() {
             .expect("read Lumio Windows installer");
 
     assert!(windows_installer.contains("Name \"Lumio Codex\""));
-    assert!(
-        windows_installer.contains("LumioCodex-${VERSION}-windows-x64-setup-internal-unsigned.exe")
-    );
+    assert!(windows_installer.contains("!ifndef OUT_SUFFIX"));
+    assert!(windows_installer.contains("!define OUT_SUFFIX \"-internal-unsigned\""));
+    assert!(windows_installer.contains("LumioCodex-${VERSION}-windows-x64-setup${OUT_SUFFIX}.exe"));
+    assert!(windows_installer.contains("VIProductVersion"));
+    assert!(windows_installer.contains("ProductName"));
+    assert!(windows_installer.contains("Lumio Codex"));
     assert!(windows_installer.contains("InstallDir \"$LOCALAPPDATA\\Programs\\Lumio Codex\""));
     assert!(windows_installer.contains("RequestExecutionLevel user"));
     assert!(windows_installer.contains("lumio-codex.exe"));

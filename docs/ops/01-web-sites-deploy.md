@@ -166,8 +166,8 @@ rsync -a /tmp/latest-internal.json user@host:/var/www/lumio-codex/latest-interna
 可作为格式参考（`{ channel, version, tag, published_at, commit, assets[] }`），
 但**不要**把它当作发布真值手改——真值在 S3，由 CI 生成。
 
-资产名与平台的对应关系写死在 `releases.ts` 里（`*-macos-arm64-internal-unsigned.dmg`、
-`*-macos-x64-internal-unsigned.dmg`、`*-windows-x64-setup-internal-unsigned.exe`），
+资产名与平台的对应关系在 `releases.ts`：macOS 仍认 `*-macos-*-internal-unsigned.dmg`，
+Windows 认 `*-windows-x64-setup.exe` 或 `*-windows-x64-setup-internal-unsigned.exe`（有签名文件名时优先），
 改产物命名要同步改那里，否则下载卡片会退化成「暂无该平台包」。
 
 ## 5. 发布节奏

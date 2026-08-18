@@ -15,7 +15,7 @@
 克隆：
 
 ```bash
-git clone https://github.com/Go1c/lumio-codex.git
+git clone https://github.com/LumioGames/lumio-codex.git
 cd lumio-codex
 git checkout publish   # 当前持续集成分支
 ```
@@ -125,6 +125,7 @@ Compress-Archive -Path dist/windows/app/* `
 
 Push-Location scripts/installer/windows
 makensis /INPUTCHARSET UTF8 /DVERSION=$version LumioCodex.nsi
+# 已签名文件名：再加 /DOUT_SUFFIX= /DPRODUCT_VERSION_QUAD=1.2.46.0
 Pop-Location
 ```
 

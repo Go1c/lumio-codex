@@ -17,8 +17,11 @@ permissions:
 
 jobs:
   windows-artifacts:
-    name: Windows x64 internal unsigned
+    name: Windows x64
     runs-on: windows-latest
+    permissions:
+      contents: read
+      actions: read
     defaults:
       run:
         working-directory: codex
@@ -69,7 +72,27 @@ jobs:
             $desktop = (Get-Content "apps/codex-plus-manager/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
             $version = "$desktop-internal-${{ github.run_number }}"
           }
+          $nums = [regex]::Matches($version, '\d+') | ForEach-Object { [int]$_.Value }
+          while ($nums.Count -lt 4) { $nums += 0 }
+          $quad = ($nums[0..3] -join '.')
           "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
+          "PRODUCT_VERSION_QUAD=$quad" >> $env:GITHUB_ENV
+
+      - name: Decide Windows signing mode
+        id: sign
+        env:
+          SIGN_WINDOWS: ${{ github.event_name != 'pull_request' && secrets.SIGNPATH_API_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          if ($env:SIGN_WINDOWS -eq 'true') {
+            "sign=true" >> $env:GITHUB_OUTPUT
+            "WINDOWS_OUT_SUFFIX=" >> $env:GITHUB_ENV
+            "artifact_suffix=" >> $env:GITHUB_OUTPUT
+          } else {
+            "sign=false" >> $env:GITHUB_OUTPUT
+            "WINDOWS_OUT_SUFFIX=-internal-unsigned" >> $env:GITHUB_ENV
+            "artifact_suffix=-internal-unsigned" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Stage Windows app files
         shell: pwsh
@@ -78,46 +101,161 @@ jobs:
           Copy-Item target/release/lumio-codex.exe dist/windows/app/
           Copy-Item target/release/lumio-codex-launcher.exe dist/windows/app/
 
+      - name: Stamp Windows version resources
+        if: steps.sign.outputs.sign == 'true'
+        shell: pwsh
+        run: |
+          $rcedit = "$env:RUNNER_TEMP/rcedit-x64.exe"
+          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $rcedit
+          foreach ($exe in @(
+            "dist/windows/app/lumio-codex.exe",
+            "dist/windows/app/lumio-codex-launcher.exe"
+          )) {
+            & $rcedit $exe `
+              --set-version-string ProductName "Lumio Codex" `
+              --set-version-string FileDescription "Lumio Codex" `
+              --set-version-string CompanyName "Lumio" `
+              --set-file-version $env:PRODUCT_VERSION_QUAD `
+              --set-product-version $env:PRODUCT_VERSION_QUAD
+          }
+
+      - name: Upload unsigned Windows binaries for SignPath
+        if: steps.sign.outputs.sign == 'true'
+        id: upload-windows-binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-binaries-${{ github.run_number }}
+          path: |
+            codex/dist/windows/app/lumio-codex.exe
+            codex/dist/windows/app/lumio-codex-launcher.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign Windows binaries with SignPath
+        if: steps.sign.outputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: windows-binaries
+          github-artifact-id: ${{ steps.upload-windows-binaries.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: codex/dist/windows/signed-binaries
+
+      - name: Replace staged binaries with signed copies
+        if: steps.sign.outputs.sign == 'true'
+        shell: pwsh
+        run: |
+          $signed = "dist/windows/signed-binaries"
+          $codex = Get-ChildItem -Path $signed -Recurse -Filter lumio-codex.exe | Select-Object -First 1
+          $launcher = Get-ChildItem -Path $signed -Recurse -Filter lumio-codex-launcher.exe | Select-Object -First 1
+          if (-not $codex -or -not $launcher) {
+            throw "SignPath did not return both signed Windows binaries"
+          }
+          Copy-Item $codex.FullName dist/windows/app/lumio-codex.exe -Force
+          Copy-Item $launcher.FullName dist/windows/app/lumio-codex-launcher.exe -Force
+
       - name: Build Windows portable archive
         shell: pwsh
         run: |
           $version = $env:PACKAGE_VERSION
-          $archive = "dist/windows/LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"
+          $suffix = $env:WINDOWS_OUT_SUFFIX
+          $archive = "dist/windows/LumioCodex-$version-windows-x64-portable$suffix.zip"
           Compress-Archive -Path dist/windows/app/* -DestinationPath $archive -Force
 
       - name: Build Windows installer
         shell: pwsh
         run: |
           $version = $env:PACKAGE_VERSION
+          $suffix = $env:WINDOWS_OUT_SUFFIX
+          $quad = $env:PRODUCT_VERSION_QUAD
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (-not (Test-Path $makensis)) {
             $makensis = "makensis"
           }
           Push-Location scripts/installer/windows
-          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" LumioCodex.nsi
+          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" "/DOUT_SUFFIX=$suffix" "/DPRODUCT_VERSION_QUAD=$quad" LumioCodex.nsi
           Pop-Location
+
+      - name: Upload unsigned Windows setup for SignPath
+        if: steps.sign.outputs.sign == 'true'
+        id: upload-windows-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows-setup-${{ github.run_number }}
+          path: codex/dist/windows/LumioCodex-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Sign Windows setup with SignPath
+        if: steps.sign.outputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: windows-setup
+          github-artifact-id: ${{ steps.upload-windows-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: codex/dist/windows/signed-setup
+
+      - name: Replace setup with signed copy
+        if: steps.sign.outputs.sign == 'true'
+        shell: pwsh
+        run: |
+          $version = $env:PACKAGE_VERSION
+          $dest = "dist/windows/LumioCodex-$version-windows-x64-setup.exe"
+          $signed = Get-ChildItem -Path dist/windows/signed-setup -Recurse -Filter "LumioCodex-*-windows-x64-setup.exe" | Select-Object -First 1
+          if (-not $signed) {
+            throw "SignPath did not return a signed Windows setup"
+          }
+          Copy-Item $signed.FullName $dest -Force
+
+      - name: Verify Windows Authenticode signatures
+        if: steps.sign.outputs.sign == 'true'
+        shell: pwsh
+        run: |
+          $version = $env:PACKAGE_VERSION
+          $files = @(
+            "dist/windows/app/lumio-codex.exe",
+            "dist/windows/app/lumio-codex-launcher.exe",
+            "dist/windows/LumioCodex-$version-windows-x64-setup.exe"
+          )
+          foreach ($file in $files) {
+            $sig = Get-AuthenticodeSignature $file
+            if (-not $sig.SignerCertificate) {
+              throw "Missing Authenticode signer: $file"
+            }
+            if ($sig.Status -eq 'NotSigned' -or $sig.Status -eq 'HashMismatch') {
+              throw "Invalid Authenticode status $($sig.Status): $file"
+            }
+          }
 
       - name: Verify Windows artifact names
         shell: pwsh
         run: |
           $version = $env:PACKAGE_VERSION
+          $suffix = $env:WINDOWS_OUT_SUFFIX
           $expected = @(
-            "dist/windows/LumioCodex-$version-windows-x64-portable-internal-unsigned.zip",
-            "dist/windows/LumioCodex-$version-windows-x64-setup-internal-unsigned.exe"
+            "dist/windows/LumioCodex-$version-windows-x64-portable$suffix.zip",
+            "dist/windows/LumioCodex-$version-windows-x64-setup$suffix.exe"
           )
           foreach ($artifact in $expected) {
             if (-not (Test-Path $artifact)) {
-              throw "Missing internal artifact: $artifact"
+              throw "Missing Windows artifact: $artifact"
             }
           }
 
-      - name: Upload Windows internal artifacts
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lumio-codex-windows-x64-internal-unsigned-${{ github.run_number }}
+          name: lumio-codex-windows-x64${{ steps.sign.outputs.artifact_suffix }}-${{ github.run_number }}
           path: |
-            codex/dist/windows/LumioCodex-*-windows-x64-portable-internal-unsigned.zip
-            codex/dist/windows/LumioCodex-*-windows-x64-setup-internal-unsigned.exe
+            codex/dist/windows/LumioCodex-*-windows-x64-portable*.zip
+            codex/dist/windows/LumioCodex-*-windows-x64-setup*.exe
           if-no-files-found: error
           retention-days: 14
 
@@ -273,7 +411,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: lumio-codex-*-internal-unsigned-${{ github.run_number }}
+          pattern: lumio-codex-*-${{ github.run_number }}
           merge-multiple: true
 
       - name: Stage release files + checksums
@@ -284,28 +422,34 @@ jobs:
           VERSION="${{ steps.ver.outputs.version }}"
           mkdir -p dist/publish
           shopt -s nullglob
-          files=(artifacts/LumioCodex-*-internal-unsigned.*)
+          files=(artifacts/LumioCodex-*)
           if [ "${#files[@]}" -lt 4 ]; then
-            echo "Expected at least 4 internal-unsigned artifacts, found ${#files[@]}" >&2
+            echo "Expected at least 4 LumioCodex artifacts, found ${#files[@]}" >&2
             find artifacts -type f -print >&2 || true
             exit 1
           fi
           for f in "${files[@]}"; do
             base="$(basename "$f")"
-            # Prefer artifacts whose filename embeds this VERSION when present.
             case "$base" in
               *"-$VERSION-"*) cp -f "$f" "dist/publish/$base" ;;
             esac
           done
           if [ "$(find dist/publish -type f | wc -l | tr -d ' ')" -eq 0 ]; then
-            # Fallback: copy whatever the build jobs produced (publish branch run numbers).
             for f in "${files[@]}"; do
               cp -f "$f" "dist/publish/$(basename "$f")"
             done
           fi
+          win_zip=(dist/publish/LumioCodex-*-windows-x64-portable*.zip)
+          win_setup=(dist/publish/LumioCodex-*-windows-x64-setup*.exe)
+          mac_dmg=(dist/publish/LumioCodex-*-macos-*.dmg)
+          if [ "${#win_zip[@]}" -ne 1 ] || [ "${#win_setup[@]}" -ne 1 ] || [ "${#mac_dmg[@]}" -ne 2 ]; then
+            echo "Expected 1 Windows zip, 1 Windows setup, 2 macOS DMGs" >&2
+            ls -la dist/publish >&2 || true
+            exit 1
+          fi
           (
             cd dist/publish
-            sha256sum LumioCodex-*-internal-unsigned.* | tee SHA256SUMS.txt
+            sha256sum LumioCodex-* | tee SHA256SUMS.txt
           )
           echo "count=$(find dist/publish -type f ! -name SHA256SUMS.txt | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
           ls -la dist/publish
@@ -319,17 +463,26 @@ jobs:
           PUBLIC_BASE="${S3_PUBLIC_BASE%/}"
           {
             echo "{"
-            echo "  \"channel\": \"internal-unsigned\","
+            echo "  \"channel\": \"internal\","
             echo "  \"version\": \"${{ steps.ver.outputs.version }}\","
             echo "  \"tag\": \"${{ steps.ver.outputs.tag }}\","
             echo "  \"published_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
             echo "  \"commit\": \"${GITHUB_SHA}\","
             echo "  \"assets\": ["
             first=1
-            for f in dist/publish/LumioCodex-*-internal-unsigned.*; do
+            for f in dist/publish/LumioCodex-*; do
               name="$(basename "$f")"
+              case "$name" in
+                SHA256SUMS.txt) continue ;;
+              esac
+              signed=false
+              case "$name" in
+                *internal-unsigned*) signed=false ;;
+                *-windows-*) signed=true ;;
+              esac
               if [ "$first" -eq 1 ]; then first=0; else echo ","; fi
-              printf '    {"name":"%s","url":"%s/%s/%s"}' "$name" "$PUBLIC_BASE" "${{ steps.ver.outputs.version }}" "$name"
+              printf '    {"name":"%s","url":"%s/%s/%s","signed":%s}' \
+                "$name" "$PUBLIC_BASE" "${{ steps.ver.outputs.version }}" "$name" "$signed"
             done
             echo
             echo "  ]"
@@ -351,9 +504,9 @@ jobs:
           PUBLIC_BASE="${S3_PUBLIC_BASE%/}"
           NOTES="$(mktemp)"
           {
-            echo "## Lumio Codex ${VERSION} (internal-unsigned)"
+            echo "## Lumio Codex ${VERSION} (internal)"
             echo
-            echo "未签名内测包。Windows 可能触发 SmartScreen；macOS 请右键打开。"
+            echo "内部通道。Windows 若文件名不含 internal-unsigned 则为 SignPath Authenticode 已签名；macOS 仍为未签名，请右键打开。"
             echo
             echo "### CDN (primary)"
             echo
@@ -370,10 +523,10 @@ jobs:
           } > "$NOTES"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/publish/* --clobber
-            gh release edit "$TAG" --notes-file "$NOTES" --prerelease --title "Lumio Codex ${VERSION} (internal-unsigned)"
+            gh release edit "$TAG" --notes-file "$NOTES" --prerelease --title "Lumio Codex ${VERSION} (internal)"
           else
             gh release create "$TAG" dist/publish/* \
-              --title "Lumio Codex ${VERSION} (internal-unsigned)" \
+              --title "Lumio Codex ${VERSION} (internal)" \
               --notes-file "$NOTES" \
               --prerelease \
               --target "$GITHUB_SHA"

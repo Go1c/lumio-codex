@@ -10,9 +10,9 @@ pub const API_BASE_URL: &str = "https://api.lumio.games/";
 pub const SITE_BASE_URL: &str = "https://codex.lumiogame.com";
 /// 充值页路径：相对 `API_BASE_URL`（`https://api.lumio.games/purchase`），禁止挂到官网。
 pub const PAYMENT_PATH: &str = "/purchase";
-pub const RELEASES_PAGE_URL: &str = "https://github.com/Go1c/lumio-codex/releases";
+pub const RELEASES_PAGE_URL: &str = "https://github.com/LumioGames/lumio-codex/releases";
 pub const GITHUB_LATEST_RELEASE_API: &str =
-    "https://api.github.com/repos/Go1c/lumio-codex/releases/latest";
+    "https://api.github.com/repos/LumioGames/lumio-codex/releases/latest";
 pub const DESKTOP_KEY_NAME: &str = "Lumio Codex Desktop";
 
 pub fn payment_url() -> String {

@@ -4,12 +4,18 @@
 !ifndef VERSION
   !define VERSION "0.0.0"
 !endif
+!ifndef OUT_SUFFIX
+  !define OUT_SUFFIX "-internal-unsigned"
+!endif
+!ifndef PRODUCT_VERSION_QUAD
+  !define PRODUCT_VERSION_QUAD "0.0.0.0"
+!endif
 !define ROOT "..\..\.."
 !define PRODUCT_REGISTRY_KEY "Software\Lumio\Lumio Codex"
 !define UNINSTALL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Lumio Codex"
 
 Name "Lumio Codex"
-OutFile "${ROOT}\dist\windows\LumioCodex-${VERSION}-windows-x64-setup-internal-unsigned.exe"
+OutFile "${ROOT}\dist\windows\LumioCodex-${VERSION}-windows-x64-setup${OUT_SUFFIX}.exe"
 InstallDir "$LOCALAPPDATA\Programs\Lumio Codex"
 InstallDirRegKey HKCU "${PRODUCT_REGISTRY_KEY}" "InstallDir"
 RequestExecutionLevel user
@@ -17,6 +23,13 @@ SetCompressor /SOLID lzma
 
 !define MUI_ICON "${ROOT}\apps\codex-plus-manager\src-tauri\icons\icon.ico"
 !define MUI_UNICON "${ROOT}\apps\codex-plus-manager\src-tauri\icons\icon.ico"
+
+VIProductVersion "${PRODUCT_VERSION_QUAD}"
+VIAddVersionKey "ProductName" "Lumio Codex"
+VIAddVersionKey "FileDescription" "Lumio Codex"
+VIAddVersionKey "CompanyName" "Lumio"
+VIAddVersionKey "FileVersion" "${VERSION}"
+VIAddVersionKey "ProductVersion" "${VERSION}"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY

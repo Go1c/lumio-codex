@@ -28,7 +28,7 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 
 ### 2.0 一次性：GitHub Secrets
 
-在 `Go1c/lumio-codex` → Settings → Secrets（或本地 `gh secret set`）：
+在 `LumioGames/lumio-codex` → Settings → Secrets（或本地 `gh secret set`）：
 
 | Secret | 示例 |
 |--------|------|
@@ -37,6 +37,8 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 | `S3_SECRET_ACCESS_KEY` | （RustFS Secret） |
 | `S3_BUCKET` | `lumio-codex` |
 | `S3_PUBLIC_BASE` | `https://s3.lumio.games/lumio-codex/releases` |
+| `SIGNPATH_API_TOKEN` | SignPath 提交 token（仅发布路径；缺省则 Windows 仍打 unsigned） |
+| Variables：`SIGNPATH_ORGANIZATION_ID` / `SIGNPATH_PROJECT_SLUG` / `SIGNPATH_POLICY_SLUG` | SignPath 组织与策略 |
 
 ### 2.1 自动：打 tag → 构建 → S3 + GitHub prerelease
 
@@ -73,7 +75,7 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 客户端启动后会请求：
 
 ```text
-GET https://api.github.com/repos/Go1c/lumio-codex/releases/latest
+GET https://api.github.com/repos/LumioGames/lumio-codex/releases/latest
 ```
 
 解析 `tag_name`，用 semver 与本地 `CARGO_PKG_VERSION` 比较；更高则首页提示「查看更新」，默认打开该 Release 的 `html_url`（或仓库 Releases 页）。
@@ -108,19 +110,21 @@ git push origin v1.2.46
 
 ## 4. 公开签名发布（门槛未打开）
 
+Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-signing-policy.md)（SignPath Foundation，发布路径有 token 时只出已签名 Windows 文件名）。那不是公开正式包。
+
 [`.github/workflows/release-assets.yml`](../../.github/workflows/release-assets.yml) 名称为 **Public release gate**，当前逻辑是 **直接失败**，文案要求齐备：
 
 - Apple Developer ID 签名 + 公证  
-- Windows 代码签名  
+- Windows 代码签名进入公开通道（`latest.json`）  
 - 受保护的 CI 凭据  
 - S3 更新基址（与架构规格双源清单一致）  
 - 回滚演练  
 
 在门槛关闭前：
 
-- 不要把 `-internal-unsigned` 宣传为「正式稳定版」  
+- 不要把内部通道（`latest-internal.json`）宣传为「正式稳定版」  
 - 不要关闭系统安全机制扩大分发  
-- 正式包命名应去掉 `internal-unsigned` 后缀（签名流程落地时一并改 CI）  
+- 公开正式包命名不得带 `internal-unsigned`  
 
 开启时另开变更：改 workflow、注入 secrets、产出 `latest.json`（若恢复双源更新安装），并更新本文。
 

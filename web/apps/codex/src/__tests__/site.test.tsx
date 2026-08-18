@@ -102,7 +102,7 @@ describe("Codex 产品站", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("link", { name: "前往发布页" })).toHaveAttribute(
       "href",
-      "https://github.com/Go1c/lumio-codex/releases",
+      "https://github.com/LumioGames/lumio-codex/releases",
     );
   });
 

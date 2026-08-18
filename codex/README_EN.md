@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="License" src="https://img.shields.io/github/license/Go1c/lumio-codex">
+  <img alt="License" src="https://img.shields.io/github/license/LumioGames/lumio-codex">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-orange">
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB">
 </p>
@@ -58,7 +58,7 @@ The GitHub Actions workflow named `Internal unsigned build artifacts` retains in
 
 These artifacts do not carry production code signatures and are only for controlled testing. Do not mirror them as stable public builds or weaken operating-system security controls to distribute them more broadly.
 
-After production release is enabled, [GitHub Releases](https://github.com/Go1c/lumio-codex/releases) is the sole authority for versions, tags, checksums, and signed artifacts. The S3 HTTPS download origin only mirrors that exact verified release set. Until signing prerequisites are available, the public release workflow fails closed.
+After production release is enabled, [GitHub Releases](https://github.com/LumioGames/lumio-codex/releases) is the sole authority for versions, tags, checksums, and signed artifacts. The S3 HTTPS download origin only mirrors that exact verified release set. Until signing prerequisites are available, the public release workflow fails closed.
 
 ## Product boundaries
 
@@ -81,7 +81,7 @@ Production secrets, signing credentials, S3 credentials, and deployment configur
 Use an existing Node.js 22 installation, stable Rust, the Tauri 2 platform prerequisites, and an official desktop app for end-to-end testing. Never place real credentials in tests or commits.
 
 ```bash
-git clone https://github.com/Go1c/lumio-codex.git
+git clone https://github.com/LumioGames/lumio-codex.git
 cd lumio-codex/apps/codex-plus-manager
 npm ci
 npm run check

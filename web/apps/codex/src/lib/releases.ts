@@ -15,13 +15,13 @@ export interface ReleaseManifest {
 /** 同源指针由部署时随站点一起发布；读不到再退 CDN，避开 S3 的 CORS。 */
 export const LOCAL_LATEST_URL = "/latest-internal.json";
 export const CDN_LATEST_URL = "https://s3.lumio.games/lumio-codex/releases/latest-internal.json";
-export const GITHUB_RELEASES_URL = "https://github.com/Go1c/lumio-codex/releases";
+export const GITHUB_RELEASES_URL = "https://github.com/LumioGames/lumio-codex/releases";
 
 const PLATFORM_MATCHERS: Record<PlatformId, RegExp> = {
   "mac-arm": /macos-arm64-internal-unsigned\.dmg$/i,
   "mac-intel": /macos-x64-internal-unsigned\.dmg$/i,
-  // 只认安装器，不要 portable 压缩包。
-  windows: /windows-x64-setup-internal-unsigned\.exe$/i,
+  // 只认安装器，不要 portable 压缩包。有签名文件名时优先。
+  windows: /windows-x64-setup(-internal-unsigned)?\.exe$/i,
 };
 
 export const PLATFORMS: Array<{ id: PlatformId; title: string }> = [
@@ -67,7 +67,12 @@ export function assetForPlatform(
 ): ReleaseAsset | null {
   const matcher = PLATFORM_MATCHERS[platform];
   if (!matcher || !Array.isArray(manifest?.assets)) return null;
-  return manifest.assets.find((asset) => matcher.test(asset.name ?? "")) ?? null;
+  const matches = manifest.assets.filter((asset) => matcher.test(asset.name ?? ""));
+  return (
+    matches.find((asset) => !/internal-unsigned/i.test(asset.name ?? "")) ??
+    matches[0] ??
+    null
+  );
 }
 
 export async function loadReleaseManifest(): Promise<ReleaseManifest> {

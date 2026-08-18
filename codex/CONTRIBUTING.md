@@ -12,7 +12,7 @@
 摘要：
 
 ```bash
-git clone https://github.com/Go1c/lumio-codex.git
+git clone https://github.com/LumioGames/lumio-codex.git
 cd lumio-codex
 git checkout publish
 

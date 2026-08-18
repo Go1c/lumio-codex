@@ -46,7 +46,7 @@ npm run build --workspace @lumio/portal    # 或只构建一站（@lumio/cc / @l
 ## 开发入口
 
 - 跨产品运维（三站部署 / 域名切换 / 上线验收）：[`docs/ops/`](docs/ops/README.md)
-- Lumio Codex：[`codex/README.md`](codex/README.md)、运维手册 [`codex/docs/ops/`](codex/docs/ops/README.md)
+- Lumio Codex：[`codex/README.md`](codex/README.md)、运维手册 [`codex/docs/ops/`](codex/docs/ops/README.md)、[Windows 签名政策](codex/docs/ops/06-code-signing-policy.md)
 - CCHaven：[`cchaven/README.md`](cchaven/README.md)、运维手册 [`cchaven/docs/ops/`](cchaven/docs/ops/README.md)
 - 统一官网开发：[`web/README.md`](web/README.md)
 - Agent 协作规范：[`AGENTS.md`](AGENTS.md) → [`.spec/AGENTS.md`](.spec/AGENTS.md)

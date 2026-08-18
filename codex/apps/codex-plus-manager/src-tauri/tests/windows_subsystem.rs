@@ -197,7 +197,15 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     assert!(workflow.contains("target/release/lumio-codex.exe"));
     assert!(workflow.contains("target/release/lumio-codex-launcher.exe"));
     assert!(workflow.contains("LumioCodex.nsi"));
-    assert!(workflow.contains("LumioCodex-$version-windows-x64-portable-internal-unsigned.zip"));
+    assert!(workflow.contains("LumioCodex-$version-windows-x64-portable$suffix.zip"));
+    assert!(workflow.contains("WINDOWS_OUT_SUFFIX"));
+    assert!(workflow.contains("signpath/github-action-submit-signing-request@v2"));
+    assert!(workflow.contains("SIGNPATH_API_TOKEN"));
+    assert!(workflow.contains("windows-binaries"));
+    assert!(workflow.contains("windows-setup"));
+    assert!(workflow.contains("pull_request"));
+    assert!(workflow.contains("\\\"channel\\\": \\\"internal\\\""));
+    assert!(workflow.contains("\"signed\":%s"));
     assert!(workflow.contains("${TMPDIR:-/tmp}"));
     assert!(workflow.contains("actions/upload-artifact@v4"));
     assert!(workflow.contains("publish-internal:"));
@@ -233,6 +241,40 @@ fn github_public_release_workflow_is_blocked_until_signing_is_ready() {
     assert!(!workflow.contains("softprops/action-gh-release"));
     assert!(!workflow.contains("gh release"));
     assert!(!workflow.contains("latest.json"));
+}
+
+#[test]
+fn windows_signpath_policy_and_artifact_configs_are_declared() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo = manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .unwrap();
+    let policy = std::fs::read_to_string(repo.join("codex/docs/ops/06-code-signing-policy.md"))
+        .expect("read Windows code signing policy");
+    let binaries = std::fs::read_to_string(
+        repo.join(".signpath/artifact-configurations/windows-binaries.xml"),
+    )
+    .expect("read SignPath windows-binaries artifact configuration");
+    let setup =
+        std::fs::read_to_string(repo.join(".signpath/artifact-configurations/windows-setup.xml"))
+            .expect("read SignPath windows-setup artifact configuration");
+
+    assert!(policy.contains("Code signing policy"));
+    assert!(policy.contains(
+        "Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org)"
+    ));
+    assert!(policy.contains(
+        "This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it"
+    ));
+    assert!(policy.contains("https://github.com/LumioGames/lumio-codex"));
+    assert!(binaries.contains("lumio-codex.exe"));
+    assert!(binaries.contains("lumio-codex-launcher.exe"));
+    assert!(binaries.contains("authenticode-sign"));
+    assert!(setup.contains("authenticode-sign"));
+    assert!(setup.contains("LumioCodex-"));
 }
 
 #[test]

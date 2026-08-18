@@ -8,7 +8,7 @@
 | 每个桌面版本 | 走 [03-release.md](./03-release.md) 检查清单 |
 | 每周 | 抽测生产 API + 官网 + 一台上安装的内测包冷启动 |
 | 每月 | 证书到期、磁盘、Sub2API 备份、GitHub artifact 是否还够用 |
-| 签名证书就绪时 | 单独立项打开 Public release gate，改 [03](./03-release.md) §4 |
+| 签名证书就绪时 | Windows 内部签见 [06](./06-code-signing-policy.md)；打开公开闸门另立项，改 [03](./03-release.md) §4 |
 
 ## 2. 三条生产线怎么养
 

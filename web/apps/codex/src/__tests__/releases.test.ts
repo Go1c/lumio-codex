@@ -91,6 +91,30 @@ describe("assetForPlatform", () => {
     expect(assetForPlatform(MANIFEST, "windows")?.url).toBe("https://s3.example.com/setup.exe");
   });
 
+  it("Windows 也认已签名的 setup.exe，并优先于 unsigned", () => {
+    const signed = assetForPlatform(
+      {
+        version: "1.2.46",
+        assets: [
+          {
+            name: "LumioCodex-1.2.46-windows-x64-portable.zip",
+            url: "https://s3.example.com/portable-signed.zip",
+          },
+          {
+            name: "LumioCodex-1.2.46-windows-x64-setup-internal-unsigned.exe",
+            url: "https://s3.example.com/setup-unsigned.exe",
+          },
+          {
+            name: "LumioCodex-1.2.46-windows-x64-setup.exe",
+            url: "https://s3.example.com/setup-signed.exe",
+          },
+        ],
+      },
+      "windows",
+    );
+    expect(signed?.url).toBe("https://s3.example.com/setup-signed.exe");
+  });
+
   it("清单缺该平台的包时返回 null，由调用方回退 GitHub", () => {
     expect(assetForPlatform({ version: "1.0.0", assets: [] }, "mac-arm")).toBeNull();
     expect(assetForPlatform(null, "mac-arm")).toBeNull();
