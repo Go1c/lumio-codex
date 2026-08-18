@@ -101,6 +101,13 @@ jobs:
           Copy-Item target/release/lumio-codex.exe dist/windows/app/
           Copy-Item target/release/lumio-codex-launcher.exe dist/windows/app/
 
+      - name: Build Windows MSIX (unsigned store scaffold)
+        shell: pwsh
+        run: |
+          node --test scripts/installer/windows/msix/map-package-version.test.mjs scripts/installer/windows/msix/pack-msix.test.mjs
+          & ./scripts/installer/windows/msix/Pack-Msix.ps1 -SelfTest
+          & ./scripts/installer/windows/msix/Pack-Msix.ps1 -PackageVersion $env:PACKAGE_VERSION
+
       - name: Stamp Windows version resources
         if: steps.sign.outputs.sign == 'true'
         shell: pwsh
@@ -241,7 +248,8 @@ jobs:
           $suffix = $env:WINDOWS_OUT_SUFFIX
           $expected = @(
             "dist/windows/LumioCodex-$version-windows-x64-portable$suffix.zip",
-            "dist/windows/LumioCodex-$version-windows-x64-setup$suffix.exe"
+            "dist/windows/LumioCodex-$version-windows-x64-setup$suffix.exe",
+            "dist/windows/LumioCodex-$version-windows-x64-store-unsigned.msix"
           )
           foreach ($artifact in $expected) {
             if (-not (Test-Path $artifact)) {
@@ -256,6 +264,7 @@ jobs:
           path: |
             codex/dist/windows/LumioCodex-*-windows-x64-portable*.zip
             codex/dist/windows/LumioCodex-*-windows-x64-setup*.exe
+            codex/dist/windows/LumioCodex-*-windows-x64-store-unsigned.msix
           if-no-files-found: error
           retention-days: 14
 

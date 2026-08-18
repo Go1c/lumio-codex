@@ -34,3 +34,4 @@
 | [0004](0004-cchaven-desktop-union-merge-recovery.md) | CC避风港桌面端以引擎兼容的 P2 为骨架，把 P1 的产品外壳整段移植上去 | 生效 |
 | [0005](0005-web-support-bubble-static-channels.md) | 官网客服气泡初版把社群入口写进前端配置，不接后台 | 生效 |
 | [0006](0006-web-support-qq-group-number.md) | 客服气泡的 QQ 入口是群号（可复制），不是加群 URL | 生效 |
+| [0007](0007-windows-msix-store-scaffold.md) | Windows 商店包另开 unsigned MSIX 轨，不改 NSIS / ZIP / Tauri bundle | 生效 |

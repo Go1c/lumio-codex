@@ -64,6 +64,8 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 
 分支名为 `publish` 时 CI 版本号常为 `0.0.0-internal-<run>`。要 semver 文件名：打 `v*` tag（§2.1）。
 
+Windows CI 还会额外打一份 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名）。这是商店轨脚手架，**不是**本节内部下载通道，也不走 SignPath。
+
 ### 2.3 用本地打包 + 手工上传
 
 1. 按 [01](./01-local-build.md) 打出四平台包  

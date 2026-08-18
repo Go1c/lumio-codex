@@ -14,7 +14,7 @@ When the SignPath token is configured on the release path (`publish`, `v*` tags,
 - `lumio-codex-launcher.exe`
 - `LumioCodex-<version>-windows-x64-setup.exe`
 
-The portable zip is rebuilt from the two signed executables. Pull requests stay unsigned. `uninstall.exe` is generated on the user's machine by NSIS and is not signed.
+The portable zip is rebuilt from the two signed executables. Pull requests stay unsigned. `uninstall.exe` is generated on the user's machine by NSIS and is not signed. The store-scaffold MSIX (`LumioCodex-*-windows-x64-store-unsigned.msix`) is not SignPath-signed; Partner Center / Store signing is out of scope until Identity is reserved.
 
 This repository does **not** sign the official OpenAI Codex / ChatGPT application, and does not bundle it.
 
