@@ -112,6 +112,7 @@ func New(
 			BaseURL:   cfg.Sub2APIBase,
 			CacheTTL:  cfg.Sub2APICacheTTL,
 			DebitPath: cfg.DebitPath(),
+			ClientKey: string(cfg.BalanceClientSecret),
 		}),
 		Now: time.Now,
 	}

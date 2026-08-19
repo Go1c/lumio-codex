@@ -80,7 +80,7 @@ LumioAPI 控制台会话；未登录仍直开 `/purchase`。桌面端 `payment_u
 `PurchaseURL()` 不带浏览器会话，保持 `/purchase`。
 
 控制面 `POST /api/v1/billing/checkout` 仍是 303 到 `/purchase`，只充值、不建单、不开通。
-Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：控制面用用户自己的令牌调 Sub2API `POST /api/v1/user/balance/debit` 扣当月价（当前 19.9 元 / 1990 分，`purpose=cchaven_monthly`，认 `Idempotency-Key`），订阅天数只写在控制面（+30 天，不自动续费）。余额不足返回 403 `insufficient_balance` + `purchase_url`。本期门户没有 Claude 开通区。
+Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：控制面用**当前用户** JWT 调 LumioAPI `POST /api/v1/user/balance/debit`，并带服务端 `X-Balance-Client-Key`（`CCHAVEN_BALANCE_CLIENT_SECRET`，禁止进前端/日志）。金额按分编码成 `19.90`，`currency=CNY`，`purpose=cchaven_monthly`，`Idempotency-Key` 与 `ref` 都是本地订单号。订阅天数只写在控制面（+30 天，不自动续费）。余额不足返回 403 `insufficient_balance` + `purchase_url`。本期门户没有 Claude 开通区。
 
 ## 待解决
 

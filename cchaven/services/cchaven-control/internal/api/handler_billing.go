@@ -3,6 +3,7 @@ package api
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -13,8 +14,14 @@ import (
 func (s *Server) handlePayWithBalance(w http.ResponseWriter, r *http.Request) {
 	// Principal 不持有令牌，扣费必须再读一次 Bearer；不要把 token 写进日志。
 	token, _ := s.accessTokenFrom(r)
+	key := r.Header.Get("Idempotency-Key")
+	if strings.TrimSpace(key) == "" {
+		httpx.Fail(w, r, apperr.IdempotencyKeyRequired())
+		return
+	}
 	result, err := s.svc.PayWithBalance(
-		r.Context(), principalOf(r).User.ID, token, r.Header.Get("Idempotency-Key"),
+		r.Context(), principalOf(r).User.ID, token, key,
+		httpx.ClientIP(r), httpx.UserAgent(r),
 	)
 	if err != nil {
 		httpx.Fail(w, r, err)

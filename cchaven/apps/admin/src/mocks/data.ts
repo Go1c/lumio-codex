@@ -349,6 +349,16 @@ function buildOrders(): AdminOrder[] {
       created_at: dayAt(1, 10, 29),
     },
     {
+      order_no: orderNo(1, 100499),
+      email_masked: "b***e@example.com",
+      amount_cents: 1990,
+      currency: "CNY",
+      channel: "balance",
+      status: "paid",
+      paid_at: dayAt(1, 11, 0),
+      created_at: dayAt(1, 11, 0),
+    },
+    {
       order_no: orderNo(2, 100440),
       email_masked: "c***n@163.com",
       amount_cents: 6800,

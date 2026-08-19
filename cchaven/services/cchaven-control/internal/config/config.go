@@ -49,9 +49,10 @@ type Config struct {
 	DatabaseURL string
 
 	// Secrets 全部来自环境变量，绝不落配置文件。
-	JWTSecret     []byte
-	CodePepper    []byte // 验证码摘要的 pepper
-	TOTPSecretKey []byte // 加密管理员 TOTP 种子的 AES-256 密钥
+	JWTSecret           []byte
+	CodePepper          []byte // 验证码摘要的 pepper
+	TOTPSecretKey       []byte // 加密管理员 TOTP 种子的 AES-256 密钥
+	BalanceClientSecret []byte // LumioAPI X-Balance-Client-Key，禁止进入响应/日志
 
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
@@ -243,7 +244,28 @@ func Load() (Config, error) {
 	if cfg.TOTPSecretKey, err = secret("CCHAVEN_TOTP_KEY", 32, cfg.Env); err != nil {
 		return Config{}, err
 	}
+	cfg.BalanceClientSecret = loadBalanceClientSecret()
+	if cfg.Env == "prod" {
+		if len(cfg.BalanceClientSecret) == 0 {
+			return Config{}, fmt.Errorf("config: 生产环境必须配置 CCHAVEN_BALANCE_CLIENT_SECRET")
+		}
+		if !strings.HasPrefix(string(cfg.BalanceClientSecret), "bcs_") {
+			return Config{}, fmt.Errorf("config: CCHAVEN_BALANCE_CLIENT_SECRET 必须以约定前缀开头")
+		}
+		if !strings.HasPrefix(cfg.Sub2APIBase, "https://") {
+			return Config{}, fmt.Errorf("config: 生产环境 Sub2API 必须使用 HTTPS")
+		}
+	}
 	return cfg, nil
+}
+
+func loadBalanceClientSecret() []byte {
+	for _, key := range []string{"CCHAVEN_BALANCE_CLIENT_SECRET", "BALANCE_CLIENT_SECRET"} {
+		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			return []byte(v)
+		}
+	}
+	return nil
 }
 
 // parseEnv 解析 CCHAVEN_ENV，返回归一化后的值与「是否被显式设置」。

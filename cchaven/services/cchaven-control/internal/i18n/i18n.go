@@ -67,6 +67,9 @@ const (
 	MsgRefundDeclined      ID = "admin.refund_declined" // 渠道拒绝退款（QA S-9）
 	MsgInsufficientBalance ID = "billing.insufficient_balance"
 	MsgDebitUnavailable    ID = "billing.debit_unavailable"
+	MsgDebitBusy           ID = "billing.debit_busy"
+	MsgDebitMisconfigured  ID = "billing.debit_misconfigured"
+	MsgDebitConflict       ID = "billing.debit_conflict"
 )
 
 var dictionaries = map[Lang]map[ID]string{
@@ -108,6 +111,9 @@ var dictionaries = map[Lang]map[ID]string{
 		MsgRefundDeclined:      "退款被支付渠道拒绝，订单已恢复为已支付，可排查后重试。",
 		MsgInsufficientBalance: "账户余额不足，请先充值。",
 		MsgDebitUnavailable:    "扣费服务暂时不可用，请稍后重试。",
+		MsgDebitBusy:           "扣款正在处理，请稍后再试。",
+		MsgDebitMisconfigured:  "余额扣款配置无效，请联系支持。",
+		MsgDebitConflict:       "订单数据冲突，请联系支持。",
 	},
 	// zh-HK 词条待补；缺失时自动回落 zh-CN。
 	ZhHK: {},

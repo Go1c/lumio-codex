@@ -85,6 +85,7 @@ func TestEveryIDHasZhCNCopy(t *testing.T) {
 		MsgInvalidParams, MsgInternal, MsgInviteCodeInvalid, MsgInviteSelf,
 		MsgOAuthInvalidRequest, MsgOAuthInvalidGrant, MsgAdminMFARequired, MsgAdminMFAInvalid,
 		MsgOrderNotRefundable, MsgInsufficientBalance, MsgDebitUnavailable,
+		MsgDebitBusy, MsgDebitMisconfigured, MsgDebitConflict,
 	}
 	for _, id := range ids {
 		if _, ok := dictionaries[ZhCN][id]; !ok {

@@ -260,15 +260,20 @@ type PayWithBalanceResult struct {
 	Entitlement domain.Entitlement `json:"entitlement"`
 }
 
-// PayWithBalance 用 Sub2API 余额扣当月套餐并入账。
+// PayWithBalance 用 Sub2API 余额扣当月套餐并入账。金额严格取当前 ops 配置。
 //
 // 已是 active 的用户可以再买一个月（顺延 30 天）。扣费在建单事务外进行：
-// 余额不足把订单标 failed；上游不可用则保持 pending，绝不入账。
+// 余额不足把订单标 failed；上游不可用 / 401 则保持 pending，绝不入账。
 func (s *Service) PayWithBalance(
-	ctx context.Context, userID int64, userToken string, idempotencyKey string,
+	ctx context.Context, userID int64, userToken, idempotencyKey, clientIP, userAgent string,
 ) (PayWithBalanceResult, error) {
 	if s.Sub2API == nil {
 		return PayWithBalanceResult{}, apperr.IdentityUnavailable()
+	}
+
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return PayWithBalanceResult{}, apperr.IdempotencyKeyRequired()
 	}
 
 	identity, err := s.Sub2API.VerifyFresh(ctx, userToken)
@@ -291,27 +296,11 @@ func (s *Service) PayWithBalance(
 		currency = "CNY"
 	}
 
-	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if idempotencyKey != "" {
-		existing, getErr := store.GetOrderByIdempotencyKey(ctx, s.Pool, idempotencyKey)
-		if getErr == nil && existing.UserID == userID && existing.Status == domain.OrderPaid {
-			// 已付清的重放必须在余额门槛之前返回：第一次扣费后余额可能已不够再买一个月。
-			return s.payWithBalanceResult(ctx, userID, existing)
-		}
-		if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
-			return PayWithBalanceResult{}, getErr
-		}
-	}
-
-	if int64(math.Round(identity.Balance*100)) < amountCents {
-		return PayWithBalanceResult{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
-	}
-
 	now := s.now()
 	var order domain.Order
 
 	err = db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
-		created, createErr := s.orderForBalancePay(ctx, tx, userID, amountCents, currency, idempotencyKey, now)
+		created, createErr := s.orderForBalancePay(ctx, tx, userID, identity.Balance, amountCents, currency, idempotencyKey, now)
 		if createErr != nil {
 			return createErr
 		}
@@ -326,15 +315,26 @@ func (s *Service) PayWithBalance(
 		}
 	}
 
-	if order.Status == domain.OrderPaid {
+	switch order.Status {
+	case domain.OrderPaid:
 		return s.payWithBalanceResult(ctx, userID, order)
+	case domain.OrderPending, domain.OrderFailed:
+		// pending：可能已经扣过款，不能再用当前余额把门。
+		// failed：充值后用同一把 key 重试。
+		if order.Status == domain.OrderFailed && yuanToCents(identity.Balance) < order.AmountCents {
+			return PayWithBalanceResult{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
+		}
+	default:
+		return PayWithBalanceResult{}, apperr.InvalidParams()
 	}
 
 	debit, err := s.Sub2API.Debit(ctx, userToken, order.OrderNo, sub2api.DebitRequest{
-		Amount:   float64(order.AmountCents) / 100,
-		Currency: order.Currency,
-		Purpose:  debitPurpose,
-		Ref:      order.OrderNo,
+		AmountCents: order.AmountCents,
+		Currency:    "CNY",
+		Purpose:     debitPurpose,
+		Ref:         order.OrderNo,
+		ClientIP:    clientIP,
+		UserAgent:   userAgent,
 	})
 	switch {
 	case errors.Is(err, sub2api.ErrInsufficientBalance):
@@ -344,8 +344,21 @@ func (s *Service) PayWithBalance(
 			return PayWithBalanceResult{}, markErr
 		}
 		return PayWithBalanceResult{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
-	case errors.Is(err, sub2api.ErrInvalidToken):
+	case errors.Is(err, sub2api.ErrTokenExpired), errors.Is(err, sub2api.ErrInvalidToken):
 		return PayWithBalanceResult{}, apperr.Unauthorized()
+	case errors.Is(err, sub2api.ErrDebitBusy):
+		retryAfter := time.Duration(0)
+		var busy *sub2api.DebitBusyError
+		if errors.As(err, &busy) {
+			retryAfter = busy.RetryAfter
+		}
+		return PayWithBalanceResult{}, apperr.DebitBusy(retryAfter).WithCause(err)
+	case errors.Is(err, sub2api.ErrInvalidBalanceClient), errors.Is(err, sub2api.ErrPurposeNotAllowed), errors.Is(err, sub2api.ErrDebitMisconfigured):
+		return PayWithBalanceResult{}, apperr.DebitMisconfigured().WithCause(err)
+	case errors.Is(err, sub2api.ErrIdempotencyConflict):
+		return PayWithBalanceResult{}, apperr.DebitIdempotencyConflict().WithCause(err)
+	case errors.Is(err, sub2api.ErrDebitInvalidRequest):
+		return PayWithBalanceResult{}, apperr.InvalidParams().WithCause(err)
 	case err != nil:
 		return PayWithBalanceResult{}, apperr.DebitUnavailable().WithCause(err)
 	}
@@ -384,19 +397,17 @@ func (s *Service) PayWithBalance(
 }
 
 func (s *Service) orderForBalancePay(
-	ctx context.Context, tx pgx.Tx, userID, amountCents int64, currency, idempotencyKey string, now time.Time,
+	ctx context.Context, tx pgx.Tx, userID int64, balanceYuan float64, amountCents int64, currency, idempotencyKey string, now time.Time,
 ) (domain.Order, error) {
-	if idempotencyKey != "" {
-		existing, err := store.GetOrderByIdempotencyKey(ctx, tx, idempotencyKey)
-		if err == nil {
-			if existing.UserID != userID {
-				return domain.Order{}, apperr.InvalidParams()
-			}
-			return existing, nil
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			return domain.Order{}, err
-		}
+	existing, err := store.GetOrderByUserAndIdempotencyKeyForUpdate(ctx, tx, userID, idempotencyKey)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return domain.Order{}, err
+	}
+	if yuanToCents(balanceYuan) < amountCents {
+		return domain.Order{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
 	}
 
 	orderNo, err := store.NextOrderNo(ctx, tx, now)
@@ -418,14 +429,18 @@ func (s *Service) orderForBalancePay(
 func (s *Service) orderAfterIdempotencyConflict(
 	ctx context.Context, userID int64, idempotencyKey string, err error,
 ) (domain.Order, bool) {
-	if !store.IsUniqueViolation(err) || idempotencyKey == "" {
+	if !store.IsUniqueViolation(err) {
 		return domain.Order{}, false
 	}
-	existing, getErr := store.GetOrderByIdempotencyKey(ctx, s.Pool, idempotencyKey)
-	if getErr != nil || existing.UserID != userID {
+	existing, getErr := store.GetOrderByUserAndIdempotencyKey(ctx, s.Pool, userID, idempotencyKey)
+	if getErr != nil {
 		return domain.Order{}, false
 	}
 	return existing, true
+}
+
+func yuanToCents(value float64) int64 {
+	return int64(math.Round(value * 100))
 }
 
 func (s *Service) payWithBalanceResult(

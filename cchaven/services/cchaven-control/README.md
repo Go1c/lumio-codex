@@ -34,7 +34,7 @@
 - **桌面 OAuth**：本服务仍是 CC 桌面端的 token issuer，但 `POST /api/v1/oauth/authorize`
   **只认 Sub2API 令牌**（`requireLumioUser`），拿本服务自己签的令牌来授权新设备会被拒。
 - **充值**：`POST /api/v1/billing/checkout` 返回 303 跳 `{Sub2API}/purchase`，不建单。
-- **余额开通**：`POST /api/v1/billing/pay-with-balance` 扣 Sub2API 余额并在本服务入账 30 天；钱在 Sub2API，权在本服务。
+- **余额开通**：`POST /api/v1/billing/pay-with-balance` 用当前用户 JWT + 服务端 `X-Balance-Client-Key` 扣 LumioAPI 站内余额，并在本服务入账 30 天。密钥只来自 `CCHAVEN_BALANCE_CLIENT_SECRET`。
 - **管理后台**：`/api/admin/v1` 的管理员账号与强制 TOTP **完全没有变**，仍在本地。
 - **存量用户迁移**：`cmd/migrate-identities`（一次性、幂等、默认 dry-run）。
   **写生产数据 + 在外部系统建号，执行前必须取得负责人确认**，步骤见

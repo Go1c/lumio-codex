@@ -74,14 +74,15 @@ func New(t *testing.T) *Env {
 			Session: "cch_sess", Refresh: "cch_refresh",
 			Referral: "cch_ref", Admin: "cch_admin",
 		},
-		CookieSameSite:  http.SameSiteLaxMode,
-		JWTSecret:       mockSecret,
-		CodePepper:      mockSecret,
-		TOTPSecretKey:   mockSecret,
-		AccessTokenTTL:  15 * time.Minute,
-		RefreshTokenTTL: 30 * 24 * time.Hour,
-		WebSessionTTL:   30 * 24 * time.Hour,
-		AdminSessionTTL: 12 * time.Hour,
+		CookieSameSite:      http.SameSiteLaxMode,
+		JWTSecret:           mockSecret,
+		CodePepper:          mockSecret,
+		TOTPSecretKey:       mockSecret,
+		BalanceClientSecret: []byte("test-wallet-client"),
+		AccessTokenTTL:      15 * time.Minute,
+		RefreshTokenTTL:     30 * 24 * time.Hour,
+		WebSessionTTL:       30 * 24 * time.Hour,
+		AdminSessionTTL:     12 * time.Hour,
 	}
 
 	cipher, err := security.NewCipher(cfg.TOTPSecretKey)

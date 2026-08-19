@@ -551,7 +551,11 @@ pub async fn lumio_claude_pay_with_balance(
     session: tauri::State<'_, LumioSession>,
 ) -> Result<LumioCommandResult<LumioClaudePayPayload>, ()> {
     let client = &session.client;
-    let key = claude_control::new_idempotency_key();
+    let state_dir = product::state_dir();
+    let key = match state_dir.as_deref() {
+        Some(dir) => claude_control::load_or_create_pay_key(dir),
+        None => claude_control::new_idempotency_key(),
+    };
     let outcome = session
         .auth
         .with_access_token(client, move |token| {
@@ -567,6 +571,11 @@ pub async fn lumio_claude_pay_with_balance(
             }
         })
         .await;
+    if outcome.is_ok() {
+        if let Some(dir) = state_dir.as_deref() {
+            claude_control::clear_pay_key(dir);
+        }
+    }
     result(outcome)
 }
 

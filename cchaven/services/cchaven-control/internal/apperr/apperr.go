@@ -225,6 +225,11 @@ func IdentityUnavailable() *Error {
 	return newError(http.StatusServiceUnavailable, "identity_unavailable", i18n.MsgIdentityUnavailable)
 }
 
+// IdempotencyKeyRequired 表示余额支付缺少 Idempotency-Key。
+func IdempotencyKeyRequired() *Error {
+	return newError(http.StatusBadRequest, "idempotency_key_required", i18n.MsgInvalidParams)
+}
+
 // InsufficientBalance 表示账户余额不够支付当前套餐。
 //
 // 给前端一条稳定的 code 和充值页地址；CC 响应没有 reason 字段。
@@ -237,6 +242,25 @@ func InsufficientBalance(purchaseURL string) *Error {
 // DebitUnavailable 表示余额扣费上游不可用。订单保持 pending，不得入账。
 func DebitUnavailable() *Error {
 	return newError(http.StatusServiceUnavailable, "debit_unavailable", i18n.MsgDebitUnavailable)
+}
+
+// DebitBusy 表示上游正在处理同一笔扣款。
+func DebitBusy(retryAfter time.Duration) *Error {
+	err := newError(http.StatusTooManyRequests, "debit_busy", i18n.MsgDebitBusy)
+	if retryAfter > 0 {
+		err.Details = map[string]any{"retry_after_seconds": int(retryAfter.Seconds())}
+	}
+	return err
+}
+
+// DebitMisconfigured 表示消费方密钥或 purpose 未被 LumioAPI 接受。
+func DebitMisconfigured() *Error {
+	return newError(http.StatusFailedDependency, "debit_misconfigured", i18n.MsgDebitMisconfigured)
+}
+
+// DebitIdempotencyConflict 表示同一订单号的请求体与首次不一致。
+func DebitIdempotencyConflict() *Error {
+	return newError(http.StatusConflict, "debit_idempotency_conflict", i18n.MsgDebitConflict)
 }
 
 // —— 订阅与邀请 ——

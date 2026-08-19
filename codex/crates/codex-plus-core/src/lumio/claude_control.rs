@@ -132,6 +132,37 @@ pub fn new_idempotency_key() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+const PAY_KEY_FILE: &str = "claude-pay-idempotency.json";
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct PayKeyFile {
+    key: String,
+}
+
+/// 一次支付尝试共用一把钥匙：成功或用户主动放弃前都复用，避免超时重试双扣。
+pub fn load_or_create_pay_key(dir: &std::path::Path) -> String {
+    let path = dir.join(PAY_KEY_FILE);
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        if let Ok(parsed) = serde_json::from_str::<PayKeyFile>(&text) {
+            let key = parsed.key.trim().to_string();
+            if !key.is_empty() {
+                return key;
+            }
+        }
+    }
+    let key = new_idempotency_key();
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(bytes) = serde_json::to_vec(&PayKeyFile { key: key.clone() }) {
+        let _ = std::fs::write(path, bytes);
+    }
+    key
+}
+
+/// 订单明确成功后丢掉钥匙，下一笔开通会生成新 key。
+pub fn clear_pay_key(dir: &std::path::Path) {
+    let _ = std::fs::remove_file(dir.join(PAY_KEY_FILE));
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeBillingOrder {
     pub order_no: String,
@@ -450,6 +481,26 @@ mod tests {
     #[test]
     fn pay_maps_401_to_session_expired() {
         assert_eq!(map_billing_error(401, "{}"), "AUTH_SESSION_EXPIRED");
+    }
+
+    #[test]
+    fn pay_403_insufficient_is_not_session_expired() {
+        let body = r#"{"error":{"code":"insufficient_balance"}}"#;
+        let mapped = map_billing_error(403, body);
+        assert_eq!(mapped, "ACCOUNT_INSUFFICIENT_BALANCE");
+        assert_ne!(mapped, "AUTH_SESSION_EXPIRED");
+    }
+
+    #[test]
+    fn pay_key_survives_until_cleared() {
+        let dir = std::env::temp_dir().join(format!("claude-pay-key-{}", uuid::Uuid::new_v4()));
+        let first = load_or_create_pay_key(&dir);
+        let second = load_or_create_pay_key(&dir);
+        assert_eq!(first, second);
+        clear_pay_key(&dir);
+        let third = load_or_create_pay_key(&dir);
+        assert_ne!(first, third);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

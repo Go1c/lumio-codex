@@ -15,6 +15,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv("CCHAVEN_JWT_SECRET", strings.Repeat("j", 32))
 	t.Setenv("CCHAVEN_CODE_PEPPER", strings.Repeat("p", 32))
 	t.Setenv("CCHAVEN_TOTP_KEY", strings.Repeat("k", 32))
+	t.Setenv("CCHAVEN_BALANCE_CLIENT_SECRET", "bcs_test")
 }
 
 func TestLoadDefaults(t *testing.T) {
@@ -72,6 +73,39 @@ func TestLoadIdentityDefaults(t *testing.T) {
 	}
 	if got, want := cfg.PortalLoginURL(), "https://bestcodex.app/login"; got != want {
 		t.Errorf("PortalLoginURL() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadProdRequiresBalanceClientSecretAndHTTPS(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("CCHAVEN_ENV", "prod")
+	t.Setenv("CCHAVEN_JWT_SECRET", strings.Repeat("j", 32))
+	t.Setenv("CCHAVEN_CODE_PEPPER", strings.Repeat("p", 32))
+	t.Setenv("CCHAVEN_TOTP_KEY", strings.Repeat("k", 32))
+	t.Setenv("CCHAVEN_BALANCE_CLIENT_SECRET", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("生产环境缺消费方密钥应失败")
+	}
+
+	t.Setenv("CCHAVEN_BALANCE_CLIENT_SECRET", "not-prefixed")
+	if _, err := Load(); err == nil {
+		t.Fatal("生产环境密钥缺约定前缀应失败")
+	}
+
+	t.Setenv("CCHAVEN_BALANCE_CLIENT_SECRET", "bcs_test")
+	t.Setenv("CCHAVEN_SUB2API_BASE", "http://api.example.test")
+	if _, err := Load(); err == nil {
+		t.Fatal("生产环境 HTTP Sub2API 应失败")
+	}
+
+	t.Setenv("CCHAVEN_SUB2API_BASE", "https://api.lumio.games")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("合法生产配置应通过: %v", err)
+	}
+	if string(cfg.BalanceClientSecret) != "bcs_test" {
+		t.Fatal("生产配置应读到消费方密钥")
 	}
 }
 

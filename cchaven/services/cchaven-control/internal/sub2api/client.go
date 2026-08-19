@@ -76,6 +76,10 @@ type Options struct {
 	HTTPClient *http.Client
 	// DebitPath 是余额扣费路径；空则 DefaultDebitPath。
 	DebitPath string
+	// ClientKey 是 X-Balance-Client-Key，只允许从服务端 secret 注入。
+	ClientKey string
+	// Sleep 允许测试注入可控等待；生产为 context-aware sleep。
+	Sleep func(context.Context, time.Duration) error
 	// Now 允许测试注入可控时钟；生产为 time.Now。
 	Now func() time.Time
 }
@@ -84,9 +88,11 @@ type Options struct {
 type Client struct {
 	baseURL   string
 	debitPath string
+	clientKey string
 	http      *http.Client
 	ttl       time.Duration
 	now       func() time.Time
+	sleepFn   func(context.Context, time.Duration) error
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -123,9 +129,11 @@ func New(opts Options) *Client {
 	return &Client{
 		baseURL:   base,
 		debitPath: debitPath,
+		clientKey: strings.TrimSpace(opts.ClientKey),
 		http:      httpClient,
 		ttl:       ttl,
 		now:       now,
+		sleepFn:   opts.Sleep,
 		cache:     map[string]cacheEntry{},
 	}
 }
