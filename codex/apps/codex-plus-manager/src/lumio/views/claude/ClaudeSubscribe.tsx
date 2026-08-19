@@ -1,22 +1,29 @@
+import type { ReactNode } from "react";
+
+import { claudeEntitlementHeadline } from "../../claude/copy.ts";
 import { formatClaudePlanYuan } from "../../claude/session.ts";
-import type { ClaudePayMode } from "../../claude/types.ts";
+import type { ClaudeEntitlement, ClaudePayMode } from "../../claude/types.ts";
 
 export function ClaudeSubscribe({
   balance,
   planAmountCents,
   paying,
   payMode,
+  entitlement,
   onPay,
   onRecharge,
   onBackToCodex,
+  ordersSlot,
 }: {
   balance: number;
   planAmountCents: number;
   paying: boolean;
   payMode: ClaudePayMode;
+  entitlement: ClaudeEntitlement;
   onPay: () => void;
   onRecharge: () => void;
   onBackToCodex: () => void;
+  ordersSlot?: ReactNode;
 }) {
   const priceLabel = formatClaudePlanYuan(planAmountCents);
   const needsRecharge = payMode === "recharge" || Math.round(balance * 100) < planAmountCents;
@@ -33,6 +40,7 @@ export function ClaudeSubscribe({
           <br />
           跑 Claude
         </h2>
+        <p className="lumio-claude-entitlement">{claudeEntitlementHeadline(entitlement.status)}</p>
         <p className="lumio-claude-price">
           ¥{priceLabel}
           <span> / 月</span>
@@ -47,6 +55,7 @@ export function ClaudeSubscribe({
         >
           {paying ? "正在支付…" : needsRecharge ? "余额不足，去充值" : `用余额支付 ¥${priceLabel}`}
         </button>
+        {ordersSlot}
         <p className="lumio-claude-quiet">
           <button className="lumio-link-button" onClick={onBackToCodex} type="button">
             回到 Codex Tab

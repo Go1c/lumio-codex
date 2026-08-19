@@ -76,6 +76,9 @@ pub struct LumioAccountPayload {
 #[serde(rename_all = "camelCase")]
 pub struct LumioClaudeEntitlementPayload {
     pub status: String,
+    pub expires_at: Option<String>,
+    pub days_left: Option<i64>,
+    pub expiring_soon: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +87,7 @@ pub struct LumioClaudePayPayload {
     pub status: String,
     pub expires_at: Option<String>,
     pub days_left: Option<i64>,
+    pub expiring_soon: Option<bool>,
     pub order_no: String,
 }
 
@@ -530,6 +534,9 @@ pub async fn lumio_claude_entitlement(
             .await;
             Ok(LumioClaudeEntitlementPayload {
                 status: snapshot.status,
+                expires_at: snapshot.expires_at,
+                days_left: snapshot.days_left,
+                expiring_soon: snapshot.expiring_soon,
             })
         })
         .await;
@@ -566,6 +573,7 @@ pub async fn lumio_claude_pay_with_balance(
                     status: snapshot.entitlement.status,
                     expires_at: snapshot.entitlement.expires_at,
                     days_left: snapshot.entitlement.days_left,
+                    expiring_soon: snapshot.entitlement.expiring_soon,
                     order_no: snapshot.order.order_no,
                 })
             }

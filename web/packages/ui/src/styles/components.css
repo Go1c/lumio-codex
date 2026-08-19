@@ -1308,6 +1308,18 @@
   font-size: 13.5px;
   color: var(--ink-strong);
 }
+.claude-entitlement-line {
+  font-size: 14.5px;
+  margin: 0 0 10px;
+  color: var(--ink-strong);
+}
+.claude-entitlement-line.is-expiring {
+  color: #c2410c;
+  font-weight: 600;
+}
+.claude-order-list li {
+  line-height: 1.6;
+}
 
 /* ---------- 响应式：最小 375px 不横向溢出 ---------- */
 @media (max-width: 960px) {

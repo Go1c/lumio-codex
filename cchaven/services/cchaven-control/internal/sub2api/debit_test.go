@@ -261,6 +261,19 @@ func TestDebitRejectsMismatchedReceipt(t *testing.T) {
 	}
 }
 
+func TestParseDebitAcceptsScale8WalletBalance(t *testing.T) {
+	body := []byte(`{"code":0,"message":"success","data":{"txn_id":"txn-scale","amount":19.90,"balance":583.46000000,"currency":"CNY"}}`)
+	got, err := parseDebit(http.StatusOK, body, DebitRequest{
+		AmountCents: 1990, Currency: "CNY", Purpose: "cchaven_monthly", Ref: "ord-1",
+	})
+	if err != nil {
+		t.Fatalf("HTTP 200 + code=0 + 8 位小数余额不得变成 ErrDebitUnavailable, err=%v", err)
+	}
+	if got.TxnID != "txn-scale" || got.AmountCents != 1990 || got.BalanceCents != 58346 {
+		t.Errorf("回执 = %+v, want txn-scale / 1990 / 58346", got)
+	}
+}
+
 func TestDebitPayloadHasNoSecretOrFloat(t *testing.T) {
 	payload, err := marshalDebitRequest(DebitRequest{
 		AmountCents: 1990, Currency: "CNY", Purpose: "cchaven_monthly", Ref: "CC1",

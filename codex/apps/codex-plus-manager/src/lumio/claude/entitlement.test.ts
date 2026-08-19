@@ -72,6 +72,7 @@ test("control-plane fetch reads entitlement status from the CC API", async () =>
   const remote = await fetchClaudeEntitlementFromControlPlane(fetcher);
   assert.equal(remote?.status, "active");
   assert.equal(remote?.source, "control-plane");
+  assert.equal(remote?.daysLeft, 12);
   assert.equal(calls[0], `${CLAUDE_CONTROL_API}/api/v1/me/entitlement`);
 });
 
@@ -82,11 +83,24 @@ test("a failed control-plane fetch does not invent an entitlement", async () => 
 
 test("control-plane envelopes unwrap data.status", async () => {
   const fetcher = async () =>
-    new Response(JSON.stringify({ data: { status: "trialing", days_left: 3 } }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    new Response(
+      JSON.stringify({
+        data: {
+          status: "trialing",
+          expires_at: "2026-08-22T00:00:00Z",
+          days_left: 3,
+          expiring_soon: true,
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
   const remote = await fetchClaudeEntitlementFromControlPlane(fetcher);
   assert.equal(remote?.status, "trialing");
   assert.equal(remote?.source, "control-plane");
+  assert.equal(remote?.expiresAt, "2026-08-22T00:00:00Z");
+  assert.equal(remote?.daysLeft, 3);
+  assert.equal(remote?.expiringSoon, true);
 });

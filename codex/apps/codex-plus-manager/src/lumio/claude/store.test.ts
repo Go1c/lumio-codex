@@ -31,6 +31,26 @@ test("the module store keeps an in-flight connect sheet after a consumer unmount
   assert.equal(afterUnmount.sheet?.probeStatus, "running");
 });
 
+test("payment success writes expiresAt and daysLeft into the store", () => {
+  resetClaudeStore();
+  dispatchClaude({
+    type: "entitlement-resolved",
+    entitlement: {
+      status: "active",
+      source: "control-plane",
+      expiresAt: "2026-09-18T00:00:00Z",
+      daysLeft: 30,
+      expiringSoon: false,
+    },
+  });
+  const entitlement = getClaudeState().entitlement;
+  assert.equal(entitlement.status, "active");
+  assert.equal(entitlement.expiresAt, "2026-09-18T00:00:00Z");
+  assert.equal(entitlement.daysLeft, 30);
+  assert.notEqual(entitlement.expiresAt, null);
+  assert.notEqual(entitlement.daysLeft, null);
+});
+
 test("getClaudeState returns the same module singleton across reads", () => {
   resetClaudeStore();
   dispatchClaude({ type: "entitlement-resolved", entitlement: { status: "trialing", source: "local" } });

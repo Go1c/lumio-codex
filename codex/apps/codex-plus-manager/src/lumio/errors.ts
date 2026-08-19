@@ -17,6 +17,7 @@ export const LUMIO_ERROR_COPY: Record<string, string> = {
   KEY_PROVISION_FAILED: "连接初始化失败，可重试",
   KEY_STORAGE_UNAVAILABLE: "无法访问系统安全存储",
   SERVICE_UNAVAILABLE: "服务暂时不可用，稍后自动重试",
+  SERVICE_DEBIT_UNAVAILABLE: "扣费服务暂时不可用，请稍后重试。请勿换新单。",
   SERVICE_MODEL_CATALOG_EMPTY: "当前没有可用模型，请稍后重试或联系支持",
   SERVICE_RATE_LIMITED: "请求过于频繁，请稍后再试",
   SERVICE_VERSION_TOO_OLD: "当前版本过旧，请更新后继续",

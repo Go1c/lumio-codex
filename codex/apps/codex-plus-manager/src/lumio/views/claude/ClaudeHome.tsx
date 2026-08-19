@@ -28,6 +28,7 @@ import type {
   ClaudeProject,
   ClaudeState,
 } from "../../claude/types.ts";
+import { ClaudeEntitlementLine } from "./ClaudeEntitlementLine.tsx";
 
 export function ClaudeHome({
   state,
@@ -58,6 +59,7 @@ export function ClaudeHome({
             新建
           </button>
         </div>
+        <ClaudeEntitlementLine entitlement={state.entitlement} />
         {state.projects.map((project) => (
           <button
             className={`lumio-claude-proj${project.id === active?.id ? " is-on" : ""}`}

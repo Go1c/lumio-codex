@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Banner, LoadingBlock, SectionCard, StatusDot, purchaseUrl, siteUrl } from "@lumio/ui";
 
 import { AffiliateCard } from "@/components/AffiliateCard";
+import { ClaudeAccountPanels } from "@/components/ClaudeAccountPanels";
 import { usePortalSession } from "@/state/session";
 
 const STATUS_TONE: Record<string, { tone: "green" | "orange" | "gray"; label: string }> = {
@@ -64,6 +65,8 @@ export function Account() {
               充值在收银台完成，BestCodex 官网与客户端都不收集任何付款信息。
             </p>
           </SectionCard>
+
+          <ClaudeAccountPanels accessToken={session.accessToken} />
 
           <AffiliateCard
             accessToken={session.accessToken}
