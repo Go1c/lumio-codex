@@ -20,6 +20,7 @@ import { GUIDES_EN } from "@/guides.en";
 /** GitHub 仓库：结构化数据用它做实体绑定，和同名无关站点区分开。 */
 export const REPO_URL = "https://github.com/LumioGames/lumio-codex";
 export const BING_SITE_VERIFICATION = "48232FF4A9EAB80D49C7A5AE2D009539";
+export const BAIDU_SITE_VERIFICATION = "codeva-501Ruteqzc";
 const UPSTREAM_URL = "https://github.com/BigPizzaV3/CodexPlusPlus";
 const LAST_REVIEWED = "2026-08-17";
 
