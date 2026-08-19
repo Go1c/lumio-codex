@@ -197,7 +197,9 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     assert!(workflow.contains("target/release/lumio-codex.exe"));
     assert!(workflow.contains("target/release/lumio-codex-launcher.exe"));
     assert!(workflow.contains("LumioCodex.nsi"));
-    assert!(workflow.contains("LumioCodex-$version-windows-x64-portable$suffix.zip"));
+    assert!(workflow.contains(
+        "LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
+    ));
     assert!(workflow.contains("WINDOWS_OUT_SUFFIX"));
     assert!(workflow.contains("signpath/github-action-submit-signing-request@v2"));
     assert!(workflow.contains("SIGNPATH_API_TOKEN"));
