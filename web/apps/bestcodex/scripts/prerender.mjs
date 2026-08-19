@@ -25,6 +25,7 @@ const ssrEntry = join(appRoot, "dist-ssr", "prerender.js");
 const {
   BAIDU_SITE_VERIFICATION,
   BING_SITE_VERIFICATION,
+  GOOGLE_SITE_VERIFICATION,
   SEO_ROUTES,
   renderRoute,
   headDataFor,
@@ -41,7 +42,7 @@ const OG_IMAGE = absoluteUrl("/bestcodex-icon.jpg");
  * 只写进首页——各家后台都只校验首页。没配的引擎自动跳过，不会产出空 meta。
  */
 const VERIFICATIONS = [
-  ["google-site-verification", process.env.SITE_VERIFY_GOOGLE],
+  ["google-site-verification", GOOGLE_SITE_VERIFICATION],
   ["msvalidate.01", BING_SITE_VERIFICATION],
   ["baidu-site-verification", BAIDU_SITE_VERIFICATION],
   ["sogou_site_verification", process.env.SITE_VERIFY_SOGOU],
