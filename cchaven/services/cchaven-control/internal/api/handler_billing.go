@@ -58,6 +58,19 @@ func (s *Server) handleGetMyOrder(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, order)
 }
 
+func (s *Server) handleResumeBalanceOrder(w http.ResponseWriter, r *http.Request) {
+	token, _ := s.accessTokenFrom(r)
+	result, err := s.svc.ResumeBalanceOrder(
+		r.Context(), principalOf(r).User.ID, token, chi.URLParam(r, "orderNo"),
+		httpx.ClientIP(r), httpx.UserAgent(r),
+	)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
+}
+
 // handleWebhook 接收支付渠道回调。签名放在 X-CCHaven-Signature 头，报文原样传给适配器验签。
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))

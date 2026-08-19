@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { Banner, LoadingBlock, SectionCard, StatusDot, purchaseUrl, siteUrl } from "@lumio/ui";
@@ -27,6 +28,7 @@ export function Account() {
   const location = useLocation();
   const navigate = useNavigate();
   const tab = accountTabFromHash(location.hash);
+  const [billingTick, setBillingTick] = useState(0);
 
   function selectTab(next: AccountTabId): void {
     navigate(
@@ -132,8 +134,16 @@ export function Account() {
 
             {tab === "orders" && session.accessToken ? (
               <>
-                <ClaudeSubscriptionCard accessToken={session.accessToken} />
-                <ClaudeOrdersCard accessToken={session.accessToken} />
+                <ClaudeSubscriptionCard
+                  accessToken={session.accessToken}
+                  reloadKey={billingTick}
+                  onBillingChanged={() => setBillingTick((n) => n + 1)}
+                />
+                <ClaudeOrdersCard
+                  accessToken={session.accessToken}
+                  reloadKey={billingTick}
+                  onBillingChanged={() => setBillingTick((n) => n + 1)}
+                />
               </>
             ) : null}
 

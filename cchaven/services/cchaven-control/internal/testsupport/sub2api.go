@@ -192,8 +192,9 @@ func (f *FakeSub2API) writeDebitOK(w http.ResponseWriter, result sub2api.DebitRe
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if f.debitReceiptUnparseable {
-		_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"txn_id":%q,"amount":%s,"balance":%q,"currency":%q}}`,
-			result.TxnID, amount, balance, result.Currency)
+		// 模拟回执缺 balance / 快照解不开。真实扣款已经发生，控制面必须仍能入账。
+		_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"txn_id":%q,"amount":%s,"currency":%q}}`,
+			result.TxnID, amount, result.Currency)
 		return
 	}
 	_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"txn_id":%q,"amount":%s,"balance":%s,"currency":%q}}`,
@@ -302,8 +303,8 @@ func (f *FakeSub2API) SetDebitBalanceScale8(on bool) {
 	f.debitBalanceScale8 = on
 }
 
-// SetDebitReceiptUnparseable 把回执余额写成字符串，模拟解析失败。
-// 真实扣款仍会发生；调用方必须用同一把 Idempotency-Key 重放。
+// SetDebitReceiptUnparseable 让成功回执缺 balance，模拟快照解不开。
+// 真实扣款仍会发生；同一 order_no 重放不得再扣。
 func (f *FakeSub2API) SetDebitReceiptUnparseable(on bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

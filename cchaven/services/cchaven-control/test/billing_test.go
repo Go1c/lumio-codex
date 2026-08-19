@@ -292,6 +292,10 @@ func payWith(client *testsupport.Client, key string) *testsupport.Response {
 	return client.WithHeader("Idempotency-Key", key).Post("/api/v1/billing/pay-with-balance", nil)
 }
 
+func resumeOrder(client *testsupport.Client, orderNo string) *testsupport.Response {
+	return client.Post("/api/v1/billing/orders/"+orderNo+"/resume", nil)
+}
+
 func planCents(t *testing.T, env *testsupport.Env) int64 {
 	t.Helper()
 
@@ -626,23 +630,18 @@ func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
 
 	const key = "resume-scale8"
 	first := payWith(client, key)
-	if first.ErrorCode() != "debit_unavailable" {
-		t.Fatalf("解析失败应 503 debit_unavailable, got %s status=%d", first.ErrorCode(), first.Status)
+	if first.Status != http.StatusOK {
+		t.Fatalf("上游已扣款时解不开的余额快照不得 503, got %s status=%d", first.ErrorCode(), first.Status)
 	}
-	if got := purchaseEventCount(t, env, userID); got != 0 {
-		t.Fatalf("解析失败不得入账, events=%d", got)
-	}
-	orders := client.Get("/api/v1/billing/orders").ExpectStatus(http.StatusOK).Array("items")
-	if len(orders) != 1 {
-		t.Fatalf("应留下 1 张 pending 单, got %#v", orders)
-	}
-	pending, _ := orders[0].(map[string]any)
-	if pending["status"] != "pending" {
-		t.Fatalf("订单应保持 pending, got %v", pending["status"])
-	}
-	orderNo, _ := pending["order_no"].(string)
+	orderNo, _ := first.Object("order")["order_no"].(string)
 	if orderNo == "" {
-		t.Fatal("pending 单缺少 order_no")
+		t.Fatal("成功回执缺少 order_no")
+	}
+	if first.Object("order")["status"] != "paid" {
+		t.Fatalf("第一次就应标 paid, got %v", first.Object("order")["status"])
+	}
+	if first.Object("entitlement")["status"] != "active" {
+		t.Fatalf("第一次就应开通, got %v", first.Object("entitlement")["status"])
 	}
 	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 58346 {
 		t.Fatalf("上游应已扣 19.90, 剩余分 = %d", got)
@@ -651,7 +650,6 @@ func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
 		t.Fatalf("真实扣款 = %d, want 1", got)
 	}
 
-	env.Sub2API.SetDebitReceiptUnparseable(false)
 	again := payWith(client, key).ExpectStatus(http.StatusOK)
 	if again.Object("order")["order_no"] != orderNo {
 		t.Errorf("必须复用原 order_no %s, got %v", orderNo, again.Object("order")["order_no"])
@@ -670,6 +668,91 @@ func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
 	}
 	if got := env.Sub2API.DebitChargeCount(); got != 1 {
 		t.Errorf("重放不得再扣, 真实扣款 = %d", got)
+	}
+}
+
+func TestResumeBalanceOrderCreditsPendingWithoutNewCharge(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	first := payWith(client, "resume-by-order").ExpectStatus(http.StatusOK)
+	orderNo, _ := first.Object("order")["order_no"].(string)
+
+	if _, err := env.Pool.Exec(t.Context(), `
+		UPDATE orders SET status = 'pending', paid_at = NULL, provider_txn_id = NULL
+		 WHERE order_no = $1`, orderNo); err != nil {
+		t.Fatalf("回滚订单失败: %v", err)
+	}
+	if _, err := env.Pool.Exec(t.Context(), `
+		DELETE FROM subscription_events WHERE user_id = $1 AND type = 'purchase'`, userID); err != nil {
+		t.Fatalf("删除入账事件失败: %v", err)
+	}
+	if _, err := env.Pool.Exec(t.Context(), `
+		UPDATE subscriptions SET expires_at = NULL, kind = NULL WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("重置订阅失败: %v", err)
+	}
+
+	before := env.Sub2API.BalanceOf(token)
+	got := resumeOrder(client, orderNo).ExpectStatus(http.StatusOK)
+	if got.Object("order")["order_no"] != orderNo {
+		t.Errorf("必须复用原 order_no %s, got %v", orderNo, got.Object("order")["order_no"])
+	}
+	if got.Object("order")["status"] != "paid" {
+		t.Errorf("resume 后订单应 paid, got %v", got.Object("order")["status"])
+	}
+	if got.Object("entitlement")["status"] != "active" {
+		t.Errorf("resume 后应 active, got %v", got.Object("entitlement")["status"])
+	}
+	if env.Sub2API.BalanceOf(token) != before {
+		t.Errorf("resume 不得再扣, before=%v after=%v", before, env.Sub2API.BalanceOf(token))
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+	if got := env.Sub2API.DebitChargeCount(); got != 1 {
+		t.Errorf("真实扣款 = %d, want 1", got)
+	}
+}
+
+func TestResumeBalanceOrderIsIdempotentWhenAlreadyPaid(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	first := payWith(client, "resume-paid").ExpectStatus(http.StatusOK)
+	orderNo, _ := first.Object("order")["order_no"].(string)
+	before := env.Sub2API.BalanceOf(token)
+
+	again := resumeOrder(client, orderNo).ExpectStatus(http.StatusOK)
+	if again.Object("order")["status"] != "paid" {
+		t.Errorf("已支付再 resume 仍应 paid, got %v", again.Object("order")["status"])
+	}
+	if env.Sub2API.BalanceOf(token) != before {
+		t.Errorf("已支付 resume 不得再扣")
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+}
+
+func TestResumeBalanceOrderRejectsOtherUsersOrder(t *testing.T) {
+	env := testsupport.New(t)
+	alice, _, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+	bob, _, _ := identifyWithBalance(t, env, "bob@example.com", 30)
+
+	orderNo, _ := payWith(alice, "alice-only").ExpectStatus(http.StatusOK).Object("order")["order_no"].(string)
+	if got := resumeOrder(bob, orderNo).Status; got != http.StatusNotFound {
+		t.Fatalf("他人订单 resume 应 404, got %d", got)
+	}
+}
+
+func TestResumeBalanceOrderRejectsNonBalanceChannel(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+	orderNo := env.Checkout(userID, "mock")
+
+	resp := resumeOrder(client, orderNo).ExpectStatus(http.StatusBadRequest)
+	if resp.ErrorCode() != "invalid_params" {
+		t.Errorf("非余额单不得 resume, got %s", resp.ErrorCode())
 	}
 }
 

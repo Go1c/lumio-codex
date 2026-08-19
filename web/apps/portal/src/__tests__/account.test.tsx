@@ -167,7 +167,7 @@ const PAID_ORDER = {
   created_at: "2026-08-19T00:00:00Z",
 };
 
-function accountHandlers(extra: Record<string, () => Response> = {}) {
+function accountHandlers(extra: Record<string, (init?: RequestInit) => Response> = {}) {
   return {
     "/auth/me": () => envelope(PROFILE),
     "/me/entitlement": () => ccEnvelope(NONE_ENTITLEMENT),
@@ -276,7 +276,47 @@ describe("账户中心 · Claude 订阅与账单", () => {
     renderApp("/account#orders");
 
     expect(await screen.findByText("未订阅")).toBeInTheDocument();
-    expect(screen.getByText(/钱可能已扣、权益尚未到账，请勿重复支付/)).toBeInTheDocument();
+    expect(screen.getByText(/钱可能已扣、权益尚未到账/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "刷新开通状态" }).length).toBeGreaterThan(0);
+  });
+
+  it("处理中的余额单可以刷新开通状态，走原单 resume 而不是新支付", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    let pending = true;
+    const fetchMock = stubFetch(
+      accountHandlers({
+        "/me/entitlement": () => ccEnvelope(pending ? NONE_ENTITLEMENT : ACTIVE_ENTITLEMENT),
+        "/billing/orders": () =>
+          ccEnvelope({
+            items: [pending ? PENDING_ORDER : { ...PENDING_ORDER, status: "paid", paid_at: PAID_ORDER.paid_at }],
+          }),
+        "/billing/orders/CC20260819-000001/resume": (init?: RequestInit) => {
+          expect(init?.method).toBe("POST");
+          expect(JSON.stringify(init?.headers ?? {})).not.toMatch(/Idempotency-Key/i);
+          pending = false;
+          return ccEnvelope({
+            order: { ...PENDING_ORDER, status: "paid", paid_at: PAID_ORDER.paid_at },
+            entitlement: ACTIVE_ENTITLEMENT,
+          });
+        },
+      }),
+    );
+
+    renderApp("/account#orders");
+
+    const refresh = await screen.findAllByRole("button", { name: "刷新开通状态" });
+    expect(refresh.length).toBeGreaterThan(0);
+    await userEvent.click(refresh[0]);
+
+    expect(await screen.findByText(/已订阅 · 有效期至/)).toBeInTheDocument();
+    expect(screen.getByText(/已支付/)).toBeInTheDocument();
+    expect(screen.queryByText(/处理中，请勿重复支付/)).not.toBeInTheDocument();
+    const resumeCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/billing/orders/CC20260819-000001/resume"),
+    );
+    expect(resumeCalls).toHaveLength(1);
+    expect(String(resumeCalls[0]?.[0])).toContain("/billing/orders/CC20260819-000001/resume");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("pay-with-balance"))).toBe(false);
   });
 });
 
