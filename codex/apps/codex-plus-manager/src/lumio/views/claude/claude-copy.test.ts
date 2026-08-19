@@ -13,6 +13,7 @@ test("the Claude workspace folder ships the four prototype surfaces", async () =
   assert.deepEqual(names, [
     "ClaudeConnect.tsx",
     "ClaudeEmpty.tsx",
+    "ClaudeEntitlementLine.tsx",
     "ClaudeHome.tsx",
     "ClaudeSubscribe.tsx",
     "ClaudeWorkspace.tsx",
@@ -115,9 +116,22 @@ test("ClaudeWorkspace keeps session state in the module store, not only in the l
   const source = await readView("ClaudeWorkspace.tsx");
   const empty = await readView("ClaudeEmpty.tsx");
   const home = await readView("ClaudeHome.tsx");
+  const subscribe = await readView("ClaudeSubscribe.tsx");
   assert.match(source, /getClaudeState|subscribeClaudeStore/);
   assert.match(source, /onBackToCodex/);
   assert.match(source, /onRecharge/);
   assert.doesNotMatch(source, /onOpenAccount/);
-  assert.match(`${source}\n${empty}\n${home}`, /开通记录/);
+  assert.match(`${source}\n${empty}\n${home}\n${subscribe}`, /开通记录|ordersSlot/);
+  assert.match(source, /处理中，请勿重复支付/);
+});
+
+test("empty and home surfaces show remaining subscription days from the server", async () => {
+  const line = await readView("ClaudeEntitlementLine.tsx");
+  const empty = await readView("ClaudeEmpty.tsx");
+  const home = await readView("ClaudeHome.tsx");
+  const copy = await readFile(new URL("../../claude/copy.ts", import.meta.url), "utf8");
+  assert.match(copy, /有效期至/);
+  assert.match(copy, /剩余/);
+  assert.match(`${empty}\n${home}`, /ClaudeEntitlementLine/);
+  assert.match(line, /即将到期/);
 });

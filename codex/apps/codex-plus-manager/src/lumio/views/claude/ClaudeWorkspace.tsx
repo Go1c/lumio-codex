@@ -28,7 +28,7 @@ export type ClaudeWorkspaceProps = {
 
 function orderStatusLabel(status: string): string {
   if (status === "paid") return "已支付";
-  if (status === "pending") return "处理中";
+  if (status === "pending") return "处理中，请勿重复支付";
   if (status === "failed") return "失败";
   return status;
 }
@@ -86,6 +86,12 @@ export function ClaudeWorkspace({
     }
   }, [account?.balance]);
 
+  useEffect(() => {
+    if (state.page === "subscribe") {
+      dispatchClaude({ type: "orders-toggled", open: true });
+    }
+  }, [state.page]);
+
   const openConnect = () => dispatchClaude({ type: "open-connect" });
   const ordersSlot = (
     <ClaudeOrderHistory
@@ -100,6 +106,7 @@ export function ClaudeWorkspace({
       {state.page === "subscribe" ? (
         <ClaudeSubscribe
           balance={account?.balance ?? 0}
+          entitlement={state.entitlement}
           onBackToCodex={onBackToCodex}
           onPay={() => {
             void payClaudeSubscribe(account)
@@ -110,6 +117,7 @@ export function ClaudeWorkspace({
               });
           }}
           onRecharge={onRecharge}
+          ordersSlot={ordersSlot}
           paying={state.paying}
           payMode={state.payMode}
           planAmountCents={state.planAmountCents}
@@ -118,6 +126,7 @@ export function ClaudeWorkspace({
         <ClaudeHome onConnect={openConnect} ordersSlot={ordersSlot} state={state} />
       ) : (
         <ClaudeEmpty
+          entitlement={state.entitlement}
           ghost={state.sheet !== null}
           onBackToCodex={onBackToCodex}
           onConnect={openConnect}

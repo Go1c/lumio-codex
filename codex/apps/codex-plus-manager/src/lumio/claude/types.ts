@@ -16,6 +16,8 @@ export interface ClaudeEntitlement {
   status: ClaudeEntitlementStatus;
   source: ClaudeEntitlementSource;
   expiresAt?: string | null;
+  daysLeft?: number | null;
+  expiringSoon?: boolean | null;
 }
 
 /** 套餐拉取失败时回落 19.9 元（1990 分），禁止回落 68。 */
