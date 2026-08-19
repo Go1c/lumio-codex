@@ -30,6 +30,7 @@ metadata:
 | `apps/bestcodex` | `bestcodex.app` | 产品站：`/` `/codex` 为 Codex 落地页，`/claude` 为 Claude 落地页，帮助 `/help` |
 
 两站是纯静态 SPA，共用 `packages/ui` 与 `packages/auth`。
+门户没有营销首页：`/` 重定向到 `/account`，顶栏品牌标也落 `/account`；产品介绍只在产品站。
 产品站**不做自己的登录**，账号入口一律跳门户并带 `?next=` 回跳（`portalAccountLinks()`）。
 `next` 只放行站内相对路径与根域下的地址（`isAllowedNext()`），防开放重定向。
 门户与产品站在 apex 的共存见 [ADR-0007](../../decisions/0007-bestcodex-apex-portal-coexistence.md)。旧 `apps/cc` / `apps/codex` 已退役。
