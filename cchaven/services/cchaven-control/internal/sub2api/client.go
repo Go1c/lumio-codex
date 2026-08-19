@@ -1,12 +1,12 @@
-// Package sub2api 是 Sub2API（Lumio 账号中心）的只读客户端。
+// Package sub2api 是 Sub2API（Lumio 账号中心）的客户端。
 //
-// 本服务不再自持终端用户账号：邮箱、口令、账号状态全部由 Sub2API 保管，
+// 本服务不再自持终端用户账号：邮箱、口令、账号状态与余额全部由 Sub2API 保管，
 // 控制面只拿着调用方出示的 access token 去 Sub2API 换回身份，再把它映射到
-// 本地的 CC 业务数据（订阅 / 邀请 / 设备）。
+// 本地的 CC 业务数据（订阅 / 邀请 / 设备）。写余额走 Debit。
 //
 // 两条硬约束：
 //   - 校验结果带短 TTL 缓存，避免每个请求都打一次外部 API；
-//   - 上游不可用时返回 ErrUnavailable 让调用方渲染 503，**绝不静默放行**。
+//   - 上游不可用时返回 ErrUnavailable / ErrDebitUnavailable 让调用方渲染 503，**绝不静默放行**。
 package sub2api
 
 import (
@@ -143,6 +143,22 @@ func (c *Client) Verify(ctx context.Context, token string) (Identity, error) {
 	}
 
 	c.store(key, identity)
+	return identity, nil
+}
+
+// VerifyFresh 强制回源校验令牌并写回缓存，不得只读旧条目。
+// 扣费前要用它拿到当前余额，TTL 内的 Verify 快照不够。
+func (c *Client) VerifyFresh(ctx context.Context, token string) (Identity, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Identity{}, ErrInvalidToken
+	}
+
+	identity, err := c.fetch(ctx, token)
+	if err != nil {
+		return Identity{}, err
+	}
+	c.store(cacheKey(token), identity)
 	return identity, nil
 }
 

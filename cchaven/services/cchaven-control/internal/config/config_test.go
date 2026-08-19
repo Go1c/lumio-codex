@@ -64,6 +64,12 @@ func TestLoadIdentityDefaults(t *testing.T) {
 	if got, want := cfg.PurchaseURL(), "https://api.lumio.games/purchase"; got != want {
 		t.Errorf("PurchaseURL() = %q, want %q", got, want)
 	}
+	if got, want := cfg.DebitPath(), DefaultSub2APIDebitPath; got != want {
+		t.Errorf("DebitPath() = %q, want %q", got, want)
+	}
+	if got, want := cfg.DebitURL(), "https://api.lumio.games/api/v1/user/balance/debit"; got != want {
+		t.Errorf("DebitURL() = %q, want %q", got, want)
+	}
 	if got, want := cfg.PortalLoginURL(), "https://bestcodex.app/login"; got != want {
 		t.Errorf("PortalLoginURL() = %q, want %q", got, want)
 	}
@@ -74,6 +80,7 @@ func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
 	t.Setenv("CCHAVEN_SUB2API_BASE", "https://staging-api.lumio.games/")
 	t.Setenv("CCHAVEN_PORTAL_URL", "https://staging.bestcodex.app/")
 	t.Setenv("CCHAVEN_SUB2API_CACHE_TTL", "15s")
+	t.Setenv("CCHAVEN_SUB2API_DEBIT_PATH", "/custom/debit/")
 
 	cfg, err := Load()
 	if err != nil {
@@ -91,6 +98,12 @@ func TestLoadIdentityOverridesTrimTrailingSlash(t *testing.T) {
 	}
 	if got, want := cfg.PurchaseURL(), "https://staging-api.lumio.games/purchase"; got != want {
 		t.Errorf("PurchaseURL() = %q, want %q", got, want)
+	}
+	if got, want := cfg.DebitPath(), "/custom/debit"; got != want {
+		t.Errorf("DebitPath() = %q, want %q", got, want)
+	}
+	if got, want := cfg.DebitURL(), "https://staging-api.lumio.games/custom/debit"; got != want {
+		t.Errorf("DebitURL() = %q, want %q", got, want)
 	}
 }
 

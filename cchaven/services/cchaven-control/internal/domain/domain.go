@@ -272,10 +272,11 @@ const (
 type PaymentChannel string
 
 const (
-	ChannelAlipay PaymentChannel = "alipay" // 支付宝
-	ChannelWechat PaymentChannel = "wechat" // 微信支付
-	ChannelCard   PaymentChannel = "card"   // 银行卡
-	ChannelMock   PaymentChannel = "mock"   // M1 mock 通道
+	ChannelAlipay  PaymentChannel = "alipay"  // 支付宝
+	ChannelWechat  PaymentChannel = "wechat"  // 微信支付
+	ChannelCard    PaymentChannel = "card"    // 银行卡
+	ChannelMock    PaymentChannel = "mock"    // M1 mock 通道
+	ChannelBalance PaymentChannel = "balance" // Sub2API 账户余额
 )
 
 // Order 是一笔订单。

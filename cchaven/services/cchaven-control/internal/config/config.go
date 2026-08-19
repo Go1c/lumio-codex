@@ -24,6 +24,8 @@ const (
 	DefaultSub2APICacheTTL = time.Minute
 	// purchasePath 是 Sub2API 的充值页路径；CC 与 Codex 共用同一个收银入口。
 	purchasePath = "/purchase"
+	// DefaultSub2APIDebitPath 是用账户余额扣一笔费用的默认路径。
+	DefaultSub2APIDebitPath = "/api/v1/user/balance/debit"
 )
 
 // Config 是服务的完整运行配置。
@@ -40,8 +42,9 @@ type Config struct {
 	envExplicit bool
 
 	// Sub2APIBase 是身份真源的地址；Sub2APICacheTTL 是校验结果的缓存时长。
-	Sub2APIBase     string
-	Sub2APICacheTTL time.Duration
+	Sub2APIBase      string
+	Sub2APICacheTTL  time.Duration
+	Sub2APIDebitPath string
 
 	DatabaseURL string
 
@@ -93,6 +96,23 @@ func (c Config) TrustedOrigins() []string {
 // PurchaseURL 返回统一充值页。CC 与 Codex 都跳这里，本服务不再自建收银台。
 func (c Config) PurchaseURL() string {
 	return baseOr(c.Sub2APIBase, DefaultSub2APIBase) + purchasePath
+}
+
+// DebitPath 返回余额扣费路径，可由 CCHAVEN_SUB2API_DEBIT_PATH 覆盖。
+func (c Config) DebitPath() string {
+	path := strings.TrimSpace(c.Sub2APIDebitPath)
+	if path == "" {
+		path = DefaultSub2APIDebitPath
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return strings.TrimRight(path, "/")
+}
+
+// DebitURL 返回余额扣费完整地址：Sub2API 基址 + DebitPath。
+func (c Config) DebitURL() string {
+	return baseOr(c.Sub2APIBase, DefaultSub2APIBase) + c.DebitPath()
 }
 
 // PortalLoginURL 返回账号中心的登录页，供已下线的自有认证接口指路。
@@ -183,6 +203,8 @@ func Load() (Config, error) {
 		Sub2APIBase: strings.TrimRight(
 			env("CCHAVEN_SUB2API_BASE", DefaultSub2APIBase), "/"),
 		Sub2APICacheTTL: duration("CCHAVEN_SUB2API_CACHE_TTL", DefaultSub2APICacheTTL),
+		Sub2APIDebitPath: strings.TrimSpace(
+			env("CCHAVEN_SUB2API_DEBIT_PATH", DefaultSub2APIDebitPath)),
 		CookieName: CookieNames{
 			Session:  "cch_sess",
 			Refresh:  "cch_refresh",
