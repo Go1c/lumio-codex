@@ -15,6 +15,7 @@
 | [04-backend.md](./04-backend.md) | 后台 `api.lumio.games`（Sub2API）与桌面端契约 |
 | [05-maintenance.md](./05-maintenance.md) | 日常维护清单、文档如何保持同步 |
 | [06-code-signing-policy.md](./06-code-signing-policy.md) | Windows 代码签名政策（SignPath）与申请步骤 |
+| [07-microsoft-store.md](./07-microsoft-store.md) | Microsoft Store 与 Windows 双轨分发 / 签名（NSIS+ZIP vs unsigned MSIX） |
 | [`docs/ops/`（根）](../../../docs/ops/README.md) | 统一官网三站部署、域名 / DNS 切换、上线验收 |
 
 ## 线上拓扑（当前）
@@ -52,6 +53,9 @@
 
 3. **更新提醒（已接通）**  
    客户端 `lumio_check_update` 读 `https://api.github.com/repos/LumioGames/lumio-codex/releases/latest`。只有打出 GitHub Release（带 semver tag）后，首页才会提示新版本。
+
+4. **Microsoft Store（平行轨，Identity 占位中）**  
+   CI 另产 `LumioCodex-*-windows-x64-store-unsigned.msix`，交 Partner Center 后由微软重签。**不替代**官网 / GitHub Release，也不走 SignPath。流程见 [07](./07-microsoft-store.md)。
 
 ## 推荐上线顺序
 

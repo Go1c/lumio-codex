@@ -19,11 +19,13 @@ jobs:
   windows-artifacts:
     name: Windows x64
     runs-on: windows-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: read
     defaults:
       run:
+        shell: bash
         working-directory: codex
     steps:
       - name: Checkout
@@ -40,6 +42,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install NSIS
+        shell: pwsh
         run: choco install nsis -y
 
       - name: Install frontend dependencies
@@ -58,66 +61,76 @@ jobs:
         working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
 
+      - name: Resolve internal version
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version="${version#V}"
+          version="$(printf '%s' "$version" | tr -c '0-9A-Za-z._-' '-')"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ -z "$version" ] || [ "$version" = "publish" ]; then
+            desktop="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('apps/codex-plus-manager/src-tauri/tauri.conf.json','utf8')).version)")"
+            version="${desktop}-internal-${GITHUB_RUN_NUMBER}"
+          fi
+          quad="$(node -e "const v=process.argv[1]; const n=[...String(v).matchAll(/\d+/g)].map(m=>Number(m[0])); while(n.length<4) n.push(0); process.stdout.write(n.slice(0,4).join('.'))" "$version")"
+          {
+            echo "PACKAGE_VERSION=${version}"
+            echo "PRODUCT_VERSION_QUAD=${quad}"
+          } >> "$GITHUB_ENV"
+          echo "PACKAGE_VERSION=${version}"
+          echo "PRODUCT_VERSION_QUAD=${quad}"
+
       - name: Rust tests
         run: cargo test --workspace
 
       - name: Build release binaries
         run: cargo build --release
 
-      - name: Resolve internal version
-        shell: pwsh
-        run: |
-          $version = "${{ github.ref_name }}" -replace '^[vV]', '' -replace '[^0-9A-Za-z._-]', '-'
-          if (-not $version -or $version -eq "publish") {
-            $desktop = (Get-Content "apps/codex-plus-manager/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version
-            $version = "$desktop-internal-${{ github.run_number }}"
-          }
-          $nums = [regex]::Matches($version, '\d+') | ForEach-Object { [int]$_.Value }
-          while ($nums.Count -lt 4) { $nums += 0 }
-          $quad = ($nums[0..3] -join '.')
-          "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
-          "PRODUCT_VERSION_QUAD=$quad" >> $env:GITHUB_ENV
-
       - name: Decide Windows signing mode
         id: sign
         env:
           SIGN_WINDOWS: ${{ github.event_name != 'pull_request' && secrets.SIGNPATH_API_TOKEN != '' }}
-        shell: pwsh
         run: |
-          if ($env:SIGN_WINDOWS -eq 'true') {
-            "sign=true" >> $env:GITHUB_OUTPUT
-            "WINDOWS_OUT_SUFFIX=" >> $env:GITHUB_ENV
-            "artifact_suffix=" >> $env:GITHUB_OUTPUT
-          } else {
-            "sign=false" >> $env:GITHUB_OUTPUT
-            "WINDOWS_OUT_SUFFIX=-internal-unsigned" >> $env:GITHUB_ENV
-            "artifact_suffix=-internal-unsigned" >> $env:GITHUB_OUTPUT
-          }
+          set -euo pipefail
+          if [ "${SIGN_WINDOWS}" = "true" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+            echo "WINDOWS_OUT_SUFFIX=" >> "$GITHUB_ENV"
+            echo "artifact_suffix=" >> "$GITHUB_OUTPUT"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "WINDOWS_OUT_SUFFIX=-internal-unsigned" >> "$GITHUB_ENV"
+            echo "artifact_suffix=-internal-unsigned" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Stage Windows app files
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist/windows/app | Out-Null
-          Copy-Item target/release/lumio-codex.exe dist/windows/app/
-          Copy-Item target/release/lumio-codex-launcher.exe dist/windows/app/
+          set -euo pipefail
+          mkdir -p dist/windows/app
+          cp target/release/lumio-codex.exe dist/windows/app/
+          cp target/release/lumio-codex-launcher.exe dist/windows/app/
+
+      - name: Build Windows MSIX (unsigned store scaffold)
+        run: |
+          set -euo pipefail
+          node --test scripts/installer/windows/msix/map-package-version.test.mjs scripts/installer/windows/msix/pack-msix.test.mjs
+          pwsh -NoProfile -NonInteractive -File ./scripts/installer/windows/msix/Pack-Msix.ps1 -SelfTest < /dev/null
+          pwsh -NoProfile -NonInteractive -File ./scripts/installer/windows/msix/Pack-Msix.ps1 -PackageVersion "$PACKAGE_VERSION" < /dev/null
 
       - name: Stamp Windows version resources
         if: steps.sign.outputs.sign == 'true'
-        shell: pwsh
         run: |
-          $rcedit = "$env:RUNNER_TEMP/rcedit-x64.exe"
-          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $rcedit
-          foreach ($exe in @(
-            "dist/windows/app/lumio-codex.exe",
-            "dist/windows/app/lumio-codex-launcher.exe"
-          )) {
-            & $rcedit $exe `
-              --set-version-string ProductName "Lumio Codex" `
-              --set-version-string FileDescription "Lumio Codex" `
-              --set-version-string CompanyName "Lumio" `
-              --set-file-version $env:PRODUCT_VERSION_QUAD `
-              --set-product-version $env:PRODUCT_VERSION_QUAD
-          }
+          set -euo pipefail
+          rcedit="${RUNNER_TEMP}/rcedit-x64.exe"
+          curl -fsSL -o "$rcedit" "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe"
+          for exe in dist/windows/app/lumio-codex.exe dist/windows/app/lumio-codex-launcher.exe; do
+            "$rcedit" "$exe" \
+              --set-version-string ProductName "Lumio Codex" \
+              --set-version-string FileDescription "Lumio Codex" \
+              --set-version-string CompanyName "Lumio" \
+              --set-file-version "$PRODUCT_VERSION_QUAD" \
+              --set-product-version "$PRODUCT_VERSION_QUAD"
+          done
 
       - name: Upload unsigned Windows binaries for SignPath
         if: steps.sign.outputs.sign == 'true'
@@ -146,38 +159,43 @@ jobs:
 
       - name: Replace staged binaries with signed copies
         if: steps.sign.outputs.sign == 'true'
-        shell: pwsh
         run: |
-          $signed = "dist/windows/signed-binaries"
-          $codex = Get-ChildItem -Path $signed -Recurse -Filter lumio-codex.exe | Select-Object -First 1
-          $launcher = Get-ChildItem -Path $signed -Recurse -Filter lumio-codex-launcher.exe | Select-Object -First 1
-          if (-not $codex -or -not $launcher) {
-            throw "SignPath did not return both signed Windows binaries"
-          }
-          Copy-Item $codex.FullName dist/windows/app/lumio-codex.exe -Force
-          Copy-Item $launcher.FullName dist/windows/app/lumio-codex-launcher.exe -Force
+          set -euo pipefail
+          signed="dist/windows/signed-binaries"
+          codex="$(find "$signed" -name lumio-codex.exe -print -quit)"
+          launcher="$(find "$signed" -name lumio-codex-launcher.exe -print -quit)"
+          if [ -z "$codex" ] || [ -z "$launcher" ]; then
+            echo "SignPath did not return both signed Windows binaries" >&2
+            exit 1
+          fi
+          cp -f "$codex" dist/windows/app/lumio-codex.exe
+          cp -f "$launcher" dist/windows/app/lumio-codex-launcher.exe
 
       - name: Build Windows portable archive
-        shell: pwsh
         run: |
-          $version = $env:PACKAGE_VERSION
-          $suffix = $env:WINDOWS_OUT_SUFFIX
-          $archive = "dist/windows/LumioCodex-$version-windows-x64-portable$suffix.zip"
-          Compress-Archive -Path dist/windows/app/* -DestinationPath $archive -Force
+          set -euo pipefail
+          archive="dist/windows/LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
+          pwsh -NoProfile -NonInteractive -Command "Compress-Archive -Path dist/windows/app/* -DestinationPath '$archive' -Force" < /dev/null
 
       - name: Build Windows installer
-        shell: pwsh
+        env:
+          # Git Bash rewrites unquoted /INPUTCHARSET to C:/Program Files/Git/INPUTCHARSET.
+          MSYS_NO_PATHCONV: "1"
         run: |
-          $version = $env:PACKAGE_VERSION
-          $suffix = $env:WINDOWS_OUT_SUFFIX
-          $quad = $env:PRODUCT_VERSION_QUAD
-          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-          if (-not (Test-Path $makensis)) {
-            $makensis = "makensis"
-          }
-          Push-Location scripts/installer/windows
-          & $makensis "/INPUTCHARSET" "UTF8" "/DVERSION=$version" "/DOUT_SUFFIX=$suffix" "/DPRODUCT_VERSION_QUAD=$quad" LumioCodex.nsi
-          Pop-Location
+          set -euo pipefail
+          makensis="makensis"
+          if [ -f "/c/Program Files (x86)/NSIS/makensis.exe" ]; then
+            makensis="/c/Program Files (x86)/NSIS/makensis.exe"
+          else
+            pf86="$(printenv 'ProgramFiles(x86)' || true)"
+            if [ -n "$pf86" ] && [ -f "${pf86}/NSIS/makensis.exe" ]; then
+              makensis="${pf86}/NSIS/makensis.exe"
+            fi
+          fi
+          (
+            cd scripts/installer/windows
+            "$makensis" -INPUTCHARSET UTF8 "-DVERSION=${PACKAGE_VERSION}" "-DOUT_SUFFIX=${WINDOWS_OUT_SUFFIX}" "-DPRODUCT_VERSION_QUAD=${PRODUCT_VERSION_QUAD}" LumioCodex.nsi
+          )
 
       - name: Upload unsigned Windows setup for SignPath
         if: steps.sign.outputs.sign == 'true'
@@ -204,50 +222,51 @@ jobs:
 
       - name: Replace setup with signed copy
         if: steps.sign.outputs.sign == 'true'
-        shell: pwsh
         run: |
-          $version = $env:PACKAGE_VERSION
-          $dest = "dist/windows/LumioCodex-$version-windows-x64-setup.exe"
-          $signed = Get-ChildItem -Path dist/windows/signed-setup -Recurse -Filter "LumioCodex-*-windows-x64-setup.exe" | Select-Object -First 1
-          if (-not $signed) {
-            throw "SignPath did not return a signed Windows setup"
-          }
-          Copy-Item $signed.FullName $dest -Force
+          set -euo pipefail
+          dest="dist/windows/LumioCodex-${PACKAGE_VERSION}-windows-x64-setup.exe"
+          signed="$(find dist/windows/signed-setup -name 'LumioCodex-*-windows-x64-setup.exe' -print -quit)"
+          if [ -z "$signed" ]; then
+            echo "SignPath did not return a signed Windows setup" >&2
+            exit 1
+          fi
+          cp -f "$signed" "$dest"
 
       - name: Verify Windows Authenticode signatures
         if: steps.sign.outputs.sign == 'true'
-        shell: pwsh
         run: |
-          $version = $env:PACKAGE_VERSION
-          $files = @(
-            "dist/windows/app/lumio-codex.exe",
-            "dist/windows/app/lumio-codex-launcher.exe",
-            "dist/windows/LumioCodex-$version-windows-x64-setup.exe"
-          )
-          foreach ($file in $files) {
-            $sig = Get-AuthenticodeSignature $file
-            if (-not $sig.SignerCertificate) {
-              throw "Missing Authenticode signer: $file"
+          set -euo pipefail
+          pwsh -NoProfile -NonInteractive -Command '
+            $files = @(
+              "dist/windows/app/lumio-codex.exe",
+              "dist/windows/app/lumio-codex-launcher.exe",
+              "dist/windows/LumioCodex-$env:PACKAGE_VERSION-windows-x64-setup.exe"
+            )
+            foreach ($file in $files) {
+              $sig = Get-AuthenticodeSignature $file
+              if (-not $sig.SignerCertificate) {
+                throw "Missing Authenticode signer: $file"
+              }
+              if ($sig.Status -eq "NotSigned" -or $sig.Status -eq "HashMismatch") {
+                throw "Invalid Authenticode status $($sig.Status): $file"
+              }
             }
-            if ($sig.Status -eq 'NotSigned' -or $sig.Status -eq 'HashMismatch') {
-              throw "Invalid Authenticode status $($sig.Status): $file"
-            }
-          }
+          ' < /dev/null
 
       - name: Verify Windows artifact names
-        shell: pwsh
         run: |
-          $version = $env:PACKAGE_VERSION
-          $suffix = $env:WINDOWS_OUT_SUFFIX
-          $expected = @(
-            "dist/windows/LumioCodex-$version-windows-x64-portable$suffix.zip",
-            "dist/windows/LumioCodex-$version-windows-x64-setup$suffix.exe"
+          set -euo pipefail
+          expected=(
+            "dist/windows/LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
+            "dist/windows/LumioCodex-${PACKAGE_VERSION}-windows-x64-setup${WINDOWS_OUT_SUFFIX}.exe"
+            "dist/windows/LumioCodex-${PACKAGE_VERSION}-windows-x64-store-unsigned.msix"
           )
-          foreach ($artifact in $expected) {
-            if (-not (Test-Path $artifact)) {
-              throw "Missing Windows artifact: $artifact"
-            }
-          }
+          for artifact in "${expected[@]}"; do
+            if [ ! -f "$artifact" ]; then
+              echo "Missing Windows artifact: $artifact" >&2
+              exit 1
+            fi
+          done
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -256,6 +275,7 @@ jobs:
           path: |
             codex/dist/windows/LumioCodex-*-windows-x64-portable*.zip
             codex/dist/windows/LumioCodex-*-windows-x64-setup*.exe
+            codex/dist/windows/LumioCodex-*-windows-x64-store-unsigned.msix
           if-no-files-found: error
           retention-days: 14
 

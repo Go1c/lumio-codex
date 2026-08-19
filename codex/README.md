@@ -31,6 +31,7 @@ Lumio Codex 是面向 LumioAPI 用户的轻量桌面客户端。它自动检测�
 5. [后台 API（Sub2API）](docs/ops/04-backend.md)  
 6. [日常维护与文档同步](docs/ops/05-maintenance.md)  
 7. [Code signing policy](docs/ops/06-code-signing-policy.md) — Windows 签名政策（SignPath）
+8. [Microsoft Store 与双轨分发](docs/ops/07-microsoft-store.md) — 官网/GitHub Release vs 商店 MSIX
 
 ## 产品流程
 
@@ -67,6 +68,8 @@ Windows 使用当前用户目录安装到 `%LOCALAPPDATA%\Programs\Lumio Codex`�
 - `LumioCodex-<version>-macos-x64-internal-unsigned.dmg`
 
 这些制品默认没有生产级代码签名，只用于受控内测。`publish` / tag / 手动触发且配置了 SignPath 时，Windows 会改出不带 `internal-unsigned` 的已签名文件名（见 [Code signing policy](docs/ops/06-code-signing-policy.md)）。不要将内部通道镜像为公开稳定版，也不要关闭系统安全机制来扩大分发。
+
+Windows CI 另产一份商店轨脚手架 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名），不是上表四件内部测试包，也不走 SignPath。
 
 正式发布后，[GitHub Releases](https://github.com/LumioGames/lumio-codex/releases) 是版本、Tag、校验值和签名制品的唯一权威来源；S3 HTTPS 下载域名只同步同一批经过校验的制品。当前公开 Release 工作流会在签名前置条件未满足时直接阻断。
 
@@ -121,7 +124,7 @@ crates/codex-plus-data/        本地数据层
 site/                          官网静态站（lumio.games）
 docs/ops/                      部署 / 打包 / 发版 / 后台维护
 assets/brand/                  品牌源图
-scripts/installer/windows/     Windows NSIS 内测安装脚本
+scripts/installer/windows/     Windows NSIS 内测安装脚本 + MSIX 脚手架
 scripts/installer/macos/       macOS DMG 内测打包脚本
 .spec/                         Agent 规则与知识库
 ```
