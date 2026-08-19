@@ -3,8 +3,8 @@
 -- orders.channel 原先只允许 alipay/wechat/card/mock。后续用 Sub2API 余额
 -- 扣月费时会写入 channel='balance'，必须先放行约束。
 -- 价格写进 ops_configs：已有库走 UPSERT 覆盖 68 元旧值；缺省回落在
--- store.defaultConfig（1990 分）。0002 种子仍保留历史 6800，测试重置只重灌
--- 0002，存量订单夹具不必改写。
+-- store.defaultConfig（1990 分）。0002 种子与测试重置同为 1990；
+-- 存量订单夹具若写死历史金额，不要改已经落库的那一笔。
 
 ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_channel_check;
 ALTER TABLE orders ADD CONSTRAINT orders_channel_check

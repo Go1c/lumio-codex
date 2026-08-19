@@ -225,6 +225,20 @@ func IdentityUnavailable() *Error {
 	return newError(http.StatusServiceUnavailable, "identity_unavailable", i18n.MsgIdentityUnavailable)
 }
 
+// InsufficientBalance 表示账户余额不够支付当前套餐。
+//
+// 给前端一条稳定的 code 和充值页地址；CC 响应没有 reason 字段。
+func InsufficientBalance(purchaseURL string) *Error {
+	err := newError(http.StatusForbidden, "insufficient_balance", i18n.MsgInsufficientBalance)
+	err.Details = map[string]any{"purchase_url": purchaseURL}
+	return err
+}
+
+// DebitUnavailable 表示余额扣费上游不可用。订单保持 pending，不得入账。
+func DebitUnavailable() *Error {
+	return newError(http.StatusServiceUnavailable, "debit_unavailable", i18n.MsgDebitUnavailable)
+}
+
 // —— 订阅与邀请 ——
 
 // TrialAlreadyUsed 表示该账号已享用过试用，或命中防滥用指纹。

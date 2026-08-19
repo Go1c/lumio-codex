@@ -68,7 +68,7 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 	if !regexp.MustCompile(`^CC\d{8}-\d{6}$`).MatchString(orderNo) {
 		t.Errorf("订单号格式不符: %q", orderNo)
 	}
-	if got := browser.Get("/api/v1/billing/orders/" + orderNo).Number("amount_cents"); got != 6800 {
+	if got := browser.Get("/api/v1/billing/orders/" + orderNo).Number("amount_cents"); got != float64(planCents(t, env)) {
 		t.Errorf("金额应取自运营配置, got %v", got)
 	}
 
@@ -77,7 +77,7 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 		t.Errorf("付款前不应有订阅, got %v", got)
 	}
 
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -128,7 +128,7 @@ func TestWebhookRejectsAmountMismatch(t *testing.T) {
 	}
 
 	// 金额一致的回调仍然正常入账，订单不因一次伪造回调被判死。
-	goodPayload, goodSignature := notify(t, env, orderNo, true, 6800)
+	goodPayload, goodSignature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", goodPayload,
 		map[string]string{"X-CCHaven-Signature": goodSignature}).ExpectStatus(http.StatusOK)
 	if got := env.EntitlementOf(userID)["status"]; got != "active" {
@@ -143,7 +143,7 @@ func TestWebhookIsIdempotent(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	headers := map[string]string{"X-CCHaven-Signature": signature}
 
 	for range 3 {
@@ -173,7 +173,7 @@ func TestWebhookRejectsBadSignature(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, _ := notify(t, env, orderNo, true, 6800)
+	payload, _ := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": "forged"}).ExpectStatus(http.StatusForbidden)
 
@@ -199,7 +199,7 @@ func TestFailedPaymentMarksOrderFailed(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, signature := notify(t, env, orderNo, false, 6800)
+	payload, signature := notify(t, env, orderNo, false, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -261,7 +261,7 @@ func TestTrialThenPurchaseStacks(t *testing.T) {
 	}
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -272,6 +272,127 @@ func TestTrialThenPurchaseStacks(t *testing.T) {
 	// 付费优先级高于试用，徽标应显示「已订阅」。
 	if got := entitlement["status"]; got != "active" {
 		t.Errorf("状态 = %v, want active", got)
+	}
+}
+
+// identifyWithBalance 用 Sub2API 令牌开影子账号并设定余额。
+// SignUp 不返回 token，扣费必须再读 Bearer，所以这里自己 Issue。
+func identifyWithBalance(t *testing.T, env *testsupport.Env, email string, balance float64) (*testsupport.Client, int64) {
+	t.Helper()
+
+	token := env.Sub2API.Issue(email)
+	client := env.NewClient().WithBearer(token)
+	client.Get("/api/v1/me").ExpectStatus(http.StatusOK)
+	env.Sub2API.SetBalance(token, balance)
+	return client, env.UserIDOf(email)
+}
+
+func planCents(t *testing.T, env *testsupport.Env) int64 {
+	t.Helper()
+
+	plan, err := env.Svc.Plan(t.Context())
+	if err != nil {
+		t.Fatalf("读取套餐失败: %v", err)
+	}
+	return plan.AmountCents
+}
+
+func purchaseEventCount(t *testing.T, env *testsupport.Env, userID int64) int {
+	t.Helper()
+
+	var events int
+	if err := env.Pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM subscription_events WHERE user_id = $1 AND type = 'purchase'`,
+		userID).Scan(&events); err != nil {
+		t.Fatalf("查询入账事件失败: %v", err)
+	}
+	return events
+}
+
+// TestPayWithBalanceActivatesAMonthWhenBalanceIsEnough 余额够时扣 19.9 并开通一个月。
+func TestPayWithBalanceActivatesAMonthWhenBalanceIsEnough(t *testing.T) {
+	env := testsupport.New(t)
+	client, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	resp := client.Post("/api/v1/billing/pay-with-balance", nil).ExpectStatus(http.StatusOK)
+
+	order := resp.Object("order")
+	if order["status"] != "paid" {
+		t.Errorf("order.status = %v, want paid", order["status"])
+	}
+	if order["channel"] != "balance" {
+		t.Errorf("order.channel = %v, want balance", order["channel"])
+	}
+	if order["amount_cents"] != float64(1990) {
+		t.Errorf("order.amount_cents = %v, want 1990", order["amount_cents"])
+	}
+
+	entitlement := resp.Object("entitlement")
+	if entitlement["status"] != "active" {
+		t.Errorf("entitlement.status = %v, want active", entitlement["status"])
+	}
+	if entitlement["days_left"] != float64(30) {
+		t.Errorf("entitlement.days_left = %v, want 30", entitlement["days_left"])
+	}
+
+	calls := env.Sub2API.DebitCalls()
+	if len(calls) != 1 {
+		t.Fatalf("debit 次数 = %d, want 1", len(calls))
+	}
+	if calls[0].Amount != 19.9 {
+		t.Errorf("debit amount = %v, want 19.9", calls[0].Amount)
+	}
+	orderNo, _ := order["order_no"].(string)
+	if calls[0].Ref != orderNo {
+		t.Errorf("debit ref = %q, want order_no %q", calls[0].Ref, orderNo)
+	}
+	if calls[0].IdempotencyKey != orderNo {
+		t.Errorf("debit Idempotency-Key = %q, want order_no", calls[0].IdempotencyKey)
+	}
+}
+
+// TestPayWithBalanceRejectsInsufficientBalance 余额不足不得入账，并给出充值入口。
+func TestPayWithBalanceRejectsInsufficientBalance(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID := identifyWithBalance(t, env, "alice@example.com", 1)
+
+	resp := client.Post("/api/v1/billing/pay-with-balance", nil).
+		ExpectStatus(http.StatusForbidden)
+	if resp.ErrorCode() != "insufficient_balance" {
+		t.Errorf("error.code = %q, want insufficient_balance", resp.ErrorCode())
+	}
+	if got := resp.ErrorDetail("purchase_url"); got != env.Cfg.PurchaseURL() {
+		t.Errorf("details.purchase_url = %v, want %s", got, env.Cfg.PurchaseURL())
+	}
+	if got := purchaseEventCount(t, env, userID); got != 0 {
+		t.Errorf("不应产生 purchase 事件, got %d", got)
+	}
+}
+
+// TestPayWithBalanceIsIdempotent 同一 Idempotency-Key 只延长一次、只扣一次。
+func TestPayWithBalanceIsIdempotent(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "pay-once"
+	first := client.WithHeader("Idempotency-Key", key).
+		Post("/api/v1/billing/pay-with-balance", nil).ExpectStatus(http.StatusOK)
+	second := client.WithHeader("Idempotency-Key", key).
+		Post("/api/v1/billing/pay-with-balance", nil).ExpectStatus(http.StatusOK)
+
+	firstNo := first.Object("order")["order_no"]
+	secondNo := second.Object("order")["order_no"]
+	if firstNo != secondNo {
+		t.Errorf("应返回同一订单: %v vs %v", firstNo, secondNo)
+	}
+	if got := second.Object("entitlement")["days_left"]; got != float64(30) {
+		t.Errorf("只应延长一次, days_left = %v want 30", got)
+	}
+	if got := len(env.Sub2API.DebitCalls()); got != 1 {
+		t.Errorf("debit 次数 = %d, want 1", got)
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件应恰好 1 条, got %d", got)
 	}
 }
 
@@ -374,7 +495,7 @@ func TestMockRefundFlow(t *testing.T) {
 	_, userID := env.SignUp("alice@example.com")
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 

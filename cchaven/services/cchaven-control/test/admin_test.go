@@ -50,7 +50,11 @@ func paidOrder(t *testing.T, env *testsupport.Env, userID int64) string {
 	t.Helper()
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	plan, err := env.Svc.Plan(t.Context())
+	if err != nil {
+		t.Fatalf("读取套餐失败: %v", err)
+	}
+	payload, signature := notify(t, env, orderNo, true, plan.AmountCents)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 	return orderNo
@@ -857,7 +861,11 @@ func TestAdminOrderListIncludesTodaySummary(t *testing.T) {
 	_, userID := env.SignUp("alice@example.com")
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	plan, err := env.Svc.Plan(t.Context())
+	if err != nil {
+		t.Fatalf("读取套餐失败: %v", err)
+	}
+	payload, signature := notify(t, env, orderNo, true, plan.AmountCents)
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -865,7 +873,7 @@ func TestAdminOrderListIncludesTodaySummary(t *testing.T) {
 	resp := admin.Get("/api/admin/v1/orders?status=paid").ExpectStatus(http.StatusOK)
 
 	today := resp.Object("today")
-	if today["count"] != float64(1) || today["amount_cents"] != float64(6800) {
+	if today["count"] != float64(1) || today["amount_cents"] != float64(plan.AmountCents) {
 		t.Errorf("当日汇总 = %v", today)
 	}
 

@@ -54,7 +54,7 @@ func (c *Client) Debit(ctx context.Context, userToken string, idempotencyKey str
 		return DebitResult{}, fmt.Errorf("%w: 编码请求失败: %v", ErrDebitUnavailable, err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+DefaultDebitPath, bytes.NewReader(payload))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+c.debitPath, bytes.NewReader(payload))
 	if err != nil {
 		return DebitResult{}, fmt.Errorf("%w: 构造请求失败: %v", ErrDebitUnavailable, err)
 	}

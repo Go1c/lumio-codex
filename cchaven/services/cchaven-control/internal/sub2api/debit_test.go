@@ -68,6 +68,26 @@ func TestDebitReturnsTheEnvelopeResult(t *testing.T) {
 	}
 }
 
+// TestDebitUsesConfiguredPath 锁住 Options.DebitPath：空则 DefaultDebitPath，非空必须打到该路径。
+func TestDebitUsesConfiguredPath(t *testing.T) {
+	const custom = "/custom/balance/debit"
+	up := newFakeUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"txn_id":"txn-path","amount":19.9,"balance":0.1,"currency":"CNY"}}`))
+	})
+
+	_, err := New(Options{BaseURL: up.server.URL, DebitPath: custom}).Debit(
+		context.Background(), "tok", "idem",
+		DebitRequest{Amount: 19.9, Currency: "CNY", Purpose: "cchaven_monthly", Ref: "ord-1"},
+	)
+	if err != nil {
+		t.Fatalf("Debit() 失败: %v", err)
+	}
+	if up.lastPath != custom {
+		t.Errorf("请求路径 = %q, want %q", up.lastPath, custom)
+	}
+}
+
 func TestDebitMapsInsufficientBalance(t *testing.T) {
 	up := newFakeUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

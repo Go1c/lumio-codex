@@ -100,7 +100,7 @@ func TestPublicConfigDrivesFrontendCopy(t *testing.T) {
 	resp := env.NewClient().Get("/api/v1/config/public").ExpectStatus(http.StatusOK)
 
 	pricing := resp.Object("pricing")
-	if pricing["amount_cents"] != float64(6800) || pricing["currency"] != "CNY" {
+	if pricing["amount_cents"] != float64(1990) || pricing["currency"] != "CNY" {
 		t.Errorf("价格应来自运营配置, got %v", pricing)
 	}
 

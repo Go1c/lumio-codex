@@ -74,16 +74,19 @@ type Options struct {
 	BaseURL    string
 	CacheTTL   time.Duration
 	HTTPClient *http.Client
+	// DebitPath 是余额扣费路径；空则 DefaultDebitPath。
+	DebitPath string
 	// Now 允许测试注入可控时钟；生产为 time.Now。
 	Now func() time.Time
 }
 
 // Client 校验 Sub2API 令牌并缓存结果。可被多个请求并发使用。
 type Client struct {
-	baseURL string
-	http    *http.Client
-	ttl     time.Duration
-	now     func() time.Time
+	baseURL   string
+	debitPath string
+	http      *http.Client
+	ttl       time.Duration
+	now       func() time.Time
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -112,13 +115,18 @@ func New(opts Options) *Client {
 	if now == nil {
 		now = time.Now
 	}
+	debitPath := strings.TrimSpace(opts.DebitPath)
+	if debitPath == "" {
+		debitPath = DefaultDebitPath
+	}
 
 	return &Client{
-		baseURL: base,
-		http:    httpClient,
-		ttl:     ttl,
-		now:     now,
-		cache:   map[string]cacheEntry{},
+		baseURL:   base,
+		debitPath: debitPath,
+		http:      httpClient,
+		ttl:       ttl,
+		now:       now,
+		cache:     map[string]cacheEntry{},
 	}
 }
 

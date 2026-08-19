@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/domain"
@@ -78,6 +79,17 @@ func GetOrderByNo(ctx context.Context, q Querier, orderNo string) (domain.Order,
 	return scanOrder(q.QueryRow(ctx,
 		`SELECT `+orderColumns+` FROM orders o JOIN users u ON u.id = o.user_id WHERE o.order_no = $1`,
 		orderNo))
+}
+
+// GetOrderByIdempotencyKey 按幂等键读取；空键视为未命中。
+func GetOrderByIdempotencyKey(ctx context.Context, q Querier, key string) (domain.Order, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return domain.Order{}, ErrNotFound
+	}
+	return scanOrder(q.QueryRow(ctx,
+		`SELECT `+orderColumns+` FROM orders o JOIN users u ON u.id = o.user_id WHERE o.idempotency_key = $1`,
+		key))
 }
 
 // LockOrderByNo 取行级锁后读取，用于支付回调与退款的串行处理。

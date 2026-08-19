@@ -102,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireUser)
+				r.Post("/pay-with-balance", s.handlePayWithBalance)
 				r.Get("/orders", s.handleListMyOrders)
 				r.Get("/orders/{orderNo}", s.handleGetMyOrder)
 			})
@@ -165,7 +166,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,PUT,OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-CCHaven-Signature")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization,X-CCHaven-Signature,Idempotency-Key")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
