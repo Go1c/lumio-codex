@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 
 import { sessionTokensForHandoff, withHandoff } from "@lumio/auth";
 import {
@@ -13,7 +13,6 @@ import {
 
 import { Account } from "@/pages/Account";
 import { Authorize } from "@/pages/Authorize";
-import { Home } from "@/pages/Home";
 import { Login } from "@/pages/Login";
 import { Logout } from "@/pages/Logout";
 import { NotFound } from "@/pages/NotFound";
@@ -49,7 +48,7 @@ function Shell() {
   return (
     <SiteShell
       site="portal"
-      brand={{ name: "BestCodex" }}
+      brand={{ name: "BestCodex", href: "/account" }}
       nav={[{ label: "产品", href: siteUrl("codex") }]}
       account={{ status: session.status, email: session.profile?.email }}
       accountLinks={{ login: "/login", signup: "/signup", account: "/account" }}
@@ -60,7 +59,7 @@ function Shell() {
       }
     >
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Navigate to="/account" replace />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         {/* 邀请链接的入口别名：?aff= 归因码在注册页被捕获（lib/affiliateRef）。 */}

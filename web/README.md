@@ -9,7 +9,7 @@
 
 | 工作区 | 域名 | 职责 |
 |--------|------|------|
-| `apps/portal` | 独立门户（本期部署不变） | 品牌总站 + **唯一**的注册 / 登录 / 2FA / 账户中心 + Claude / CC 桌面端授权页 `/authorize` |
+| `apps/portal` | 独立门户（本期部署不变） | **唯一**的注册 / 登录 / 2FA / 账户中心（`/` 进 `/account`）+ Claude / CC 桌面端授权页 `/authorize` |
 | `apps/bestcodex` | `bestcodex.app` | 产品站：`/` `/codex` 为 Codex 落地页，`/claude` 为 Claude 落地页，帮助 `/help` |
 
 - 账号数据全部在 **Sub2API**（`https://api.lumio.games`）；本目录不引用 `cchaven/` 与 `codex/` 的任何代码。
