@@ -37,12 +37,15 @@ test("the subscribe card uses the plan price and pays with account balance", asy
   assert.match(source, /回到 Codex Tab/);
   assert.doesNotMatch(source, /onOpenAccount/);
   assert.doesNotMatch(source, /CLAUDE_ACCOUNT_URL/);
+  assert.doesNotMatch(source, /CLAUDE_ORDERS_URL/);
   // 主按钮是余额支付，不能把 purchase 当开通主路径；充值回调在壳里打开 paymentUrl。
   assert.doesNotMatch(source, /purchase/);
   assert.doesNotMatch(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
   assert.doesNotMatch(shell, /openClaudeSubscribe/);
   assert.match(shell, /paymentUrl/);
   assert.doesNotMatch(shell, /onOpenAccount=\{openSettings\}/);
+  assert.match(shell, /onOpenOrders=\{openClaudeOrders\}/);
+  assert.match(shell, /openInBrowser\(CLAUDE_ORDERS_URL\)/);
   assert.match(session, /DEFAULT_CLAUDE_PLAN_CENTS/);
   assert.match(types, /1990/);
   assert.doesNotMatch(types, /6800/);
@@ -120,9 +123,17 @@ test("ClaudeWorkspace keeps session state in the module store, not only in the l
   assert.match(source, /getClaudeState|subscribeClaudeStore/);
   assert.match(source, /onBackToCodex/);
   assert.match(source, /onRecharge/);
+  assert.match(source, /onOpenOrders/);
   assert.doesNotMatch(source, /onOpenAccount/);
   assert.match(`${source}\n${empty}\n${home}\n${subscribe}`, /开通记录|ordersSlot/);
-  assert.match(source, /处理中，请勿重复支付/);
+  assert.doesNotMatch(source, /toggleClaudeOrders/);
+  assert.doesNotMatch(source, /暂无开通记录/);
+});
+
+test("开通记录 opens the account-center orders tab", async () => {
+  const portal = await readFile(new URL("../../claude/portal.ts", import.meta.url), "utf8");
+  assert.match(portal, /export const CLAUDE_ORDERS_URL/);
+  assert.match(portal, /https:\/\/bestcodex\.app\/account#orders/);
 });
 
 test("empty and home surfaces show remaining subscription days from the server", async () => {
