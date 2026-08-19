@@ -224,7 +224,7 @@ function llmsTxt(routes, markdown) {
     lines.push("");
   }
 
-  lines.push("## 其他 / Other", "", `- [源码仓库 / Source](https://github.com/Go1c/lumio-codex)`, "");
+  lines.push("## 其他 / Other", "", `- [源码仓库 / Source](https://github.com/LumioGames/lumio-codex)`, "");
   return lines.join("\n");
 }
 

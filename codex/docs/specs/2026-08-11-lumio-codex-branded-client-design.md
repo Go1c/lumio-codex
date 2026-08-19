@@ -339,7 +339,7 @@ Lumio 只拥有：
 - 产品名 `Lumio Codex`。
 - bundle/package identifier `games.lumio.codex`。
 - 可执行文件、窗口标题、安装包、开始菜单项、数据目录、更新 User-Agent 和错误前缀。
-- README、截图、下载链接和更新渠道指向 `Go1c/lumio-codex`。
+- README、截图、下载链接和更新渠道指向 `LumioGames/lumio-codex`。
 - 使用独立 Lumio 图标源文件生成 macOS/Windows 所需尺寸，生成物随源提交。
 
 必须保留：

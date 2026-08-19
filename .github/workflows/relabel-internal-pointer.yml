@@ -1,5 +1,5 @@
 # Rewrite latest-internal.json display version without rebuilding packages.
-# Asset URLs stay on the existing unsigned objects. Channel stays internal-unsigned.
+# Asset URLs stay on the existing objects. Channel stays internal.
 name: Relabel internal pointer
 
 on:
@@ -56,7 +56,7 @@ jobs:
           if not p.get("assets"):
               raise SystemExit("pointer has no assets; refuse to rewrite")
           p["version"] = version
-          p["channel"] = "internal-unsigned"
+          p["channel"] = "internal"
           if not p.get("tag"):
               p["tag"] = suffix
           pathlib.Path("/tmp/pointer.out.json").write_text(json.dumps(p, indent=2) + "\n")

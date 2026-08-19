@@ -85,7 +85,7 @@ npm run build --workspace @lumio/bestcodex    # 或只构建产品站
 
 ## 开发入口
 
-- 桌面启动器：[`codex/README.md`](codex/README.md) · 运维 [`codex/docs/ops/`](codex/docs/ops/README.md)
+- 桌面启动器：[`codex/README.md`](codex/README.md) · 运维 [`codex/docs/ops/`](codex/docs/ops/README.md) · [Windows 签名政策](codex/docs/ops/06-code-signing-policy.md) · [Microsoft Store 与双轨分发](codex/docs/ops/07-microsoft-store.md)
 - Claude Tab 能力：[`cchaven/README.md`](cchaven/README.md) · 运维 [`cchaven/docs/ops/`](cchaven/docs/ops/README.md)
 - 官网：[`web/README.md`](web/README.md)
 - 跨产品运维（部署 / 域名切换 / 上线验收）：[`docs/ops/`](docs/ops/README.md)

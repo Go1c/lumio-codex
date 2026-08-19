@@ -11,7 +11,7 @@ members = [
 version = "1.2.46"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/Go1c/lumio-codex"
+repository = "https://github.com/LumioGames/lumio-codex"
 
 [workspace.dependencies]
 aes-gcm = "0.10"

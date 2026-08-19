@@ -261,7 +261,7 @@ fn lumio_desktop_metadata_uses_branded_contract() {
     )
     .expect("read Tauri config");
 
-    assert!(workspace.contains("https://github.com/Go1c/lumio-codex"));
+    assert!(workspace.contains("https://github.com/LumioGames/lumio-codex"));
     assert!(package_json.contains("\"name\": \"lumio-codex\""));
     assert!(package_lock.contains("\"name\": \"lumio-codex\""));
     assert!(manager_manifest.contains("name = \"lumio-codex\""));
@@ -289,9 +289,11 @@ fn lumio_windows_installer_is_branded_current_user_and_internal_unsigned() {
 
     assert!(windows_installer.contains("Name \"BestCodex\""));
     assert!(windows_installer.contains("DisplayName\" \"BestCodex\""));
-    assert!(
-        windows_installer.contains("LumioCodex-${VERSION}-windows-x64-setup-internal-unsigned.exe")
-    );
+    assert!(windows_installer.contains("!ifndef OUT_SUFFIX"));
+    assert!(windows_installer.contains("!define OUT_SUFFIX \"-internal-unsigned\""));
+    assert!(windows_installer.contains("LumioCodex-${VERSION}-windows-x64-setup${OUT_SUFFIX}.exe"));
+    assert!(windows_installer.contains("VIProductVersion"));
+    assert!(windows_installer.contains("ProductName"));
     // First period: keep the existing install tree; only the shortcut label changes.
     assert!(windows_installer.contains("InstallDir \"$LOCALAPPDATA\\Programs\\Lumio Codex\""));
     assert!(!windows_installer.contains("InstallDir \"$LOCALAPPDATA\\Programs\\BestCodex\""));

@@ -28,7 +28,7 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 
 ### 2.0 一次性：GitHub Secrets
 
-在 `Go1c/lumio-codex` → Settings → Secrets（或本地 `gh secret set`）：
+在 `LumioGames/lumio-codex` → Settings → Secrets（或本地 `gh secret set`）：
 
 | Secret | 示例 |
 |--------|------|
@@ -37,6 +37,8 @@ rg -n '"version"|^version' Cargo.toml apps/codex-plus-manager/package.json apps/
 | `S3_SECRET_ACCESS_KEY` | （RustFS Secret） |
 | `S3_BUCKET` | `lumio-codex` |
 | `S3_PUBLIC_BASE` | `https://s3.lumio.games/lumio-codex/releases` |
+| `SIGNPATH_API_TOKEN` | SignPath 提交 token（仅发布路径；缺省则 Windows 仍打 unsigned） |
+| Variables：`SIGNPATH_ORGANIZATION_ID` / `SIGNPATH_PROJECT_SLUG` / `SIGNPATH_POLICY_SLUG` | SignPath 组织与策略 |
 
 ### 2.1 自动：打 tag → 构建 → S3 + GitHub prerelease
 
@@ -66,6 +68,8 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 
 不要用「只推 `publish`、不发布」当只构建——`publish` 的 push 会自动上架。
 
+Windows CI 还会额外打一份 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名）。这是商店轨脚手架，**不是**本节内部下载通道，也不走 SignPath。完整商店流程与双轨签名见 [07-microsoft-store.md](./07-microsoft-store.md)。
+
 ### 2.3 用本地打包 + 手工上传
 
 1. 按 [01](./01-local-build.md) 打出四平台包  
@@ -77,7 +81,7 @@ Actions → **Internal unsigned build artifacts** 会在三平台构建成功后
 客户端启动后会请求：
 
 ```text
-GET https://api.github.com/repos/Go1c/lumio-codex/releases/latest
+GET https://api.github.com/repos/LumioGames/lumio-codex/releases/latest
 ```
 
 解析 `tag_name`，用 semver 与本地 `CARGO_PKG_VERSION` 比较；更高则首页提示「查看更新」，默认打开该 Release 的 `html_url`（或仓库 Releases 页）。
@@ -110,25 +114,36 @@ git push origin v1.2.46
 3. 冷启动 → 首页应出现更新条 → 「查看更新」打开 Release 页  
 4. 点「稍后」横幅消失（当次会话）  
 
-## 4. 公开签名发布（门槛未打开）
+## 4. 两条 Windows 分发轨（并存，不互相替换）
+
+| 轨 | 产物 | 签名 | 手册 |
+|----|------|------|------|
+| 官网 / GitHub Release（本节 §2–§3） | NSIS setup.exe + 便携 ZIP | SignPath Authenticode 签两个 PE 和 setup（有 token 时） | [06](./06-code-signing-policy.md) |
+| Microsoft Store | `*-windows-x64-store-unsigned.msix` | **不走 SignPath**。交 Partner Center，上架后微软重签 | [07](./07-microsoft-store.md) |
+
+不要把商店 MSIX 接进 SignPath，也不要用商店轨替换 NSIS / ZIP。Partner Center Identity 仍是占位（`LumioGames.BestCodex` / `CN=PLACEHOLDER-PARTNER-CENTER` / `Lumio`）；账号注册归 IT，入口 <https://aka.ms/microsoftstoredeveloper>，本仓不注册。上架后可选从 Partner Center 下载商店重签包，或再评估把已签 MSIX 挂到 GitHub Release——**现在不加**回传 Action，也不接第三方扒包。决策：[0011](../../../.spec/decisions/0011-windows-msix-store-scaffold.md)。
+
+## 5. 公开签名发布（门槛未打开）
+
+Windows 内部通道的 Authenticode 见 [06-code-signing-policy.md](./06-code-signing-policy.md)（SignPath Foundation，发布路径有 token 时只出已签名 Windows 文件名）。那是轨 1，不是公开正式包，也不是商店重签。
 
 [`.github/workflows/release-assets.yml`](../../.github/workflows/release-assets.yml) 名称为 **Public release gate**，当前逻辑是 **直接失败**，文案要求齐备：
 
 - Apple Developer ID 签名 + 公证  
-- Windows 代码签名  
+- Windows 代码签名进入公开通道（`latest.json`）  
 - 受保护的 CI 凭据  
 - S3 更新基址（与架构规格双源清单一致）  
 - 回滚演练  
 
 在门槛关闭前：
 
-- 不要把 `-internal-unsigned` 宣传为「正式稳定版」  
+- 不要把内部通道（`latest-internal.json`）宣传为「正式稳定版」  
 - 不要关闭系统安全机制扩大分发  
-- 正式包命名应去掉 `internal-unsigned` 后缀（签名流程落地时一并改 CI）  
+- 公开正式包命名不得带 `internal-unsigned`  
 
 开启时另开变更：改 workflow、注入 secrets、产出 `latest.json`（若恢复双源更新安装），并更新本文。
 
-## 5. 发版检查清单（复制用）
+## 6. 发版检查清单（复制用）
 
 - [ ] 版本号三处（+ workspace）一致  
 - [ ] `cargo fmt` / `lumio` 测 / manager 测 / `npm test` / `npm run check` 通过  
@@ -139,8 +154,9 @@ git push origin v1.2.46
 - [ ] Tag + Release 已发布；更新提醒在旧版上可复现  
 - [ ] CHANGELOG / 发布说明已写  
 - [ ] 无秘密进仓库  
+- [ ] 若本批含 Windows：确认 NSIS / ZIP 仍走轨 1，商店 MSIX 仍是 unsigned 脚手架且未进 SignPath（[07](./07-microsoft-store.md)）  
 
-## 6. 回滚
+## 7. 回滚
 
 1. **客户端**：Release 页保留上一版制品；通知用户安装上一 tag；必要时删除或标记最新 Release 为不可用（谨慎）。  
 2. **官网**：Git revert `site/` 后重新部署 Pages。  

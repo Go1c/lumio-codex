@@ -10,12 +10,13 @@
 | 平台依赖 | [Tauri 2 前置条件](https://v2.tauri.app/start/prerequisites/)（macOS Xcode CLT；Windows WebView2） |
 | 官方 Codex | 端到端手测时需已安装官方桌面应用 |
 | Windows 打安装包 | NSIS（`makensis`）；CI 用 `choco install nsis` |
+| Windows 打 MSIX | Windows SDK `makeappx`；CI 在 `Windows Kits\10\bin\*\x64\makeappx.exe` 查找 |
 | macOS 打 DMG | 自带 `hdiutil` |
 
 克隆：
 
 ```bash
-git clone https://github.com/Go1c/lumio-codex.git
+git clone https://github.com/LumioGames/lumio-codex.git
 cd lumio-codex
 git checkout publish   # 当前持续集成分支
 ```
@@ -126,6 +127,7 @@ Compress-Archive -Path dist/windows/app/* `
 
 Push-Location scripts/installer/windows
 makensis /INPUTCHARSET UTF8 /DVERSION=$version LumioCodex.nsi
+# 已签名文件名：再加 /DOUT_SUFFIX= /DPRODUCT_VERSION_QUAD=1.2.46.0
 Pop-Location
 ```
 
@@ -135,6 +137,22 @@ Pop-Location
 - `dist/windows/LumioCodex-<version>-windows-x64-setup-internal-unsigned.exe`
 
 安装目录：`%LOCALAPPDATA%\Programs\BestCodex`（当前用户，不要求管理员）。安装包显示名 BestCodex。
+
+### 5.4 Windows MSIX（商店轨脚手架，未签名）
+
+另开一条轨：沿用 §5.3 已 staged 的 `dist/windows/app` cargo 产物 + Windows SDK `makeappx`。
+**不改** NSIS / 便携 ZIP 产物名，也不打开 `tauri.conf.json` 的 `bundle.active`。
+
+```powershell
+./scripts/installer/windows/msix/Pack-Msix.ps1 -PackageVersion "1.2.46-internal-38"
+```
+
+输出：`dist/windows/LumioCodex-<version>-windows-x64-store-unsigned.msix`
+
+`PACKAGE_VERSION` `1.2.46-internal-38` 映射为 Identity.Version `1.2.46.38`；映射不了第四位则用 `1.2.46.0`。
+`Identity.Name` / `Identity.Publisher` / `PublisherDisplayName` 仍是 Partner Center 占位，拿到商店身份后再改模板。本机找不到 `makeappx.exe` 会明确报错。
+
+完整商店流程、与 SignPath 轨如何并存，见 [07-microsoft-store.md](./07-microsoft-store.md)。
 
 ## 6. 用 GitHub Actions 打包（推荐）
 
