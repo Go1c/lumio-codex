@@ -23,6 +23,7 @@ const distDir = join(appRoot, "dist");
 const ssrEntry = join(appRoot, "dist-ssr", "prerender.js");
 
 const {
+  BAIDU_SITE_VERIFICATION,
   BING_SITE_VERIFICATION,
   SEO_ROUTES,
   renderRoute,
@@ -42,7 +43,7 @@ const OG_IMAGE = absoluteUrl("/bestcodex-icon.jpg");
 const VERIFICATIONS = [
   ["google-site-verification", process.env.SITE_VERIFY_GOOGLE],
   ["msvalidate.01", BING_SITE_VERIFICATION],
-  ["baidu-site-verification", process.env.SITE_VERIFY_BAIDU],
+  ["baidu-site-verification", BAIDU_SITE_VERIFICATION],
   ["sogou_site_verification", process.env.SITE_VERIFY_SOGOU],
   ["360-site-verification", process.env.SITE_VERIFY_360],
   ["yandex-verification", process.env.SITE_VERIFY_YANDEX],

@@ -14,9 +14,16 @@ import { HELP_TOPICS } from "@lumio/ui";
 import { App } from "./App";
 import { GUIDES_EN } from "./guides.en";
 import { GUIDES } from "./guides";
-import { BING_SITE_VERIFICATION, SEO_ROUTES, absoluteUrl, seoForPath, siteOrigin } from "./seo";
+import {
+  BAIDU_SITE_VERIFICATION,
+  BING_SITE_VERIFICATION,
+  SEO_ROUTES,
+  absoluteUrl,
+  seoForPath,
+  siteOrigin,
+} from "./seo";
 
-export { BING_SITE_VERIFICATION, SEO_ROUTES, absoluteUrl, siteOrigin };
+export { BAIDU_SITE_VERIFICATION, BING_SITE_VERIFICATION, SEO_ROUTES, absoluteUrl, siteOrigin };
 
 export function renderRoute(path: string): string {
   return renderToString(
