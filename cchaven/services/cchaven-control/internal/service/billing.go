@@ -315,6 +315,51 @@ func (s *Service) PayWithBalance(
 		}
 	}
 
+	return s.finalizeBalanceOrder(ctx, userID, userToken, order, identity, clientIP, userAgent)
+}
+
+// ResumeBalanceOrder 用原单号重放开通。门户「刷新开通状态」走这里：
+// Sub2API 幂等键仍是 order_no，不会新开单、不会换新 Idempotency-Key。
+func (s *Service) ResumeBalanceOrder(
+	ctx context.Context, userID int64, userToken, orderNo, clientIP, userAgent string,
+) (PayWithBalanceResult, error) {
+	if s.Sub2API == nil {
+		return PayWithBalanceResult{}, apperr.IdentityUnavailable()
+	}
+	orderNo = strings.TrimSpace(orderNo)
+	if orderNo == "" {
+		return PayWithBalanceResult{}, apperr.InvalidParams()
+	}
+
+	identity, err := s.Sub2API.VerifyFresh(ctx, userToken)
+	switch {
+	case errors.Is(err, sub2api.ErrInvalidToken):
+		return PayWithBalanceResult{}, apperr.Unauthorized()
+	case errors.Is(err, sub2api.ErrUnavailable):
+		return PayWithBalanceResult{}, apperr.IdentityUnavailable().WithCause(err)
+	case err != nil:
+		return PayWithBalanceResult{}, err
+	}
+
+	order, err := store.GetOrderByNo(ctx, s.Pool, orderNo)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return PayWithBalanceResult{}, apperr.NotFound()
+		}
+		return PayWithBalanceResult{}, err
+	}
+	if order.UserID != userID {
+		return PayWithBalanceResult{}, apperr.NotFound()
+	}
+	if order.Channel != domain.ChannelBalance {
+		return PayWithBalanceResult{}, apperr.InvalidParams()
+	}
+	return s.finalizeBalanceOrder(ctx, userID, userToken, order, identity, clientIP, userAgent)
+}
+
+func (s *Service) finalizeBalanceOrder(
+	ctx context.Context, userID int64, userToken string, order domain.Order, identity sub2api.Identity, clientIP, userAgent string,
+) (PayWithBalanceResult, error) {
 	switch order.Status {
 	case domain.OrderPaid:
 		return s.payWithBalanceResult(ctx, userID, order)

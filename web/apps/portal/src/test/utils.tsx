@@ -32,7 +32,9 @@ type Handler = (init: RequestInit | undefined) => Response;
 export function stubFetch(handlers: Record<string, Handler>) {
   const mock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
-    const key = Object.keys(handlers).find((candidate) => url.includes(candidate));
+    const key = Object.keys(handlers)
+      .filter((candidate) => url.includes(candidate))
+      .sort((a, b) => b.length - a.length)[0];
     if (!key) return Promise.reject(new Error(`未预设的请求：${url}`));
     return Promise.resolve(handlers[key](init));
   });
