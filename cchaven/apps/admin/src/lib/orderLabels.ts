@@ -24,6 +24,8 @@ export function orderChannelLabel(channel: string): string {
       return t("orders.channel.card");
     case "mock":
       return t("orders.channel.mock");
+    case "balance":
+      return t("orders.channel.balance");
     default:
       return channel;
   }

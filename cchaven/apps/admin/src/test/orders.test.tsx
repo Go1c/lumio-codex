@@ -3,6 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "../mocks/server";
 import { mockState } from "../mocks/data";
+import { orderChannelLabel } from "../lib/orderLabels";
 import { renderApp, signIn, signInAs } from "./utils";
 
 function rowOf(orderNo: string) {
@@ -30,6 +31,7 @@ describe("订单与付款页", () => {
     expect(row.getByText("支付宝")).toBeInTheDocument();
     expect(row.getByText("已支付")).toBeInTheDocument();
     expect(paid.order_no).toMatch(/^CC\d{8}-\d{6}$/);
+    expect(orderChannelLabel("balance")).toBe("账户余额");
   });
 
   it("状态筛选 chips 生效，空结果给出提示", async () => {

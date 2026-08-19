@@ -1,6 +1,6 @@
 ---
 name: lumio-unified-portal-and-identity
-description: 统一门户与统一身份：门户 + BestCodex 单站、Sub2API 唯一账号源、跨域会话、控制面令牌校验、充值落点——改账号面或站点时查
+description: 统一门户与统一身份：门户 + BestCodex 单站、Sub2API 唯一账号源、跨域会话、控制面令牌校验、充值与余额扣款——改账号面或站点时查
 metadata:
   type: doc
   status: 已交付
@@ -16,7 +16,7 @@ metadata:
 - 合并前两个产品各有一套注册登录（Lumio Codex 对接 Sub2API，CC避风港自建于
   `cchaven-control`），同一个人要注册两次，运营也拿不到统一的用户视图。
 - 目标：**一处注册、处处可用**——账号入口收敛到门户一个页面，产品站只做介绍与下载，
-  充值统一落到 Sub2API 的收银台。
+  充值统一落到 Sub2API 的收银台；Claude 包月开通走控制面余额支付，不走门户、不走收银台。
 - 约束：`api.lumio.games` 被存量桌面客户端硬编码，迁移期间不可变更；CC 的存量业务数据
   （订阅、邀请、设备、订单）必须原地保留。
 
@@ -71,13 +71,16 @@ CC 桌面端仍由 `cchaven-control` 签发自己的令牌，但授权时的用�
 前置：控制面须配 `CCHAVEN_PORTAL_URL` 把门户列为可信来源（CORS 与 CSRF 同源校验共用同一份
 `TrustedOrigins`），漏配则桌面端完全登不进，且 dev 放行 localhost 任意端口、本地测不出来。
 
-### 充值
+### 充值与余额开通
 
 收银台仍是 Sub2API：`https://api.lumio.games/purchase`。本仓不收集任何付款信息。
 浏览器里已登录时，门户与产品站的「充值」走
 `{api}/auth/bridge#t=<access>&r=/purchase`（`purchaseUrl(accessToken)`），把已有令牌交给
 LumioAPI 控制台会话；未登录仍直开 `/purchase`。桌面端 `payment_url()` 与 CC 控制面
 `PurchaseURL()` 不带浏览器会话，保持 `/purchase`。
+
+控制面 `POST /api/v1/billing/checkout` 仍是 303 到 `/purchase`，只充值、不建单、不开通。
+Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：控制面用用户自己的令牌调 Sub2API `POST /api/v1/user/balance/debit` 扣当月价（当前 19.9 元 / 1990 分，`purpose=cchaven_monthly`，认 `Idempotency-Key`），订阅天数只写在控制面（+30 天，不自动续费）。余额不足返回 403 `insufficient_balance` + `purchase_url`。本期门户没有 Claude 开通区。
 
 ## 待解决
 
@@ -99,3 +102,4 @@ LumioAPI 控制台会话；未登录仍直开 `/purchase`。桌面端 `payment_u
 - 桌面账户设计：[`lumio-account-and-home.md`](lumio-account-and-home.md)
 - [ADR-0002 Sub2API 为唯一账号中心](../../decisions/0002-sub2api-single-account-source.md)
 - [ADR-0003 双仓合并为并列 monorepo](../../decisions/0003-monorepo-three-way-merge.md)
+- [ADR-0012 Claude 余额开通](../../decisions/0012-claude-balance-subscribe.md)
