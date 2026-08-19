@@ -56,3 +56,41 @@ func TestParseYuanJSONRejectsStringAmount(t *testing.T) {
 		t.Fatalf("数字 19.90 → %d, %v", got, err)
 	}
 }
+
+func TestParseYuanSnapshotAllowsZeroAndRoundsExtraDigits(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want int64
+	}{
+		{"0", 0},
+		{"0.00000000", 0},
+		{"583.46000000", 58346},
+		{"583.45999999", 58346},
+		{"19.90", 1990},
+		{"19.9", 1990},
+		{"10.10000000", 1010},
+		{"9.995", 1000},
+	}
+	for _, tc := range cases {
+		got, err := ParseYuanSnapshot(tc.raw)
+		if err != nil || got != tc.want {
+			t.Errorf("ParseYuanSnapshot(%q) = %d, %v, want %d", tc.raw, got, err, tc.want)
+		}
+	}
+}
+
+func TestParseYuanSnapshotJSONAcceptsStringAndRejectsNull(t *testing.T) {
+	got, err := ParseYuanSnapshotJSON(json.RawMessage(`"583.46000000"`))
+	if err != nil || got != 58346 {
+		t.Fatalf("字符串快照 583.46000000 → %d, %v", got, err)
+	}
+	if _, err := ParseYuanSnapshotJSON(json.RawMessage(``)); !errors.Is(err, ErrInvalidAmount) {
+		t.Fatalf("空字段应解析失败好打日志, err=%v", err)
+	}
+	if _, err := ParseYuanSnapshotJSON(json.RawMessage(`null`)); !errors.Is(err, ErrInvalidAmount) {
+		t.Fatalf("null 应解析失败, err=%v", err)
+	}
+	if _, err := ParseYuan("19.901"); !errors.Is(err, ErrInvalidAmount) {
+		t.Fatal("请求金额 19.901 仍须被严格 ParseYuan 拒绝")
+	}
+}

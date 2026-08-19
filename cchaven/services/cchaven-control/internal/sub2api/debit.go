@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -228,9 +229,12 @@ func parseDebit(status int, raw []byte, expected DebitRequest) (DebitResult, err
 	if err != nil || amountCents != expected.AmountCents {
 		return DebitResult{}, fmt.Errorf("%w: 回执金额与请求不符", ErrDebitUnavailable)
 	}
-	balanceCents, err := ParseYuanJSON(data.Balance)
+	// 余额只是快照。txn_id 与金额已对上时，解不开或为 0 不得把整笔打成扣费不可用。
+	balanceCents, err := ParseYuanSnapshotJSON(data.Balance)
 	if err != nil {
-		return DebitResult{}, fmt.Errorf("%w: 回执余额无法解析", ErrDebitUnavailable)
+		slog.Warn("sub2api debit 回执余额无法解析，按 0 分快照继续",
+			"balance", rawBalanceSnippet(data.Balance))
+		balanceCents = 0
 	}
 	if !strings.EqualFold(strings.TrimSpace(data.Currency), "CNY") {
 		return DebitResult{}, fmt.Errorf("%w: 回执币种与请求不符", ErrDebitUnavailable)
@@ -241,6 +245,18 @@ func parseDebit(status int, raw []byte, expected DebitRequest) (DebitResult, err
 		BalanceCents: balanceCents,
 		Currency:     "CNY",
 	}, nil
+}
+
+func rawBalanceSnippet(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "<missing>"
+	}
+	const max = 128
+	if len(trimmed) > max {
+		return string(trimmed[:max])
+	}
+	return string(trimmed)
 }
 
 func debitRetryable(err error) bool {

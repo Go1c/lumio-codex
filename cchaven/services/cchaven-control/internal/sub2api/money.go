@@ -74,6 +74,57 @@ func ParseYuanJSON(raw json.RawMessage) (int64, error) {
 	return ParseYuan(string(trimmed))
 }
 
+// ParseYuanSnapshot 解析回执上的余额快照。允许 0；超过两位小数按分四舍五入。
+// 请求金额仍走 ParseYuan，避免 19.901 被悄悄收下。
+func ParseYuanSnapshot(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "eE+") || strings.HasPrefix(raw, "-") {
+		return 0, ErrInvalidAmount
+	}
+	whole, frac, dotted := strings.Cut(raw, ".")
+	if whole == "" || !allDigits(whole) {
+		return 0, ErrInvalidAmount
+	}
+	yuan, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return 0, ErrInvalidAmount
+	}
+	if !dotted {
+		return yuan * 100, nil
+	}
+	if frac == "" || !allDigits(frac) {
+		return 0, ErrInvalidAmount
+	}
+	for len(frac) < 2 {
+		frac += "0"
+	}
+	fraction, err := strconv.ParseInt(frac[:2], 10, 64)
+	if err != nil {
+		return 0, ErrInvalidAmount
+	}
+	cents := yuan*100 + fraction
+	if len(frac) > 2 && frac[2] >= '5' {
+		cents++
+	}
+	return cents, nil
+}
+
+// ParseYuanSnapshotJSON 解析回执余额。数字或十进制字符串均可；空 / null 失败以便打原文。
+func ParseYuanSnapshotJSON(raw json.RawMessage) (int64, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return 0, ErrInvalidAmount
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return 0, ErrInvalidAmount
+		}
+		return ParseYuanSnapshot(text)
+	}
+	return ParseYuanSnapshot(string(trimmed))
+}
+
 func allDigits(value string) bool {
 	if value == "" {
 		return false

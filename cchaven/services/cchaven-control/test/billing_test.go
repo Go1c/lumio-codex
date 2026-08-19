@@ -626,23 +626,18 @@ func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
 
 	const key = "resume-scale8"
 	first := payWith(client, key)
-	if first.ErrorCode() != "debit_unavailable" {
-		t.Fatalf("解析失败应 503 debit_unavailable, got %s status=%d", first.ErrorCode(), first.Status)
+	if first.Status != http.StatusOK {
+		t.Fatalf("上游已扣款时解不开的余额快照不得 503, got %s status=%d", first.ErrorCode(), first.Status)
 	}
-	if got := purchaseEventCount(t, env, userID); got != 0 {
-		t.Fatalf("解析失败不得入账, events=%d", got)
-	}
-	orders := client.Get("/api/v1/billing/orders").ExpectStatus(http.StatusOK).Array("items")
-	if len(orders) != 1 {
-		t.Fatalf("应留下 1 张 pending 单, got %#v", orders)
-	}
-	pending, _ := orders[0].(map[string]any)
-	if pending["status"] != "pending" {
-		t.Fatalf("订单应保持 pending, got %v", pending["status"])
-	}
-	orderNo, _ := pending["order_no"].(string)
+	orderNo, _ := first.Object("order")["order_no"].(string)
 	if orderNo == "" {
-		t.Fatal("pending 单缺少 order_no")
+		t.Fatal("成功回执缺少 order_no")
+	}
+	if first.Object("order")["status"] != "paid" {
+		t.Fatalf("第一次就应标 paid, got %v", first.Object("order")["status"])
+	}
+	if first.Object("entitlement")["status"] != "active" {
+		t.Fatalf("第一次就应开通, got %v", first.Object("entitlement")["status"])
 	}
 	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 58346 {
 		t.Fatalf("上游应已扣 19.90, 剩余分 = %d", got)
@@ -651,7 +646,6 @@ func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
 		t.Fatalf("真实扣款 = %d, want 1", got)
 	}
 
-	env.Sub2API.SetDebitReceiptUnparseable(false)
 	again := payWith(client, key).ExpectStatus(http.StatusOK)
 	if again.Object("order")["order_no"] != orderNo {
 		t.Errorf("必须复用原 order_no %s, got %v", orderNo, again.Object("order")["order_no"])

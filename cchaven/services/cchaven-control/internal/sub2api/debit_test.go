@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -271,6 +273,55 @@ func TestParseDebitAcceptsScale8WalletBalance(t *testing.T) {
 	}
 	if got.TxnID != "txn-scale" || got.AmountCents != 1990 || got.BalanceCents != 58346 {
 		t.Errorf("回执 = %+v, want txn-scale / 1990 / 58346", got)
+	}
+}
+
+func TestParseDebitTreatsBalanceAsOptionalSnapshot(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int64
+	}{
+		{"zero", `{"code":0,"data":{"txn_id":"txn-zero","amount":19.90,"balance":0,"currency":"CNY"}}`, 0},
+		{"zero_scale8", `{"code":0,"data":{"txn_id":"txn-zero8","amount":19.90,"balance":0.00000000,"currency":"CNY"}}`, 0},
+		{"missing", `{"code":0,"data":{"txn_id":"txn-missing","amount":19.90,"currency":"CNY"}}`, 0},
+		{"float_tail", `{"code":0,"data":{"txn_id":"txn-float","amount":19.90,"balance":583.45999999,"currency":"CNY"}}`, 58346},
+		{"string_snapshot", `{"code":0,"data":{"txn_id":"txn-str","amount":19.90,"balance":"583.46000000","currency":"CNY"}}`, 58346},
+		{"garbage", `{"code":0,"data":{"txn_id":"txn-bool","amount":19.90,"balance":true,"currency":"CNY"}}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseDebit(http.StatusOK, []byte(tc.body), DebitRequest{
+				AmountCents: 1990, Currency: "CNY", Purpose: "cchaven_monthly", Ref: "ord-1",
+			})
+			if err != nil {
+				t.Fatalf("合法 txn_id + amount 时余额快照不得打成 ErrDebitUnavailable, err=%v", err)
+			}
+			if got.TxnID == "" || got.AmountCents != 1990 || got.BalanceCents != tc.want {
+				t.Errorf("回执 = %+v, want amount 1990 balance %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseDebitLogsRawBalanceWhenSnapshotUnparseable(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	body := []byte(`{"code":0,"data":{"txn_id":"txn-log","amount":19.90,"balance":true,"currency":"CNY"}}`)
+	if _, err := parseDebit(http.StatusOK, body, DebitRequest{
+		AmountCents: 1990, Currency: "CNY", Purpose: "cchaven_monthly", Ref: "ord-1",
+	}); err != nil {
+		t.Fatalf("解不开的余额不得失败, err=%v", err)
+	}
+	log := buf.String()
+	if !strings.Contains(log, "true") {
+		t.Fatalf("日志必须带上 data.balance 原文, got %q", log)
+	}
+	if strings.Contains(log, "bcs_") || strings.Contains(strings.ToLower(log), "bearer") || strings.Contains(log, `"data"`) {
+		t.Fatalf("日志不得带密钥或完整 body: %q", log)
 	}
 }
 
