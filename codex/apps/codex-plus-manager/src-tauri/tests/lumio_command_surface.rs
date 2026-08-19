@@ -253,3 +253,29 @@ fn app_surface_commands_detect_through_the_saved_destination() {
         );
     }
 }
+
+#[test]
+fn sidecar_placeholders_cover_ci_host_triples() {
+    // tauri-build resolves externalBin as binaries/<name>-<triple>[.exe].
+    // Missing Windows placeholder makes `cargo test` panic in build.rs before
+    // any setup/zip is produced.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = fs::read_to_string(root.join("tauri.conf.json")).expect("tauri.conf.json");
+    assert!(
+        config.contains(r#""externalBin": ["binaries/fns-agent"]"#),
+        "update this test if the sidecar name changes:\n{config}"
+    );
+    let binaries = root.join("binaries");
+    for name in [
+        "fns-agent-aarch64-apple-darwin",
+        "fns-agent-x86_64-apple-darwin",
+        "fns-agent-x86_64-pc-windows-msvc.exe",
+    ] {
+        let path = binaries.join(name);
+        assert!(
+            path.is_file(),
+            "missing sidecar placeholder for cargo test/build: {}",
+            path.display()
+        );
+    }
+}
