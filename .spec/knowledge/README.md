@@ -27,8 +27,8 @@ metadata:
 | 文档 | 一句话 |
 |------|--------|
 | [`features/_TEMPLATE.md`](features/_TEMPLATE.md) | 新功能文档模板——新增功能记录时照此建,放对 领域 / 模块 |
-| [`features/lumio-account-and-home.md`](features/lumio-account-and-home.md) | BestCodex 桌面账户与首页：注册/登录/2FA、provisioning、问候+一行余额+启动卡、修复与设置、本机缺失时首次安装官方应用——改账户壳或启动编排时查 |
-| [`features/lumio-unified-portal-and-identity.md`](features/lumio-unified-portal-and-identity.md) | 统一门户与统一身份：门户 + BestCodex 单站、Sub2API 唯一账号源、跨域会话、控制面令牌校验、充值落点——改账号面或站点时查 |
+| [`features/lumio-account-and-home.md`](features/lumio-account-and-home.md) | BestCodex 桌面账户与首页：注册/登录/2FA、provisioning、问候+一行余额+启动卡、Claude 余额开通、修复与设置、本机缺失时首次安装官方应用——改账户壳或启动编排时查 |
+| [`features/lumio-unified-portal-and-identity.md`](features/lumio-unified-portal-and-identity.md) | 统一门户与统一身份：门户 + BestCodex 单站、Sub2API 唯一账号源、跨域会话、控制面令牌校验、充值与余额扣款——改账号面或站点时查 |
 | [`features/lumio-web-support-bubble.md`](features/lumio-web-support-bubble.md) | 官网右下角客服气泡：QQ 群号可复制、飞书群外链，门户与 BestCodex 的 SiteShell 共用——改社群入口或气泡交互时查 |
 
 ## lessons(经验教训 · 复发问题暂存区)

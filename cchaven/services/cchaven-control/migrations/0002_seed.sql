@@ -2,7 +2,7 @@
 INSERT INTO ops_configs (key, value) VALUES
     ('invite.reward_days', '7'::jsonb),
     ('invite.trial_days',  '30'::jsonb),
-    ('pricing.monthly',    '{"amount_cents": 6800, "currency": "CNY"}'::jsonb)
+    ('pricing.monthly',    '{"amount_cents": 1990, "currency": "CNY"}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 -- 桌面端 OAuth 客户端：公开客户端，强制 PKCE，无 client secret。

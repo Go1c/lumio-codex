@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +15,7 @@ import (
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/domain"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/payments"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/store"
+	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/sub2api"
 )
 
 // Plan 是唯一的包月套餐，价格从运营配置读取，页面不写死。
@@ -247,4 +250,205 @@ func viewOrder(o domain.Order) OrderView {
 		PaidAt:      o.PaidAt,
 		CreatedAt:   o.CreatedAt,
 	}
+}
+
+const debitPurpose = "cchaven_monthly"
+
+// PayWithBalanceResult 是余额支付开通包月的结果。
+type PayWithBalanceResult struct {
+	Order       OrderView          `json:"order"`
+	Entitlement domain.Entitlement `json:"entitlement"`
+}
+
+// PayWithBalance 用 Sub2API 余额扣当月套餐并入账。金额严格取当前 ops 配置。
+//
+// 已是 active 的用户可以再买一个月（顺延 30 天）。扣费在建单事务外进行：
+// 余额不足把订单标 failed；上游不可用 / 401 则保持 pending，绝不入账。
+func (s *Service) PayWithBalance(
+	ctx context.Context, userID int64, userToken, idempotencyKey, clientIP, userAgent string,
+) (PayWithBalanceResult, error) {
+	if s.Sub2API == nil {
+		return PayWithBalanceResult{}, apperr.IdentityUnavailable()
+	}
+
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return PayWithBalanceResult{}, apperr.IdempotencyKeyRequired()
+	}
+
+	identity, err := s.Sub2API.VerifyFresh(ctx, userToken)
+	switch {
+	case errors.Is(err, sub2api.ErrInvalidToken):
+		return PayWithBalanceResult{}, apperr.Unauthorized()
+	case errors.Is(err, sub2api.ErrUnavailable):
+		return PayWithBalanceResult{}, apperr.IdentityUnavailable().WithCause(err)
+	case err != nil:
+		return PayWithBalanceResult{}, err
+	}
+
+	ops, err := store.LoadOpsConfig(ctx, s.Pool)
+	if err != nil {
+		return PayWithBalanceResult{}, err
+	}
+	amountCents := ops.PricingMonthly.AmountCents
+	currency := ops.PricingMonthly.Currency
+	if currency == "" {
+		currency = "CNY"
+	}
+
+	now := s.now()
+	var order domain.Order
+
+	err = db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
+		created, createErr := s.orderForBalancePay(ctx, tx, userID, identity.Balance, amountCents, currency, idempotencyKey, now)
+		if createErr != nil {
+			return createErr
+		}
+		order = created
+		return nil
+	})
+	if err != nil {
+		if existing, ok := s.orderAfterIdempotencyConflict(ctx, userID, idempotencyKey, err); ok {
+			order = existing
+		} else {
+			return PayWithBalanceResult{}, err
+		}
+	}
+
+	switch order.Status {
+	case domain.OrderPaid:
+		return s.payWithBalanceResult(ctx, userID, order)
+	case domain.OrderPending, domain.OrderFailed:
+		// pending：可能已经扣过款，不能再用当前余额把门。
+		// failed：充值后用同一把 key 重试。
+		if order.Status == domain.OrderFailed && yuanToCents(identity.Balance) < order.AmountCents {
+			return PayWithBalanceResult{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
+		}
+	default:
+		return PayWithBalanceResult{}, apperr.InvalidParams()
+	}
+
+	debit, err := s.Sub2API.Debit(ctx, userToken, order.OrderNo, sub2api.DebitRequest{
+		AmountCents: order.AmountCents,
+		Currency:    "CNY",
+		Purpose:     debitPurpose,
+		Ref:         order.OrderNo,
+		ClientIP:    clientIP,
+		UserAgent:   userAgent,
+	})
+	switch {
+	case errors.Is(err, sub2api.ErrInsufficientBalance):
+		if markErr := store.UpdateOrderStatus(
+			ctx, s.Pool, order.OrderNo, domain.OrderFailed, nil, nil, s.now(),
+		); markErr != nil {
+			return PayWithBalanceResult{}, markErr
+		}
+		return PayWithBalanceResult{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
+	case errors.Is(err, sub2api.ErrTokenExpired), errors.Is(err, sub2api.ErrInvalidToken):
+		return PayWithBalanceResult{}, apperr.Unauthorized()
+	case errors.Is(err, sub2api.ErrDebitBusy):
+		retryAfter := time.Duration(0)
+		var busy *sub2api.DebitBusyError
+		if errors.As(err, &busy) {
+			retryAfter = busy.RetryAfter
+		}
+		return PayWithBalanceResult{}, apperr.DebitBusy(retryAfter).WithCause(err)
+	case errors.Is(err, sub2api.ErrInvalidBalanceClient), errors.Is(err, sub2api.ErrPurposeNotAllowed), errors.Is(err, sub2api.ErrDebitMisconfigured):
+		return PayWithBalanceResult{}, apperr.DebitMisconfigured().WithCause(err)
+	case errors.Is(err, sub2api.ErrIdempotencyConflict):
+		return PayWithBalanceResult{}, apperr.DebitIdempotencyConflict().WithCause(err)
+	case errors.Is(err, sub2api.ErrDebitInvalidRequest):
+		return PayWithBalanceResult{}, apperr.InvalidParams().WithCause(err)
+	case err != nil:
+		return PayWithBalanceResult{}, apperr.DebitUnavailable().WithCause(err)
+	}
+
+	err = db.InTx(ctx, s.Pool, func(tx pgx.Tx) error {
+		locked, lockErr := store.LockOrderByNo(ctx, tx, order.OrderNo)
+		if lockErr != nil {
+			return lockErr
+		}
+		if locked.Status == domain.OrderPaid {
+			order = locked
+			return nil
+		}
+
+		paidAt := s.now()
+		txnID := debit.TxnID
+		if updErr := store.UpdateOrderStatus(
+			ctx, tx, locked.OrderNo, domain.OrderPaid, &txnID, &paidAt, paidAt,
+		); updErr != nil {
+			return updErr
+		}
+		if _, creditErr := s.CreditPurchase(ctx, tx, locked.UserID, locked.OrderNo, locked.PeriodMonths); creditErr != nil {
+			return creditErr
+		}
+		paid, getErr := store.GetOrderByNo(ctx, tx, locked.OrderNo)
+		if getErr != nil {
+			return getErr
+		}
+		order = paid
+		return nil
+	})
+	if err != nil {
+		return PayWithBalanceResult{}, err
+	}
+	return s.payWithBalanceResult(ctx, userID, order)
+}
+
+func (s *Service) orderForBalancePay(
+	ctx context.Context, tx pgx.Tx, userID int64, balanceYuan float64, amountCents int64, currency, idempotencyKey string, now time.Time,
+) (domain.Order, error) {
+	existing, err := store.GetOrderByUserAndIdempotencyKeyForUpdate(ctx, tx, userID, idempotencyKey)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return domain.Order{}, err
+	}
+	if yuanToCents(balanceYuan) < amountCents {
+		return domain.Order{}, apperr.InsufficientBalance(s.Cfg.PurchaseURL())
+	}
+
+	orderNo, err := store.NextOrderNo(ctx, tx, now)
+	if err != nil {
+		return domain.Order{}, err
+	}
+	return store.CreateOrder(ctx, tx, store.CreateOrderParams{
+		OrderNo:        orderNo,
+		UserID:         userID,
+		AmountCents:    amountCents,
+		Currency:       currency,
+		Channel:        domain.ChannelBalance,
+		PeriodMonths:   1,
+		Provider:       "sub2api",
+		IdempotencyKey: idempotencyKey,
+	})
+}
+
+func (s *Service) orderAfterIdempotencyConflict(
+	ctx context.Context, userID int64, idempotencyKey string, err error,
+) (domain.Order, bool) {
+	if !store.IsUniqueViolation(err) {
+		return domain.Order{}, false
+	}
+	existing, getErr := store.GetOrderByUserAndIdempotencyKey(ctx, s.Pool, userID, idempotencyKey)
+	if getErr != nil {
+		return domain.Order{}, false
+	}
+	return existing, true
+}
+
+func yuanToCents(value float64) int64 {
+	return int64(math.Round(value * 100))
+}
+
+func (s *Service) payWithBalanceResult(
+	ctx context.Context, userID int64, order domain.Order,
+) (PayWithBalanceResult, error) {
+	entitlement, err := s.Entitlement(ctx, userID)
+	if err != nil {
+		return PayWithBalanceResult{}, err
+	}
+	return PayWithBalanceResult{Order: viewOrder(order), Entitlement: entitlement}, nil
 }

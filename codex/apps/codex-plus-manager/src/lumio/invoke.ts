@@ -228,6 +228,34 @@ export async function fetchClaudeEntitlement(): Promise<{ status: string } | nul
   return runNullableCommand<{ status: string }>("lumio_claude_entitlement");
 }
 
+export interface ClaudePayWithBalanceResult {
+  status: string;
+  expiresAt?: string | null;
+  daysLeft?: number | null;
+  orderNo: string;
+}
+
+export interface ClaudeBillingOrder {
+  orderNo: string;
+  amountCents: number;
+  status: string;
+  paidAt?: string | null;
+  createdAt: string;
+}
+
+export async function payClaudeWithBalance(): Promise<ClaudePayWithBalanceResult> {
+  return runCommand<ClaudePayWithBalanceResult>("lumio_claude_pay_with_balance");
+}
+
+export async function listClaudeOrders(): Promise<ClaudeBillingOrder[]> {
+  const payload = await runCommand<{ items: ClaudeBillingOrder[] }>("lumio_claude_orders");
+  return payload.items ?? [];
+}
+
+export async function fetchClaudePlan(): Promise<{ amountCents: number } | null> {
+  return runNullableCommand<{ amountCents: number }>("lumio_claude_plan");
+}
+
 export async function runProvisioningStep(step: string): Promise<LumioProvisionStepResult> {
   const result = await runCommand<LumioProvisionStepResult>(LUMIO_COMMANDS.provisionStep, {
     step,

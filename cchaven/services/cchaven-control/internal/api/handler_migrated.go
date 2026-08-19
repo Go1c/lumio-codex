@@ -23,9 +23,8 @@ func (s *Server) handleAuthMigrated(w http.ResponseWriter, r *http.Request) {
 //
 // 因此这个端点不再需要本地会话：目标是一个固定的公开地址，是否登录由充值页自己判定。
 //
-// TODO(billing): 订单表、/billing/orders 与 /billing/webhook 只服务于迁移前
-// 已存在的订单，新订单不会再从这里产生。等 Sub2API 侧的订单与权益回传接口
-// 定稿后，要么改为消费上游账单，要么整体下线，不要长期留着半通的支付链路。
+// checkout 仍只负责跳到 Sub2API 充值页。新的包月开通走 /billing/pay-with-balance，
+// 订单会重新写入 orders；本端点不再建单。
 func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	purchaseURL := s.cfg.PurchaseURL()
 

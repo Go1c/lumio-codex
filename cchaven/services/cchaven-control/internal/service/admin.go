@@ -822,6 +822,9 @@ func (s *Service) RefundOrder(
 		if order.Status != domain.OrderPaid {
 			return apperr.OrderNotRefundable()
 		}
+		if order.Channel == domain.ChannelBalance {
+			return apperr.OrderNotRefundable()
+		}
 
 		if err := store.UpdateOrderStatus(
 			ctx, tx, orderNo, domain.OrderRefunding, nil, nil, now,

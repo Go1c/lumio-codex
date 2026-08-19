@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { cancelClaudeConnect, runConnectSync } from "./session.ts";
+import {
+  DEFAULT_CLAUDE_PLAN_CENTS,
+  cancelClaudeConnect,
+  formatClaudeOrderYuan,
+  formatClaudePlanYuan,
+  runConnectSync,
+} from "./session.ts";
 import { dispatchClaude, getClaudeState, resetClaudeStore } from "./store.ts";
 
 test("canceling connect does not leave a project in the store", () => {
@@ -29,4 +35,11 @@ test("SYNC_ENGINE_UNAVAILABLE is not a keep-project success", async () => {
   assert.equal(state.sheet?.step, "sync");
   assert.equal(state.sheet?.sync.state, "fail");
   assert.equal(state.sheet?.sync.errorCode, "SYNC_ENGINE_UNAVAILABLE");
+});
+
+test("plan fallback is 19.9 yuan and order amounts keep two decimals", () => {
+  assert.equal(DEFAULT_CLAUDE_PLAN_CENTS, 1990);
+  assert.equal(formatClaudePlanYuan(1990), "19.9");
+  assert.equal(formatClaudeOrderYuan(1990), "19.90");
+  assert.notEqual(formatClaudePlanYuan(DEFAULT_CLAUDE_PLAN_CENTS), "68");
 });

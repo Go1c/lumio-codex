@@ -1,17 +1,18 @@
 import { hasClaudeEntitlement } from "./entitlement.ts";
 import { localProjectRoot, remoteProjectRoot } from "./paths.ts";
 import { parseSshTarget } from "./ssh-target.ts";
-import type {
-  ClaudeConnectSheet,
-  ClaudeEntitlement,
-  ClaudeEvent,
-  ClaudeHostDraft,
-  ClaudePage,
-  ClaudeProject,
-  ClaudeState,
-  ClaudeSurface,
-  ClaudeSyncStatus,
-  PersistableClaudeState,
+import {
+  DEFAULT_CLAUDE_PLAN_CENTS,
+  type ClaudeConnectSheet,
+  type ClaudeEntitlement,
+  type ClaudeEvent,
+  type ClaudeHostDraft,
+  type ClaudePage,
+  type ClaudeProject,
+  type ClaudeState,
+  type ClaudeSurface,
+  type ClaudeSyncStatus,
+  type PersistableClaudeState,
 } from "./types.ts";
 
 export const CONNECT_STEPS = ["host", "probe", "setup", "sync"] as const;
@@ -77,6 +78,12 @@ export function initialClaudeState(): ClaudeState {
     terminalByProject: {},
     filesByProject: {},
     conflictsByProject: {},
+    paying: false,
+    payError: null,
+    payMode: "balance",
+    orders: [],
+    ordersOpen: false,
+    planAmountCents: DEFAULT_CLAUDE_PLAN_CENTS,
   };
 }
 
@@ -322,6 +329,26 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
         activeProjectId: event.activeProjectId,
         entitlement: event.entitlement ?? state.entitlement,
       });
+    case "pay-started":
+      return { ...state, paying: true, payError: null };
+    case "pay-finished":
+      return { ...state, paying: false, payError: null, payMode: "balance" };
+    case "pay-failed":
+      return {
+        ...state,
+        paying: false,
+        payError: event.errorCode,
+        payMode: event.forceRecharge ? "recharge" : state.payMode,
+      };
+    case "orders-loaded":
+      return { ...state, orders: event.orders };
+    case "orders-toggled":
+      return { ...state, ordersOpen: event.open ?? !state.ordersOpen };
+    case "plan-loaded":
+      return {
+        ...state,
+        planAmountCents: event.amountCents > 0 ? event.amountCents : DEFAULT_CLAUDE_PLAN_CENTS,
+      };
     default:
       return state;
   }

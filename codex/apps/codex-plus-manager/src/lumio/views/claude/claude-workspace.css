@@ -120,6 +120,36 @@
   color: var(--cc-ink-2);
 }
 
+.lumio-claude-card > p.lumio-claude-balance {
+  margin: 0 0 18px;
+  color: var(--cc-ink-2);
+  font-size: 14px;
+}
+
+.lumio-claude-orders {
+  margin-top: 16px;
+}
+
+.lumio-claude-orders ul {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lumio-claude-orders li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--cc-line);
+  color: var(--cc-ink-2);
+  font-size: 13px;
+}
+
+.lumio-claude-rail .lumio-claude-orders {
+  margin: 8px 8px 12px;
+}
+
 .lumio-claude-quiet {
   margin: 14px 0 0;
   color: var(--cc-ink-2);

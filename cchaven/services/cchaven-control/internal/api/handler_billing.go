@@ -3,12 +3,32 @@ package api
 import (
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/apperr"
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/httpx"
 )
+
+func (s *Server) handlePayWithBalance(w http.ResponseWriter, r *http.Request) {
+	// Principal 不持有令牌，扣费必须再读一次 Bearer；不要把 token 写进日志。
+	token, _ := s.accessTokenFrom(r)
+	key := r.Header.Get("Idempotency-Key")
+	if strings.TrimSpace(key) == "" {
+		httpx.Fail(w, r, apperr.IdempotencyKeyRequired())
+		return
+	}
+	result, err := s.svc.PayWithBalance(
+		r.Context(), principalOf(r).User.ID, token, key,
+		httpx.ClientIP(r), httpx.UserAgent(r),
+	)
+	if err != nil {
+		httpx.Fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, result)
+}
 
 func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	plan, err := s.svc.Plan(r.Context())
@@ -19,7 +39,7 @@ func (s *Server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, plan)
 }
 
-// handleListMyOrders 列出迁移前产生的历史订单；新订单不再由本服务创建（见 handleCheckout）。
+// handleListMyOrders 列出当前用户的订单（余额支付新单与迁移前存量单）。
 func (s *Server) handleListMyOrders(w http.ResponseWriter, r *http.Request) {
 	orders, err := s.svc.ListMyOrders(r.Context(), principalOf(r).User.ID)
 	if err != nil {

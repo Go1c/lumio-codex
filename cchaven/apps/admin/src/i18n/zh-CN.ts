@@ -207,6 +207,7 @@ export const zhCN = {
   "orders.channel.wechat": "微信支付",
   "orders.channel.card": "银行卡",
   "orders.channel.mock": "测试通道",
+  "orders.channel.balance": "账户余额",
   "orders.empty": "该状态下没有订单。",
   "orders.loadFailed": "订单数据加载失败：{message}",
   "orders.refund": "退款",

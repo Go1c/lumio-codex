@@ -109,8 +109,10 @@ func New(
 		Limiter:  ratelimit.New(),
 		Payments: registry,
 		Sub2API: sub2api.New(sub2api.Options{
-			BaseURL:  cfg.Sub2APIBase,
-			CacheTTL: cfg.Sub2APICacheTTL,
+			BaseURL:   cfg.Sub2APIBase,
+			CacheTTL:  cfg.Sub2APICacheTTL,
+			DebitPath: cfg.DebitPath(),
+			ClientKey: string(cfg.BalanceClientSecret),
 		}),
 		Now: time.Now,
 	}
