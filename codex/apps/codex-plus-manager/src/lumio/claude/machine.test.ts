@@ -248,6 +248,33 @@ test("a persistable snapshot never includes a password field", () => {
   assert.doesNotMatch(persisted, /secret/i);
 });
 
+test("paying and order history stay in session state and out of persistable snapshots", () => {
+  const paying = apply([{ type: "pay-started" }]);
+  assert.equal(paying.paying, true);
+  const failed = reduceClaudeState(paying, {
+    type: "pay-failed",
+    errorCode: "ACCOUNT_INSUFFICIENT_BALANCE",
+    forceRecharge: true,
+  });
+  assert.equal(failed.paying, false);
+  assert.equal(failed.payMode, "recharge");
+  const listed = reduceClaudeState(failed, {
+    type: "orders-loaded",
+    orders: [
+      {
+        orderNo: "BC1",
+        amountCents: 1990,
+        status: "paid",
+        createdAt: "2026-08-19T00:00:00.000Z",
+      },
+    ],
+  });
+  assert.equal(listed.orders[0]?.amountCents, 1990);
+  const persisted = JSON.stringify(persistableClaudeState(listed));
+  assert.doesNotMatch(persisted, /"paying"/);
+  assert.doesNotMatch(persisted, /"orders"/);
+});
+
 test("the next project name increments when my-project is taken", () => {
   assert.equal(nextProjectName([]), "my-project");
   assert.equal(nextProjectName(["my-project"]), "my-project-2");

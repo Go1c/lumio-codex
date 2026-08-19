@@ -1,5 +1,12 @@
-import { fetchClaudeEntitlement } from "../invoke.ts";
+import {
+  LumioCommandError,
+  fetchClaudeEntitlement,
+  fetchClaudePlan,
+  listClaudeOrders,
+  payClaudeWithBalance,
+} from "../invoke.ts";
 import type { LumioAccountSummary } from "../types.ts";
+import { ACCOUNT_INSUFFICIENT_BALANCE_CODE } from "../state.ts";
 import {
   fetchClaudeEntitlementFromControlPlane,
   hasClaudeEntitlement,
@@ -20,6 +27,17 @@ import {
   type ClaudeSshArgs,
 } from "./api.ts";
 import type { ClaudeConflictResolution, ClaudeEntitlement, ClaudeEntitlementStatus } from "./types.ts";
+import { DEFAULT_CLAUDE_PLAN_CENTS } from "./types.ts";
+
+export { DEFAULT_CLAUDE_PLAN_CENTS };
+
+export function formatClaudePlanYuan(cents: number): string {
+  return (cents / 100).toFixed(2).replace(/\.?0+$/, "");
+}
+
+export function formatClaudeOrderYuan(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
 import {
   dispatchClaude,
   draftPassword,
@@ -113,6 +131,52 @@ export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null
     entitlement,
     controlUnreachable: controlUnreachable && !hasClaudeEntitlement(entitlement),
   });
+  const plan = await fetchClaudePlan().catch(() => null);
+  const amountCents = plan?.amountCents;
+  dispatchClaude({
+    type: "plan-loaded",
+    amountCents: typeof amountCents === "number" && amountCents > 0 ? amountCents : DEFAULT_CLAUDE_PLAN_CENTS,
+  });
+}
+
+export async function payClaudeSubscribe(account: LumioAccountSummary | null): Promise<void> {
+  if (getClaudeState().paying) return;
+  dispatchClaude({ type: "pay-started" });
+  try {
+    await payClaudeWithBalance();
+    await hydrateClaudeWorkspace(account);
+    dispatchClaude({ type: "pay-finished" });
+  } catch (error) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "UNKNOWN";
+    dispatchClaude({
+      type: "pay-failed",
+      errorCode,
+      forceRecharge: errorCode === ACCOUNT_INSUFFICIENT_BALANCE_CODE,
+    });
+    throw error;
+  }
+}
+
+export async function loadClaudeOrders(): Promise<void> {
+  const items = await listClaudeOrders();
+  dispatchClaude({
+    type: "orders-loaded",
+    orders: items.map((item) => ({
+      orderNo: item.orderNo,
+      amountCents: item.amountCents,
+      status: item.status,
+      paidAt: item.paidAt ?? undefined,
+      createdAt: item.createdAt,
+    })),
+  });
+}
+
+export function toggleClaudeOrders(): void {
+  const open = !getClaudeState().ordersOpen;
+  dispatchClaude({ type: "orders-toggled", open });
+  if (open) {
+    void loadClaudeOrders().catch(() => undefined);
+  }
 }
 
 export function cancelClaudeConnect(): void {
