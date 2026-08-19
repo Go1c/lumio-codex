@@ -18,7 +18,7 @@ import { GUIDES } from "@/guides";
 import { GUIDES_EN } from "@/guides.en";
 
 /** GitHub 仓库：结构化数据用它做实体绑定，和同名无关站点区分开。 */
-export const REPO_URL = "https://github.com/Go1c/lumio-codex";
+export const REPO_URL = "https://github.com/LumioGames/lumio-codex";
 const UPSTREAM_URL = "https://github.com/BigPizzaV3/CodexPlusPlus";
 const LAST_REVIEWED = "2026-08-17";
 

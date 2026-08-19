@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="License" src="https://img.shields.io/github/license/Go1c/lumio-codex">
+  <img alt="License" src="https://img.shields.io/github/license/LumioGames/lumio-codex">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-orange">
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2.x-24C8DB">
 </p>
@@ -29,7 +29,9 @@
 3. [官网部署](docs/ops/02-website-deploy.md)  
 4. [版本发布与更新提醒](docs/ops/03-release.md)  
 5. [后台 API（Sub2API）](docs/ops/04-backend.md)  
-6. [日常维护与文档同步](docs/ops/05-maintenance.md)
+6. [日常维护与文档同步](docs/ops/05-maintenance.md)  
+7. [Code signing policy](docs/ops/06-code-signing-policy.md) — Windows 签名政策（SignPath）
+8. [Microsoft Store 与双轨分发](docs/ops/07-microsoft-store.md) — 官网/GitHub Release vs 商店 MSIX
 
 ## 产品流程
 
@@ -65,9 +67,11 @@ BestCodex **不下载、不修改，也不捆绑官方 Codex / ChatGPT 应用**�
 - `LumioCodex-<version>-macos-arm64-internal-unsigned.dmg`
 - `LumioCodex-<version>-macos-x64-internal-unsigned.dmg`
 
-这些制品没有生产级代码签名，只用于受控内测。不要将它们镜像为公开稳定版，也不要关闭系统安全机制来扩大分发。
+这些制品默认没有生产级代码签名，只用于受控内测。`publish` / tag / 手动触发且配置了 SignPath 时，Windows 会改出不带 `internal-unsigned` 的已签名文件名（见 [Code signing policy](docs/ops/06-code-signing-policy.md)）。不要将内部通道镜像为公开稳定版，也不要关闭系统安全机制来扩大分发。
 
-正式发布后，[GitHub Releases](https://github.com/Go1c/lumio-codex/releases) 是版本、Tag、校验值和签名制品的唯一权威来源；S3 HTTPS 下载域名只同步同一批经过校验的制品。当前公开 Release 工作流会在签名前置条件未满足时直接阻断。
+Windows CI 另产一份商店轨脚手架 `LumioCodex-<version>-windows-x64-store-unsigned.msix`（Identity 占位、包未签名），不是上表四件内部测试包，也不走 SignPath。
+
+正式发布后，[GitHub Releases](https://github.com/LumioGames/lumio-codex/releases) 是版本、Tag、校验值和签名制品的唯一权威来源；S3 HTTPS 下载域名只同步同一批经过校验的制品。当前公开 Release 工作流会在签名前置条件未满足时直接阻断。
 
 ## 产品边界
 
@@ -89,7 +93,7 @@ BestCodex 精简模式不公开 Provider、Base URL、Key、协议、多供应�
 需要 Node.js 22、稳定版 Rust、Tauri 2 平台依赖，以及用于端到端测试的官方桌面应用。不要把真实凭据写入测试或提交。完整命令与打安装包步骤见 **[docs/ops/01-local-build.md](docs/ops/01-local-build.md)**。
 
 ```bash
-git clone https://github.com/Go1c/lumio-codex.git
+git clone https://github.com/LumioGames/lumio-codex.git
 cd lumio-codex/apps/codex-plus-manager
 npm ci
 npm run check
@@ -120,7 +124,7 @@ crates/codex-plus-data/        本地数据层
 site/                          旧官网静态站（历史 `lumio.games`，用户可见站点已是 bestcodex.app）
 docs/ops/                      部署 / 打包 / 发版 / 后台维护
 assets/brand/                  品牌源图（权威图标 `bestcodex-icon.jpg`）
-scripts/installer/windows/     Windows NSIS 内测安装脚本
+scripts/installer/windows/     Windows NSIS 内测安装脚本 + MSIX 脚手架
 scripts/installer/macos/       macOS DMG 内测打包脚本
 .spec/                         Agent 规则与知识库
 ```

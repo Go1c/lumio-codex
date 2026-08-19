@@ -21,8 +21,8 @@ https://api.lumio.games/
 |-------------|------|----------|
 | `API_BASE_URL` | `https://api.lumio.games/` | **未变**，且不允许变——存量客户端硬编码 |
 | `PAYMENT_PATH` | `/purchase`（拼出 `https://api.lumio.games/purchase`） | 未变 |
-| `SITE_BASE_URL` | `https://codex.bestcodex.app` | **已改**：产品站从 `lumio.games` 迁到 `bestcodex.app` 子域。用户可见站点是 `https://bestcodex.app`，帮助 `https://bestcodex.app/help` |
-| `RELEASES_PAGE_URL` | `https://github.com/Go1c/lumio-codex/releases` | 未变 |
+| `SITE_BASE_URL` | `https://bestcodex.app` | **已改**：产品站从 `lumio.games` 迁到 `bestcodex.app`。用户可见站点是 `https://bestcodex.app`，帮助 `https://bestcodex.app/help` |
+| `RELEASES_PAGE_URL` | `https://github.com/LumioGames/lumio-codex/releases` | **已改**：仓库迁到 `LumioGames` |
 
 `SITE_BASE_URL` 只是营销 / 下载引导站点，改它不影响任何接口地址；充值、支持、
 重置密码一律走 `API_BASE_URL`。

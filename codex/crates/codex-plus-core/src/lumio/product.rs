@@ -10,13 +10,13 @@ pub const API_BASE_URL: &str = "https://api.lumio.games/";
 pub const SITE_BASE_URL: &str = "https://bestcodex.app";
 /// 充值页路径：相对 `API_BASE_URL`（`https://api.lumio.games/purchase`），禁止挂到官网。
 pub const PAYMENT_PATH: &str = "/purchase";
-pub const RELEASES_PAGE_URL: &str = "https://github.com/Go1c/lumio-codex/releases";
+pub const RELEASES_PAGE_URL: &str = "https://github.com/LumioGames/lumio-codex/releases";
 pub const GITHUB_LATEST_RELEASE_API: &str =
-    "https://api.github.com/repos/Go1c/lumio-codex/releases/latest";
+    "https://api.github.com/repos/LumioGames/lumio-codex/releases/latest";
 /// `/releases/latest` 只覆盖非 prerelease 的正式 Release；内测渠道只发 prerelease
 /// 时它恒 404，更新检查回退读这个列表（按发布时间倒序、含 prerelease）。
 pub const GITHUB_RELEASES_LIST_API: &str =
-    "https://api.github.com/repos/Go1c/lumio-codex/releases?per_page=10";
+    "https://api.github.com/repos/LumioGames/lumio-codex/releases?per_page=10";
 pub const DESKTOP_KEY_NAME: &str = "BestCodex Desktop";
 
 pub fn payment_url() -> String {

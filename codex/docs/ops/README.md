@@ -18,6 +18,8 @@
 | [03-release.md](./03-release.md) | 版本号、GitHub Release、更新提醒、签名门槛 |
 | [04-backend.md](./04-backend.md) | 后台 `api.lumio.games`（Sub2API）与桌面端契约 |
 | [05-maintenance.md](./05-maintenance.md) | 日常维护清单、文档如何保持同步 |
+| [06-code-signing-policy.md](./06-code-signing-policy.md) | Windows 代码签名政策（SignPath）与申请步骤 |
+| [07-microsoft-store.md](./07-microsoft-store.md) | Microsoft Store 与 Windows 双轨分发 / 签名（NSIS+ZIP vs unsigned MSIX） |
 | [`docs/ops/`（根）](../../../docs/ops/README.md) | 统一官网三站部署、域名 / DNS 切换、上线验收 |
 
 ## 线上拓扑（当前）
@@ -27,7 +29,7 @@
 用户浏览器  ──► https://codex.bestcodex.app   （web/apps/codex，Codex 产品站）
 用户桌面 App ──► https://api.lumio.games/     （Sub2API，独立仓库；地址硬编码，不可变更）
 用户桌面 App ──► 本机官方 Codex 应用
-更新提醒     ──► GitHub Releases (Go1c/lumio-codex)
+更新提醒     ──► GitHub Releases (LumioGames/lumio-codex)
 下载制品     ──► S3 CDN（latest-internal.json 指针）/ GitHub Releases
 ```
 
@@ -49,13 +51,17 @@
 ## 发布通道（务必分清）
 
 1. **内部未签名包（当前可走）**  
-   推 `publish` 或跑 workflow `Internal unsigned build artifacts`，产物带 `-internal-unsigned`，保留 14 天。用于受控内测。
+   推 `publish` 或跑 workflow `Internal unsigned build artifacts`。PR 与未配置 SignPath 时产物带 `-internal-unsigned`；发布路径配了 SignPath 后 Windows 改为已签名文件名。保留 14 天。用于受控内测。
 
 2. **公开正式包（签名门槛未开）**  
-   workflow `Public release gate` 会故意失败，直到 Apple Developer ID + 公证、Windows 代码签名、受保护 CI 凭据、S3 更新源与回滚演练齐备。**未满足前不要宣称「正式公开安装包已上线」。**
+   workflow `Public release gate` 会故意失败，直到 Apple Developer ID + 公证、Windows 代码签名在公开通道落地、受保护 CI 凭据、S3 更新源与回滚演练齐备。**未满足前不要宣称「正式公开安装包已上线」。**  
+   Windows 可在内部通道用 SignPath 签名（见 [06](./06-code-signing-policy.md)）；那不是公开闸门。
 
 3. **更新提醒（已接通）**  
-   客户端 `lumio_check_update` 读 `https://api.github.com/repos/Go1c/lumio-codex/releases/latest`。只有打出 GitHub Release（带 semver tag）后，首页才会提示新版本。
+   客户端 `lumio_check_update` 读 `https://api.github.com/repos/LumioGames/lumio-codex/releases/latest`。只有打出 GitHub Release（带 semver tag）后，首页才会提示新版本。
+
+4. **Microsoft Store（平行轨，Identity 占位中）**  
+   CI 另产 `LumioCodex-*-windows-x64-store-unsigned.msix`，交 Partner Center 后由微软重签。**不替代**官网 / GitHub Release，也不走 SignPath。流程见 [07](./07-microsoft-store.md)。
 
 ## 推荐上线顺序
 

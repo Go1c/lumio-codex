@@ -8,7 +8,7 @@
 | 每个桌面版本 | 走 [03-release.md](./03-release.md) 检查清单 |
 | 每周 | 抽测生产 API + 官网 + 一台上安装的内测包冷启动 |
 | 每月 | 证书到期、磁盘、Sub2API 备份、GitHub artifact 是否还够用 |
-| 签名证书就绪时 | 单独立项打开 Public release gate，改 [03](./03-release.md) §4 |
+| 签名证书就绪时 | Windows 内部签见 [06](./06-code-signing-policy.md)；打开公开闸门另立项，改 [03](./03-release.md) §5 |
 
 ## 2. 三条生产线怎么养
 
@@ -40,7 +40,8 @@
 |------------|----------|
 | 打包脚本 / CI workflow / 产物名 | [01](./01-local-build.md)、必要时根 README「内部测试包」 |
 | `site/` 或域名 / Pages | [02](./02-website-deploy.md) |
-| 版本策略 / Release / 更新提醒 / 签名 | [03](./03-release.md) |
+| 版本策略 / Release / 更新提醒 / 签名 | [03](./03-release.md)；SignPath 见 [06](./06-code-signing-policy.md)；商店轨见 [07](./07-microsoft-store.md) |
+| 商店上架 / MSIX / Partner Center | [07](./07-microsoft-store.md)；决策 [0011](../../../.spec/decisions/0011-windows-msix-store-scaffold.md) |
 | API 基址、支付方式、后台依赖 | [04](./04-backend.md)、`product.rs` 注释 |
 | 分支策略、发版节奏 | 本文件 + [ops/README.md](./README.md) |
 | 产品行为 / 文案基线 | `docs/specs/…`、`.spec/knowledge/features/…` |
@@ -64,7 +65,7 @@
 1. 用户是否还能 **离线启动官方 Codex**（本机配置健康时）  
 2. 认证 / 刷新令牌是否大面积失败 → 查 API  
 3. 充值是否 404 → 查 `https://api.lumio.games/purchase` 与后台支付  
-4. 错误发版 → 按 [03](./03-release.md) §6 回滚  
+4. 错误发版 → 按 [03](./03-release.md) §7 回滚  
 5. 事后：在 `.spec/knowledge/lessons.md` 记复发项（同类第二次才收录）  
 
 ## 6. 仓库内文档地图
