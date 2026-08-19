@@ -17,13 +17,21 @@ import { GUIDES } from "./guides";
 import {
   BAIDU_SITE_VERIFICATION,
   BING_SITE_VERIFICATION,
+  GOOGLE_SITE_VERIFICATION,
   SEO_ROUTES,
   absoluteUrl,
   seoForPath,
   siteOrigin,
 } from "./seo";
 
-export { BAIDU_SITE_VERIFICATION, BING_SITE_VERIFICATION, SEO_ROUTES, absoluteUrl, siteOrigin };
+export {
+  BAIDU_SITE_VERIFICATION,
+  BING_SITE_VERIFICATION,
+  GOOGLE_SITE_VERIFICATION,
+  SEO_ROUTES,
+  absoluteUrl,
+  siteOrigin,
+};
 
 export function renderRoute(path: string): string {
   return renderToString(
