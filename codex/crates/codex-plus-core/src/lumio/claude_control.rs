@@ -8,11 +8,15 @@ use std::time::Duration;
 pub const CLAUDE_CONTROL_API: &str = "https://api.cc.bestcodex.app";
 const SESSION_EXPIRED: &str = "AUTH_SESSION_EXPIRED";
 const SERVICE_UNAVAILABLE: &str = "SERVICE_UNAVAILABLE";
+const SERVICE_DEBIT_UNAVAILABLE: &str = "SERVICE_DEBIT_UNAVAILABLE";
 const ACCOUNT_INSUFFICIENT_BALANCE: &str = "ACCOUNT_INSUFFICIENT_BALANCE";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudeEntitlementSnapshot {
     pub status: String,
+    pub expires_at: Option<String>,
+    pub days_left: Option<i64>,
+    pub expiring_soon: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,17 +31,37 @@ struct EntitlementBody {
 struct EntitlementInner {
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
+    #[serde(default)]
+    days_left: Option<i64>,
+    #[serde(default)]
+    expiring_soon: Option<bool>,
+}
+
+fn snapshot_from_inner(
+    status: String,
+    inner: Option<&EntitlementInner>,
+) -> ClaudeEntitlementSnapshot {
+    ClaudeEntitlementSnapshot {
+        status,
+        expires_at: inner.and_then(|item| item.expires_at.clone()),
+        days_left: inner.and_then(|item| item.days_left),
+        expiring_soon: inner.and_then(|item| item.expiring_soon),
+    }
 }
 
 pub fn parse_entitlement_json(body: &str) -> Result<ClaudeEntitlementSnapshot, String> {
     let parsed: EntitlementBody =
         serde_json::from_str(body).map_err(|_| SERVICE_UNAVAILABLE.to_string())?;
+    let inner = parsed.data.as_ref();
     let status = parsed
         .status
-        .or_else(|| parsed.data.and_then(|inner| inner.status))
+        .clone()
+        .or_else(|| inner.and_then(|item| item.status.clone()))
         .unwrap_or_default();
     match status.as_str() {
-        "active" | "trialing" | "none" | "expired" => Ok(ClaudeEntitlementSnapshot { status }),
+        "active" | "trialing" | "none" | "expired" => Ok(snapshot_from_inner(status, inner)),
         _ => Err(SERVICE_UNAVAILABLE.to_string()),
     }
 }
@@ -179,6 +203,7 @@ pub struct ClaudePayEntitlement {
     pub status: String,
     pub expires_at: Option<String>,
     pub days_left: Option<i64>,
+    pub expiring_soon: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +249,8 @@ struct RawEntitlement {
     expires_at: Option<String>,
     #[serde(default)]
     days_left: Option<i64>,
+    #[serde(default)]
+    expiring_soon: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -286,11 +313,16 @@ fn from_raw_entitlement(entitlement: RawEntitlement) -> ClaudePayEntitlement {
         status: entitlement.status,
         expires_at: entitlement.expires_at,
         days_left: entitlement.days_left,
+        expiring_soon: entitlement.expiring_soon,
     }
 }
 
 fn is_insufficient_balance_code(code: &str) -> bool {
     code.eq_ignore_ascii_case("insufficient_balance")
+}
+
+fn is_debit_unavailable_code(code: &str) -> bool {
+    code.eq_ignore_ascii_case("debit_unavailable")
 }
 
 pub fn map_billing_error(status: u16, body: &str) -> String {
@@ -306,6 +338,18 @@ pub fn map_billing_error(status: u16, body: &str) -> String {
         {
             return ACCOUNT_INSUFFICIENT_BALANCE.to_string();
         }
+        if status == 503
+            && parsed
+                .error
+                .code
+                .as_deref()
+                .is_some_and(is_debit_unavailable_code)
+        {
+            return SERVICE_DEBIT_UNAVAILABLE.to_string();
+        }
+    }
+    if (500..600).contains(&status) {
+        return SERVICE_UNAVAILABLE.to_string();
     }
     SERVICE_UNAVAILABLE.to_string()
 }
@@ -417,18 +461,17 @@ fn parse_heartbeat_json(body: &str) -> Result<ClaudeEntitlementSnapshot, String>
     }
     let parsed: HeartbeatBody =
         serde_json::from_str(body).map_err(|_| SERVICE_UNAVAILABLE.to_string())?;
-    let status = parsed
-        .entitlement
-        .and_then(|inner| inner.status)
-        .or_else(|| {
-            parsed
-                .data
-                .and_then(|inner| inner.entitlement)
-                .and_then(|inner| inner.status)
-        })
+    let inner = parsed.entitlement.as_ref().or_else(|| {
+        parsed
+            .data
+            .as_ref()
+            .and_then(|item| item.entitlement.as_ref())
+    });
+    let status = inner
+        .and_then(|item| item.status.clone())
         .unwrap_or_default();
     match status.as_str() {
-        "active" | "trialing" | "none" | "expired" => Ok(ClaudeEntitlementSnapshot { status }),
+        "active" | "trialing" | "none" | "expired" => Ok(snapshot_from_inner(status, inner)),
         _ => Err(SERVICE_UNAVAILABLE.to_string()),
     }
 }
@@ -441,6 +484,16 @@ mod tests {
     fn unwraps_data_envelope() {
         let body = r#"{"data":{"status":"active","days_left":12}}"#;
         assert_eq!(parse_entitlement_json(body).unwrap().status, "active");
+    }
+
+    #[test]
+    fn entitlement_keeps_expires_at_and_days_left() {
+        let body = r#"{"data":{"status":"active","expires_at":"2026-09-18T00:00:00Z","days_left":30,"expiring_soon":false}}"#;
+        let snap = parse_entitlement_json(body).unwrap();
+        assert_eq!(snap.status, "active");
+        assert_eq!(snap.expires_at.as_deref(), Some("2026-09-18T00:00:00Z"));
+        assert_eq!(snap.days_left, Some(30));
+        assert_eq!(snap.expiring_soon, Some(false));
     }
 
     #[test]
@@ -464,6 +517,10 @@ mod tests {
         assert_eq!(snap.order.status, "paid");
         assert_eq!(snap.entitlement.status, "active");
         assert_eq!(snap.entitlement.days_left, Some(30));
+        assert_eq!(
+            snap.entitlement.expires_at.as_deref(),
+            Some("2026-09-18T00:00:00Z")
+        );
     }
 
     #[test]
@@ -481,6 +538,18 @@ mod tests {
     #[test]
     fn pay_maps_401_to_session_expired() {
         assert_eq!(map_billing_error(401, "{}"), "AUTH_SESSION_EXPIRED");
+    }
+
+    #[test]
+    fn pay_maps_debit_unavailable_without_calling_it_an_outage() {
+        let body = r#"{"error":{"code":"debit_unavailable","message":"扣费服务暂时不可用，请稍后重试。"}}"#;
+        assert_eq!(map_billing_error(503, body), "SERVICE_DEBIT_UNAVAILABLE");
+        assert_ne!(map_billing_error(503, body), "SERVICE_UNAVAILABLE");
+    }
+
+    #[test]
+    fn pay_maps_unknown_5xx_to_service_unavailable() {
+        assert_eq!(map_billing_error(502, "{}"), "SERVICE_UNAVAILABLE");
     }
 
     #[test]

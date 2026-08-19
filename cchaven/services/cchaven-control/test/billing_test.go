@@ -595,6 +595,84 @@ func TestPayWithBalanceResumesPendingAfterLocalFailure(t *testing.T) {
 	}
 }
 
+func TestPayWithBalanceAcceptsScale8WalletReceipt(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 603.36)
+	env.Sub2API.SetDebitBalanceScale8(true)
+
+	resp := payWith(client, "scale8-ok").ExpectStatus(http.StatusOK)
+	if resp.Object("order")["status"] != "paid" {
+		t.Errorf("order.status = %v, want paid", resp.Object("order")["status"])
+	}
+	if resp.Object("entitlement")["status"] != "active" {
+		t.Errorf("entitlement.status = %v, want active", resp.Object("entitlement")["status"])
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+	if got := env.Sub2API.DebitChargeCount(); got != 1 {
+		t.Errorf("真实扣款 = %d, want 1", got)
+	}
+	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 58346 {
+		t.Errorf("余额应剩 583.46 元, 剩余分 = %d", got)
+	}
+}
+
+func TestPayWithBalanceRecoversAfterUnparseableScale8Receipt(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 603.36)
+	env.Sub2API.SetDebitBalanceScale8(true)
+	env.Sub2API.SetDebitReceiptUnparseable(true)
+
+	const key = "resume-scale8"
+	first := payWith(client, key)
+	if first.ErrorCode() != "debit_unavailable" {
+		t.Fatalf("解析失败应 503 debit_unavailable, got %s status=%d", first.ErrorCode(), first.Status)
+	}
+	if got := purchaseEventCount(t, env, userID); got != 0 {
+		t.Fatalf("解析失败不得入账, events=%d", got)
+	}
+	orders := client.Get("/api/v1/billing/orders").ExpectStatus(http.StatusOK).Array("items")
+	if len(orders) != 1 {
+		t.Fatalf("应留下 1 张 pending 单, got %#v", orders)
+	}
+	pending, _ := orders[0].(map[string]any)
+	if pending["status"] != "pending" {
+		t.Fatalf("订单应保持 pending, got %v", pending["status"])
+	}
+	orderNo, _ := pending["order_no"].(string)
+	if orderNo == "" {
+		t.Fatal("pending 单缺少 order_no")
+	}
+	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 58346 {
+		t.Fatalf("上游应已扣 19.90, 剩余分 = %d", got)
+	}
+	if got := env.Sub2API.DebitChargeCount(); got != 1 {
+		t.Fatalf("真实扣款 = %d, want 1", got)
+	}
+
+	env.Sub2API.SetDebitReceiptUnparseable(false)
+	again := payWith(client, key).ExpectStatus(http.StatusOK)
+	if again.Object("order")["order_no"] != orderNo {
+		t.Errorf("必须复用原 order_no %s, got %v", orderNo, again.Object("order")["order_no"])
+	}
+	if again.Object("order")["status"] != "paid" {
+		t.Errorf("重放后订单应 paid, got %v", again.Object("order")["status"])
+	}
+	if again.Object("entitlement")["status"] != "active" {
+		t.Errorf("重放后应 active, got %v", again.Object("entitlement")["status"])
+	}
+	if got := again.Object("entitlement")["days_left"]; got != float64(30) {
+		t.Errorf("days_left = %v, want 30", got)
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+	if got := env.Sub2API.DebitChargeCount(); got != 1 {
+		t.Errorf("重放不得再扣, 真实扣款 = %d", got)
+	}
+}
+
 func TestPayWithBalanceFollowsLivePlanPrice(t *testing.T) {
 	env := testsupport.New(t)
 	env.SetOpsConfig("pricing.monthly", `{"amount_cents": 9900, "currency": "CNY"}`)

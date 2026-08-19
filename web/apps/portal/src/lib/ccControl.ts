@@ -55,6 +55,10 @@ function url(path: string, query: URLSearchParams): string {
   return `${ccControlBaseUrl()}/api/v1${path}?${query.toString()}`;
 }
 
+function urlPath(path: string): string {
+  return `${ccControlBaseUrl()}/api/v1${path}`;
+}
+
 async function send(target: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(target, init);
@@ -141,4 +145,69 @@ export async function approveAuthorization(
 
 export function messageOfControlError(error: unknown): string {
   return error instanceof CcControlError ? error.message : UNAVAILABLE;
+}
+
+export type ClaudeEntitlementStatus = "active" | "trialing" | "expired" | "none";
+
+export interface ClaudeEntitlement {
+  status: ClaudeEntitlementStatus;
+  kind: string;
+  expiresAt: string | null;
+  daysLeft: number;
+  expiringSoon: boolean;
+}
+
+export interface ClaudeOrder {
+  orderNo: string;
+  amountCents: number;
+  currency: string;
+  channel: string;
+  status: string;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+function entitlementStatus(value: unknown): ClaudeEntitlementStatus {
+  if (value === "active" || value === "trialing" || value === "expired" || value === "none") {
+    return value;
+  }
+  return "none";
+}
+
+/** GET /api/v1/me/entitlement。权威有效期只在控制面，门户只展示。 */
+export async function fetchClaudeEntitlement(accessToken: string): Promise<ClaudeEntitlement> {
+  const response = await send(urlPath("/me/entitlement"), {
+    method: "GET",
+    headers: authHeaders(accessToken),
+  });
+  const data = await readData(response);
+  return {
+    status: entitlementStatus(data.status),
+    kind: str(data.kind),
+    expiresAt: str(data.expires_at) || null,
+    daysLeft: num(data.days_left),
+    expiringSoon: data.expiring_soon === true,
+  };
+}
+
+/** GET /api/v1/billing/orders。开通记录，不是套餐页。 */
+export async function fetchClaudeOrders(accessToken: string): Promise<ClaudeOrder[]> {
+  const response = await send(urlPath("/billing/orders"), {
+    method: "GET",
+    headers: authHeaders(accessToken),
+  });
+  const data = await readData(response);
+  const items = Array.isArray(data.items) ? data.items : [];
+  return items.map((item) => {
+    const order = (item ?? {}) as Json;
+    return {
+      orderNo: str(order.order_no),
+      amountCents: num(order.amount_cents),
+      currency: str(order.currency, "CNY"),
+      channel: str(order.channel),
+      status: str(order.status),
+      paidAt: str(order.paid_at) || null,
+      createdAt: str(order.created_at),
+    };
+  });
 }

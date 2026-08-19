@@ -126,6 +126,22 @@
   font-size: 14px;
 }
 
+.lumio-claude-entitlement {
+  margin: 0 0 14px;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.lumio-claude-entitlement.is-expiring {
+  color: var(--cc-danger);
+  font-weight: 600;
+}
+
+.lumio-claude-rail .lumio-claude-entitlement {
+  margin: 0 12px 10px;
+}
+
 .lumio-claude-orders {
   margin-top: 16px;
 }

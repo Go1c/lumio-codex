@@ -8,6 +8,7 @@ import {
 import type { LumioAccountSummary } from "../types.ts";
 import { ACCOUNT_INSUFFICIENT_BALANCE_CODE } from "../state.ts";
 import {
+  entitlementFromSnapshot,
   fetchClaudeEntitlementFromControlPlane,
   hasClaudeEntitlement,
   resolveClaudeEntitlement,
@@ -112,7 +113,11 @@ export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null
     const payload = await fetchClaudeEntitlement();
     const status = asEntitlementStatus(payload?.status);
     if (status) {
-      remote = { status, source: "control-plane" };
+      remote = entitlementFromSnapshot(status, {
+        expiresAt: payload?.expiresAt,
+        daysLeft: payload?.daysLeft,
+        expiringSoon: payload?.expiringSoon,
+      });
     } else {
       controlUnreachable = true;
     }
@@ -137,13 +142,25 @@ export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null
     type: "plan-loaded",
     amountCents: typeof amountCents === "number" && amountCents > 0 ? amountCents : DEFAULT_CLAUDE_PLAN_CENTS,
   });
+  await loadClaudeOrders().catch(() => undefined);
 }
 
 export async function payClaudeSubscribe(account: LumioAccountSummary | null): Promise<void> {
   if (getClaudeState().paying) return;
   dispatchClaude({ type: "pay-started" });
   try {
-    await payClaudeWithBalance();
+    const paid = await payClaudeWithBalance();
+    const status = asEntitlementStatus(paid.status);
+    if (status) {
+      dispatchClaude({
+        type: "entitlement-resolved",
+        entitlement: entitlementFromSnapshot(status, {
+          expiresAt: paid.expiresAt,
+          daysLeft: paid.daysLeft,
+          expiringSoon: paid.expiringSoon,
+        }),
+      });
+    }
     await hydrateClaudeWorkspace(account);
     dispatchClaude({ type: "pay-finished" });
   } catch (error) {

@@ -19,16 +19,19 @@ import (
 type FakeSub2API struct {
 	server *httptest.Server
 
-	mu               sync.Mutex
-	byToken          map[string]sub2api.Identity
-	nextID           int64
-	nextTxn          int64
-	unavailable      bool
-	debitUnavailable bool
-	debitNextReason  string
-	debitNextStatus  int
-	debitByKey       map[string]sub2api.DebitResult
-	debitCalls       []DebitCall
+	mu                      sync.Mutex
+	byToken                 map[string]sub2api.Identity
+	nextID                  int64
+	nextTxn                 int64
+	unavailable             bool
+	debitUnavailable        bool
+	debitNextReason         string
+	debitNextStatus         int
+	debitByKey              map[string]sub2api.DebitResult
+	debitCalls              []DebitCall
+	debitCharges            int
+	debitBalanceScale8      bool
+	debitReceiptUnparseable bool
 }
 
 // DebitCall 是一次打到假扣费端点的请求记录。
@@ -140,7 +143,7 @@ func (f *FakeSub2API) handleDebit(w http.ResponseWriter, r *http.Request) {
 
 	if key != "" {
 		if replay, hit := f.debitByKey[idempotencySlot(token, key)]; hit {
-			writeDebitOK(w, replay)
+			f.writeDebitOK(w, replay)
 			return
 		}
 	}
@@ -169,10 +172,11 @@ func (f *FakeSub2API) handleDebit(w http.ResponseWriter, r *http.Request) {
 	if key != "" {
 		f.debitByKey[idempotencySlot(token, key)] = result
 	}
-	writeDebitOK(w, result)
+	f.debitCharges++
+	f.writeDebitOK(w, result)
 }
 
-func writeDebitOK(w http.ResponseWriter, result sub2api.DebitResult) {
+func (f *FakeSub2API) writeDebitOK(w http.ResponseWriter, result sub2api.DebitResult) {
 	amount, err := sub2api.FormatYuan(result.AmountCents)
 	if err != nil {
 		amount = "0.00"
@@ -183,9 +187,28 @@ func writeDebitOK(w http.ResponseWriter, result sub2api.DebitResult) {
 			balance = formatted
 		}
 	}
+	if f.debitBalanceScale8 {
+		balance = padYuanScale8(balance)
+	}
 	w.Header().Set("Content-Type", "application/json")
+	if f.debitReceiptUnparseable {
+		_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"txn_id":%q,"amount":%s,"balance":%q,"currency":%q}}`,
+			result.TxnID, amount, balance, result.Currency)
+		return
+	}
 	_, _ = fmt.Fprintf(w, `{"code":0,"message":"success","data":{"txn_id":%q,"amount":%s,"balance":%s,"currency":%q}}`,
 		result.TxnID, amount, balance, result.Currency)
+}
+
+func padYuanScale8(value string) string {
+	whole, frac, dotted := strings.Cut(value, ".")
+	if !dotted {
+		return whole + ".00000000"
+	}
+	for len(frac) < 8 {
+		frac += "0"
+	}
+	return whole + "." + frac
 }
 
 func idempotencySlot(token, key string) string {
@@ -270,6 +293,28 @@ func (f *FakeSub2API) FailNextDebit(status int, reason string) {
 	defer f.mu.Unlock()
 	f.debitNextStatus = status
 	f.debitNextReason = reason
+}
+
+// SetDebitBalanceScale8 让成功回执的余额带 numeric(20,8) 尾零。
+func (f *FakeSub2API) SetDebitBalanceScale8(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.debitBalanceScale8 = on
+}
+
+// SetDebitReceiptUnparseable 把回执余额写成字符串，模拟解析失败。
+// 真实扣款仍会发生；调用方必须用同一把 Idempotency-Key 重放。
+func (f *FakeSub2API) SetDebitReceiptUnparseable(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.debitReceiptUnparseable = on
+}
+
+// DebitChargeCount 是真正改余额的次数，不含幂等重放。
+func (f *FakeSub2API) DebitChargeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.debitCharges
 }
 
 // SetBalance 设定令牌对应用户的账户余额（元）。

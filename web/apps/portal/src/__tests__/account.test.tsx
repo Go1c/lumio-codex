@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearSession, writeSession } from "@lumio/auth";
 
-import { PROFILE, envelope, renderApp, stubFetch } from "@/test/utils";
+import { PROFILE, ccEnvelope, envelope, renderApp, stubFetch } from "@/test/utils";
 
 beforeEach(() => {
   clearSession();
@@ -94,6 +94,125 @@ const AFF_DETAIL = {
     signup_bonus_amount: 0.99,
   },
 };
+
+const ACTIVE_ENTITLEMENT = {
+  status: "active",
+  kind: "paid",
+  expires_at: "2026-09-18T00:00:00Z",
+  days_left: 30,
+  bonus_days_total: 0,
+  expiring_soon: false,
+};
+
+const NONE_ENTITLEMENT = {
+  status: "none",
+  days_left: 0,
+  bonus_days_total: 0,
+  expiring_soon: false,
+};
+
+const EXPIRED_ENTITLEMENT = {
+  status: "expired",
+  kind: "paid",
+  expires_at: "2026-07-01T00:00:00Z",
+  days_left: 0,
+  bonus_days_total: 0,
+  expiring_soon: false,
+};
+
+const PENDING_ORDER = {
+  order_no: "CC20260819-000001",
+  amount_cents: 1990,
+  currency: "CNY",
+  channel: "balance",
+  status: "pending",
+  created_at: "2026-08-19T00:00:00Z",
+};
+
+const PAID_ORDER = {
+  order_no: "CC20260819-000002",
+  amount_cents: 1990,
+  currency: "CNY",
+  channel: "balance",
+  status: "paid",
+  paid_at: "2026-08-19T00:01:00Z",
+  created_at: "2026-08-19T00:00:00Z",
+};
+
+function accountHandlers(extra: Record<string, () => Response> = {}) {
+  return {
+    "/auth/me": () => envelope(PROFILE),
+    "/me/entitlement": () => ccEnvelope(NONE_ENTITLEMENT),
+    "/billing/orders": () => ccEnvelope({ items: [] }),
+    "/user/balance/transactions": () => envelope({ items: [] }),
+    "/user/aff": () => envelope({ ...AFF_DETAIL, rules: undefined }),
+    ...extra,
+  };
+}
+
+describe("账户中心 · Claude 订阅与账单", () => {
+  it("active 显示有效期至本地日期和剩余天数", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(accountHandlers({ "/me/entitlement": () => ccEnvelope(ACTIVE_ENTITLEMENT) }));
+
+    renderApp("/account");
+
+    expect(await screen.findByText(/已订阅 · 有效期至/)).toBeInTheDocument();
+    expect(screen.getByText(/剩余 30 天/)).toBeInTheDocument();
+    expect(screen.queryByText("2026-09-18T00:00:00Z")).not.toBeInTheDocument();
+  });
+
+  it("none 显示未订阅，并说明到桌面开通而不是在门户扣款", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(accountHandlers());
+
+    renderApp("/account");
+
+    expect(await screen.findByText("未订阅")).toBeInTheDocument();
+    expect(screen.getByText(/BestCodex 桌面 Claude Tab 用余额开通/)).toBeInTheDocument();
+    expect(screen.queryByText(/用余额支付/)).not.toBeInTheDocument();
+  });
+
+  it("过期显示已过期", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(accountHandlers({ "/me/entitlement": () => ccEnvelope(EXPIRED_ENTITLEMENT) }));
+
+    renderApp("/account");
+
+    expect(await screen.findByText("订阅已过期")).toBeInTheDocument();
+  });
+
+  it("有 pending 与 paid 单时能看到开通记录", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(
+      accountHandlers({
+        "/billing/orders": () => ccEnvelope({ items: [PENDING_ORDER, PAID_ORDER] }),
+      }),
+    );
+
+    renderApp("/account");
+
+    expect(await screen.findByText("CC20260819-000001")).toBeInTheDocument();
+    expect(screen.getByText("CC20260819-000002")).toBeInTheDocument();
+    expect(screen.getAllByText(/¥19.90/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/处理中，请勿重复支付/)).toBeInTheDocument();
+    expect(screen.getByText(/已支付/)).toBeInTheDocument();
+  });
+
+  it("pending 订单与未开通同时存在时写明不要重复支付", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(
+      accountHandlers({
+        "/billing/orders": () => ccEnvelope({ items: [PENDING_ORDER] }),
+      }),
+    );
+
+    renderApp("/account");
+
+    expect(await screen.findByText("未订阅")).toBeInTheDocument();
+    expect(screen.getByText(/钱可能已扣、权益尚未到账，请勿重复支付/)).toBeInTheDocument();
+  });
+});
 
 describe("账户中心 · 邀请返利", () => {
   it("展示邀请码、额度与 rules 驱动的规则文案，被邀邮箱保持服务端脱敏形态", async () => {

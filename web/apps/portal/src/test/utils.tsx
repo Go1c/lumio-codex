@@ -8,6 +8,11 @@ export function envelope(data: unknown, status = 200): Response {
   return new Response(JSON.stringify({ code: 0, message: "success", data }), { status });
 }
 
+/** CCHaven 控制面信封是 `{data}`，与 Sub2API 不同。 */
+export function ccEnvelope(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify({ data }), { status });
+}
+
 export function failure(status: number, reason: string): Response {
   return new Response(JSON.stringify({ code: status, message: "服务端原文", reason }), { status });
 }

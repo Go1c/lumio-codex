@@ -60,6 +60,18 @@ test("codes added beyond the baseline stay inside the approved domains", () => {
   }
 });
 
+test("debit unavailable is not described as a generic outage", () => {
+  assert.equal(
+    LUMIO_ERROR_COPY.SERVICE_DEBIT_UNAVAILABLE,
+    "扣费服务暂时不可用，请稍后重试。请勿换新单。",
+  );
+  assert.match(lumioErrorLabel("SERVICE_DEBIT_UNAVAILABLE"), /请勿换新单/);
+  assert.notEqual(
+    lumioErrorLabel("SERVICE_DEBIT_UNAVAILABLE"),
+    lumioErrorLabel("SERVICE_UNAVAILABLE"),
+  );
+});
+
 test("gateway account and catalog states get actionable copy instead of outage copy", () => {
   assert.equal(LUMIO_ERROR_COPY.ACCOUNT_INSUFFICIENT_BALANCE, "账户余额不足，请先充值");
   assert.equal(

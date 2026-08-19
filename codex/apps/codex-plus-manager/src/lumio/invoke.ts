@@ -224,14 +224,22 @@ export async function refreshAccount(): Promise<LumioAccountSummary> {
   return runCommand<LumioAccountSummary>(LUMIO_COMMANDS.refreshAccount);
 }
 
-export async function fetchClaudeEntitlement(): Promise<{ status: string } | null> {
-  return runNullableCommand<{ status: string }>("lumio_claude_entitlement");
+export interface ClaudeEntitlementSnapshot {
+  status: string;
+  expiresAt?: string | null;
+  daysLeft?: number | null;
+  expiringSoon?: boolean | null;
+}
+
+export async function fetchClaudeEntitlement(): Promise<ClaudeEntitlementSnapshot | null> {
+  return runNullableCommand<ClaudeEntitlementSnapshot>("lumio_claude_entitlement");
 }
 
 export interface ClaudePayWithBalanceResult {
   status: string;
   expiresAt?: string | null;
   daysLeft?: number | null;
+  expiringSoon?: boolean | null;
   orderNo: string;
 }
 

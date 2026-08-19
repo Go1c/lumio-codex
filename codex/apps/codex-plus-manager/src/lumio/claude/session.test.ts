@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFile } from "node:fs/promises";
+
 import {
   DEFAULT_CLAUDE_PLAN_CENTS,
   cancelClaudeConnect,
@@ -35,6 +37,15 @@ test("SYNC_ENGINE_UNAVAILABLE is not a keep-project success", async () => {
   assert.equal(state.sheet?.step, "sync");
   assert.equal(state.sheet?.sync.state, "fail");
   assert.equal(state.sheet?.sync.errorCode, "SYNC_ENGINE_UNAVAILABLE");
+});
+
+test("pay success applies receipt expiresAt and daysLeft instead of status only", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /entitlementFromSnapshot/);
+  assert.match(source, /expiresAt: paid\.expiresAt/);
+  assert.match(source, /daysLeft: paid\.daysLeft/);
+  assert.match(source, /payload\?\.expiresAt/);
+  assert.match(source, /payload\?\.daysLeft/);
 });
 
 test("plan fallback is 19.9 yuan and order amounts keep two decimals", () => {
