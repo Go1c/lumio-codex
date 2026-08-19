@@ -32,7 +32,15 @@ func ParseYuan(raw string) (int64, error) {
 		return 0, ErrInvalidAmount
 	}
 	if dotted {
-		if frac == "" || len(frac) > 2 || !allDigits(frac) {
+		if frac == "" || !allDigits(frac) {
+			return 0, ErrInvalidAmount
+		}
+		// LumioAPI wallet balance is numeric(20,8) and comes back as 10.10000000.
+		// Trailing zeros are the same amount; extra non-zero digits are not cents.
+		frac = strings.TrimRight(frac, "0")
+		if frac == "" {
+			dotted = false
+		} else if len(frac) > 2 {
 			return 0, ErrInvalidAmount
 		}
 	}
