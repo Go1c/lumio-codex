@@ -49,18 +49,7 @@ function orderStatusLabel(status: string): string {
   return status || "—";
 }
 
-export function ClaudeAccountPanels({ accessToken }: { accessToken?: string }) {
-  if (!accessToken) return null;
-  return (
-    <>
-      <ClaudeSubscriptionCard accessToken={accessToken} />
-      <ClaudeOrdersCard accessToken={accessToken} />
-      <BalanceTransactionsCard accessToken={accessToken} />
-    </>
-  );
-}
-
-function ClaudeSubscriptionCard({ accessToken }: { accessToken: string }) {
+export function ClaudeSubscriptionCard({ accessToken }: { accessToken: string }) {
   const [entitlement, setEntitlement] = useState<ClaudeEntitlement | null>(null);
   const [orders, setOrders] = useState<ClaudeOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +103,7 @@ function ClaudeSubscriptionCard({ accessToken }: { accessToken: string }) {
   );
 }
 
-function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
+export function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
   const [orders, setOrders] = useState<ClaudeOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -143,27 +132,36 @@ function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
       ) : orders.length === 0 ? (
         <p className="note">还没有开通记录。</p>
       ) : (
-        <ul className="plain-list claude-order-list">
-          {orders.map((order) => (
-            <li key={order.orderNo}>
-              <span className="mono">{order.orderNo}</span>
-              {" · "}
-              {formatCentsYuan(order.amountCents)}
-              {" · "}
-              {channelLabel(order.channel)}
-              {" · "}
-              {orderStatusLabel(order.status)}
-              {" · "}
-              {formatLocalCalendarDate(order.createdAt)}
-            </li>
-          ))}
-        </ul>
+        <div className="acct-table-wrap">
+          <table className="acct-table">
+            <thead>
+              <tr>
+                <th>金额</th>
+                <th>状态</th>
+                <th>渠道</th>
+                <th>时间</th>
+                <th>订单号</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order) => (
+                <tr key={order.orderNo}>
+                  <td>{formatCentsYuan(order.amountCents)}</td>
+                  <td>{orderStatusLabel(order.status)}</td>
+                  <td>{channelLabel(order.channel)}</td>
+                  <td>{formatLocalCalendarDate(order.createdAt)}</td>
+                  <td className="mono">{order.orderNo}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </SectionCard>
   );
 }
 
-function BalanceTransactionsCard({ accessToken }: { accessToken: string }) {
+export function BalanceTransactionsCard({ accessToken }: { accessToken: string }) {
   const [items, setItems] = useState<BalanceTransaction[] | null>(null);
   const [hidden, setHidden] = useState(false);
 
@@ -189,18 +187,28 @@ function BalanceTransactionsCard({ accessToken }: { accessToken: string }) {
       ) : items.length === 0 ? (
         <p className="note">暂无流水。这是钱包记录，不是 Claude 订阅时长。</p>
       ) : (
-        <ul className="plain-list claude-order-list">
-          {items.map((row, index) => (
-            <li key={`${row.ref}-${row.createdAt}-${index}`}>
-              {row.purpose || "—"}
-              {" · "}
-              {row.ref || "—"}
-              {" · "}
-              {`¥${row.amount.toFixed(2)}`}
-              {row.createdAt ? ` · ${formatLocalCalendarDate(row.createdAt)}` : ""}
-            </li>
-          ))}
-        </ul>
+        <div className="acct-table-wrap">
+          <table className="acct-table">
+            <thead>
+              <tr>
+                <th>用途</th>
+                <th>金额</th>
+                <th>时间</th>
+                <th>单号</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row, index) => (
+                <tr key={`${row.ref}-${row.createdAt}-${index}`}>
+                  <td>{row.purpose || "—"}</td>
+                  <td>{`¥${row.amount.toFixed(2)}`}</td>
+                  <td>{row.createdAt ? formatLocalCalendarDate(row.createdAt) : "—"}</td>
+                  <td className="mono">{row.ref || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </SectionCard>
   );

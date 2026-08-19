@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearSession, writeSession } from "@lumio/auth";
 
+import { accountTabFromHash } from "@/lib/accountTabs";
 import { PROFILE, ccEnvelope, envelope, renderApp, stubFetch } from "@/test/utils";
 
 beforeEach(() => {
@@ -13,6 +14,16 @@ beforeEach(() => {
 afterEach(() => {
   clearSession();
   vi.unstubAllGlobals();
+});
+
+describe("账户中心页签 hash", () => {
+  it("把 #orders 和旧锚点映射到开通记录，空 hash 落账户", () => {
+    expect(accountTabFromHash("")).toBe("profile");
+    expect(accountTabFromHash("#orders")).toBe("orders");
+    expect(accountTabFromHash("#claude-orders")).toBe("orders");
+    expect(accountTabFromHash("#balance")).toBe("balance");
+    expect(accountTabFromHash("#affiliate")).toBe("affiliate");
+  });
 });
 
 describe("账户中心", () => {
@@ -25,20 +36,18 @@ describe("账户中心", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("已登录时展示邮箱、余额与状态，充值跳 Sub2API 收银台", async () => {
+  it("已登录时用页签分栏，默认账户页签展示邮箱与状态", async () => {
     writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
     stubFetch({ "/auth/me": () => envelope(PROFILE) });
 
     renderApp("/account");
 
     expect(await screen.findByText("user@example.com")).toBeInTheDocument();
-    expect(screen.getByText("¥12.50")).toBeInTheDocument();
-    const topup = screen.getByRole("link", { name: /充值/ });
-    expect(topup.getAttribute("href")).toMatch(/^https:\/\/api\.lumio\.games\/auth\/bridge#/);
-    const hash = new URL(topup.getAttribute("href") ?? "").hash.slice(1);
-    const params = new URLSearchParams(hash);
-    expect(params.get("t")).toBe("at-1");
-    expect(params.get("r")).toBe("/purchase");
+    expect(screen.getByRole("tab", { name: "账户" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "余额" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "开通记录" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "邀请返利" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /充值/ })).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("link", { name: "BestCodex" }).some(
         (link) => link.getAttribute("href") === "https://bestcodex.app/codex",
@@ -47,6 +56,25 @@ describe("账户中心", () => {
     expect(screen.getAllByText(/一个启动器/).length).toBeGreaterThan(0);
     expect(screen.queryByText("Lumio Codex")).not.toBeInTheDocument();
     expect(screen.queryByText("CC避风港")).not.toBeInTheDocument();
+  });
+
+  it("余额页签展示余额，充值跳 Sub2API 收银台", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch({
+      "/auth/me": () => envelope(PROFILE),
+      "/user/balance/transactions": () => envelope({ items: [] }),
+    });
+
+    renderApp("/account");
+    await userEvent.click(await screen.findByRole("tab", { name: "余额" }));
+
+    expect(screen.getByText("¥12.50")).toBeInTheDocument();
+    const topup = screen.getByRole("link", { name: /充值/ });
+    expect(topup.getAttribute("href")).toMatch(/^https:\/\/api\.lumio\.games\/auth\/bridge#/);
+    const hash = new URL(topup.getAttribute("href") ?? "").hash.slice(1);
+    const params = new URLSearchParams(hash);
+    expect(params.get("t")).toBe("at-1");
+    expect(params.get("r")).toBe("/purchase");
   });
 
   it("登出后清掉共享会话 Cookie", async () => {
@@ -151,11 +179,49 @@ function accountHandlers(extra: Record<string, () => Response> = {}) {
 }
 
 describe("账户中心 · Claude 订阅与账单", () => {
+  it("默认账户页签不展示开通记录，#orders 直接打开开通记录页签", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(
+      accountHandlers({
+        "/billing/orders": () => ccEnvelope({ items: [PENDING_ORDER] }),
+      }),
+    );
+
+    renderApp("/account");
+
+    expect(await screen.findByText("user@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("CC20260819-000001")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "开通记录" })).toHaveAttribute("aria-selected", "false");
+
+    await userEvent.click(screen.getByRole("tab", { name: "开通记录" }));
+
+    expect(screen.getByRole("tab", { name: "开通记录" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("CC20260819-000001")).toBeInTheDocument();
+    expect(screen.queryByText("user@example.com")).not.toBeInTheDocument();
+  });
+
+  it("hash #orders 落地开通记录页签", async () => {
+    writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
+    stubFetch(
+      accountHandlers({
+        "/billing/orders": () => ccEnvelope({ items: [PENDING_ORDER, PAID_ORDER] }),
+      }),
+    );
+
+    renderApp("/account#orders");
+
+    expect(await screen.findByRole("tab", { name: "开通记录" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await screen.findByText("CC20260819-000001")).toBeInTheDocument();
+  });
+
   it("active 显示有效期至本地日期和剩余天数", async () => {
     writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
     stubFetch(accountHandlers({ "/me/entitlement": () => ccEnvelope(ACTIVE_ENTITLEMENT) }));
 
-    renderApp("/account");
+    renderApp("/account#orders");
 
     expect(await screen.findByText(/已订阅 · 有效期至/)).toBeInTheDocument();
     expect(screen.getByText(/剩余 30 天/)).toBeInTheDocument();
@@ -166,7 +232,7 @@ describe("账户中心 · Claude 订阅与账单", () => {
     writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
     stubFetch(accountHandlers());
 
-    renderApp("/account");
+    renderApp("/account#orders");
 
     expect(await screen.findByText("未订阅")).toBeInTheDocument();
     expect(screen.getByText(/BestCodex 桌面 Claude Tab 用余额开通/)).toBeInTheDocument();
@@ -177,7 +243,7 @@ describe("账户中心 · Claude 订阅与账单", () => {
     writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
     stubFetch(accountHandlers({ "/me/entitlement": () => ccEnvelope(EXPIRED_ENTITLEMENT) }));
 
-    renderApp("/account");
+    renderApp("/account#orders");
 
     expect(await screen.findByText("订阅已过期")).toBeInTheDocument();
   });
@@ -190,7 +256,7 @@ describe("账户中心 · Claude 订阅与账单", () => {
       }),
     );
 
-    renderApp("/account");
+    renderApp("/account#orders");
 
     expect(await screen.findByText("CC20260819-000001")).toBeInTheDocument();
     expect(screen.getByText("CC20260819-000002")).toBeInTheDocument();
@@ -207,7 +273,7 @@ describe("账户中心 · Claude 订阅与账单", () => {
       }),
     );
 
-    renderApp("/account");
+    renderApp("/account#orders");
 
     expect(await screen.findByText("未订阅")).toBeInTheDocument();
     expect(screen.getByText(/钱可能已扣、权益尚未到账，请勿重复支付/)).toBeInTheDocument();
@@ -222,7 +288,7 @@ describe("账户中心 · 邀请返利", () => {
       "/user/aff": () => envelope(AFF_DETAIL),
     });
 
-    renderApp("/account");
+    renderApp("/account#affiliate");
 
     expect(await screen.findByText("39XZR7KLHECZ")).toBeInTheDocument();
     expect(screen.getByText("¥5.50")).toBeInTheDocument();
@@ -241,7 +307,7 @@ describe("账户中心 · 邀请返利", () => {
       "/user/aff": () => envelope(withoutRules),
     });
 
-    renderApp("/account");
+    renderApp("/account#affiliate");
 
     expect(await screen.findByText("39XZR7KLHECZ")).toBeInTheDocument();
     expect(screen.queryByText(/小时后可划转/)).not.toBeInTheDocument();
@@ -273,7 +339,7 @@ describe("账户中心 · 邀请返利", () => {
         }),
     });
 
-    renderApp("/account");
+    renderApp("/account#affiliate");
 
     expect(await screen.findByText(/当前比例 1%/)).toBeInTheDocument();
     expect(screen.getByText(/好友再累计充值/)).toBeInTheDocument();
@@ -289,7 +355,7 @@ describe("账户中心 · 邀请返利", () => {
     });
 
     writeSession({ accessToken: "at-1", refreshToken: "rt-1", expiresIn: 3600 });
-    renderApp("/account");
+    renderApp("/account#affiliate");
 
     await userEvent.click(await screen.findByRole("button", { name: "划转到余额" }));
 

@@ -140,6 +140,9 @@ describe("遗留账号入口回跳", () => {
     expect(bounceToCanonicalUrl("https://lumiogame.com/login?next=%2Faccount")).toBe(
       "https://bestcodex.app/login?next=%2Faccount",
     );
+    expect(bounceToCanonicalUrl("https://lumiogame.com/account#orders")).toBe(
+      "https://bestcodex.app/account#orders",
+    );
     expect(bounceToCanonicalUrl("https://bestcodex.app/account")).toBeNull();
     expect(bounceToCanonicalUrl("http://localhost:5280/login")).toBeNull();
   });

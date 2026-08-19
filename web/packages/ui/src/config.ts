@@ -64,7 +64,7 @@ export function shouldBounceToCanonical(hostname: string): boolean {
   return LEGACY_ACCOUNT_HOSTS.includes(hostname);
 }
 
-/** 把遗留官方入口的当前地址改写成规范账号 origin，保留 path / query。 */
+/** 把遗留官方入口的当前地址改写成规范账号 origin，保留 path / query / hash。 */
 export function bounceToCanonicalUrl(currentHref: string): string | null {
   let current: URL;
   try {
@@ -73,7 +73,7 @@ export function bounceToCanonicalUrl(currentHref: string): string | null {
     return null;
   }
   if (!shouldBounceToCanonical(current.hostname)) return null;
-  return `${canonicalAccountOrigin()}${current.pathname}${current.search}`;
+  return `${canonicalAccountOrigin()}${current.pathname}${current.search}${current.hash}`;
 }
 
 const PRODUCT_PATH: Record<Exclude<SiteId, "portal">, string> = {

@@ -1246,8 +1246,66 @@
 }
 .acct h2 {
   font-size: 20px;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
   color: var(--ink-strong);
+}
+.acct-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 22px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass);
+  overflow-x: auto;
+}
+.acct-tab {
+  flex: 1 0 auto;
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: transparent;
+  color: var(--gray);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.acct-tab:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.04);
+}
+.acct-tab[aria-selected="true"] {
+  background: var(--glass-strong);
+  color: var(--ink-strong);
+  box-shadow: 0 8px 20px -16px var(--accent-glow);
+}
+.acct-table-wrap {
+  overflow-x: auto;
+}
+.acct-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.acct-table th {
+  text-align: left;
+  color: var(--gray);
+  font-weight: 600;
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.acct-table td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-strong);
+  vertical-align: top;
+}
+.acct-table tbody tr:last-child td {
+  border-bottom: none;
 }
 .acct-section {
   background: var(--glass);
