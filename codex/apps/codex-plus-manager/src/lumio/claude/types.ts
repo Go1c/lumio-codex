@@ -18,6 +18,19 @@ export interface ClaudeEntitlement {
   expiresAt?: string | null;
 }
 
+/** 套餐拉取失败时回落 19.9 元（1990 分），禁止回落 68。 */
+export const DEFAULT_CLAUDE_PLAN_CENTS = 1990;
+
+export type ClaudePayMode = "balance" | "recharge";
+
+export interface ClaudeOrder {
+  orderNo: string;
+  amountCents: number;
+  status: string;
+  paidAt?: string;
+  createdAt: string;
+}
+
 export interface ClaudeHostDraft {
   host: string;
   user: string;
@@ -138,6 +151,12 @@ export interface ClaudeState {
   terminalByProject: Record<string, ClaudeTerminalLine[]>;
   filesByProject: Record<string, ClaudeFileEntry[]>;
   conflictsByProject: Record<string, ClaudeConflictEntry[]>;
+  paying: boolean;
+  payError: string | null;
+  payMode: ClaudePayMode;
+  orders: ClaudeOrder[];
+  ordersOpen: boolean;
+  planAmountCents: number;
 }
 
 export interface PersistableClaudeState {
@@ -171,4 +190,10 @@ export type ClaudeEvent =
       projects: ClaudeProject[];
       activeProjectId: string | null;
       entitlement?: ClaudeEntitlement;
-    };
+    }
+  | { type: "pay-started" }
+  | { type: "pay-finished" }
+  | { type: "pay-failed"; errorCode: string; forceRecharge?: boolean }
+  | { type: "orders-loaded"; orders: ClaudeOrder[] }
+  | { type: "orders-toggled"; open?: boolean }
+  | { type: "plan-loaded"; amountCents: number };

@@ -19,18 +19,33 @@ test("the Claude workspace folder ships the four prototype surfaces", async () =
   ]);
 });
 
-test("the subscribe card uses the prototype price and opens the existing account portal", async () => {
+test("the subscribe card uses the plan price and pays with account balance", async () => {
   const source = await readView("ClaudeSubscribe.tsx");
   const shell = await readFile(new URL("../../../LumioApp.tsx", import.meta.url), "utf8");
-  assert.match(source, /开通 Claude/);
-  assert.match(source, /¥19\.9/);
+  const session = await readFile(new URL("../../claude/session.ts", import.meta.url), "utf8");
+  const types = await readFile(new URL("../../claude/types.ts", import.meta.url), "utf8");
+  assert.match(source, /在自己的服务器上/);
   assert.match(source, /\/ 月/);
   assert.match(source, /独立环境、双向同步、不限项目/);
-  assert.match(source, /onOpenAccount/);
+  assert.match(source, /用余额支付/);
+  assert.match(source, /去充值/);
+  assert.match(source, /正在支付…/);
+  assert.match(source, /余额 ¥/);
+  assert.match(source, /onPay/);
+  assert.match(source, /onRecharge/);
   assert.match(source, /回到 Codex Tab/);
+  assert.doesNotMatch(source, /onOpenAccount/);
+  assert.doesNotMatch(source, /CLAUDE_ACCOUNT_URL/);
+  // 主按钮是余额支付，不能把 purchase 当开通主路径；充值回调在壳里打开 paymentUrl。
   assert.doesNotMatch(source, /purchase/);
-  assert.match(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
+  assert.doesNotMatch(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
+  assert.doesNotMatch(shell, /openClaudeSubscribe/);
+  assert.match(shell, /paymentUrl/);
   assert.doesNotMatch(shell, /onOpenAccount=\{openSettings\}/);
+  assert.match(session, /DEFAULT_CLAUDE_PLAN_CENTS/);
+  assert.match(types, /1990/);
+  assert.doesNotMatch(types, /6800/);
+  assert.doesNotMatch(session, /6800/);
 });
 
 test("the first-run page lists the three promises before any SSH form", async () => {
@@ -98,7 +113,11 @@ test("the workspace shows files and conflicts tabs next to the terminal", async 
 
 test("ClaudeWorkspace keeps session state in the module store, not only in the leaf", async () => {
   const source = await readView("ClaudeWorkspace.tsx");
+  const empty = await readView("ClaudeEmpty.tsx");
+  const home = await readView("ClaudeHome.tsx");
   assert.match(source, /getClaudeState|subscribeClaudeStore/);
   assert.match(source, /onBackToCodex/);
-  assert.match(source, /onOpenAccount/);
+  assert.match(source, /onRecharge/);
+  assert.doesNotMatch(source, /onOpenAccount/);
+  assert.match(`${source}\n${empty}\n${home}`, /开通记录/);
 });

@@ -370,7 +370,7 @@ export const handlers = [
 
     const order = mockState.orders.find((o) => o.order_no === params.orderNo);
     if (!order) return fail(404, "not_found", "资源不存在。");
-    if (order.status !== "paid") {
+    if (order.status !== "paid" || order.channel === "balance") {
       return fail(409, "order_not_refundable", "该订单当前状态不支持退款。");
     }
 

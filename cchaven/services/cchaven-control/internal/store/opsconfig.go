@@ -36,7 +36,7 @@ func (c OpsConfig) RewardEnabled() bool { return c.InviteRewardDays > 0 }
 var defaultConfig = OpsConfig{
 	InviteRewardDays: 7,
 	InviteTrialDays:  30,
-	PricingMonthly:   Price{AmountCents: 6800, Currency: "CNY"},
+	PricingMonthly:   Price{AmountCents: 1990, Currency: "CNY"},
 }
 
 // LoadOpsConfig 读取全部运营配置。

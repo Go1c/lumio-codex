@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -68,7 +69,7 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 	if !regexp.MustCompile(`^CC\d{8}-\d{6}$`).MatchString(orderNo) {
 		t.Errorf("订单号格式不符: %q", orderNo)
 	}
-	if got := browser.Get("/api/v1/billing/orders/" + orderNo).Number("amount_cents"); got != 6800 {
+	if got := browser.Get("/api/v1/billing/orders/" + orderNo).Number("amount_cents"); got != float64(planCents(t, env)) {
 		t.Errorf("金额应取自运营配置, got %v", got)
 	}
 
@@ -77,7 +78,7 @@ func TestCheckoutToPaidExtendsSubscription(t *testing.T) {
 		t.Errorf("付款前不应有订阅, got %v", got)
 	}
 
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -128,7 +129,7 @@ func TestWebhookRejectsAmountMismatch(t *testing.T) {
 	}
 
 	// 金额一致的回调仍然正常入账，订单不因一次伪造回调被判死。
-	goodPayload, goodSignature := notify(t, env, orderNo, true, 6800)
+	goodPayload, goodSignature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", goodPayload,
 		map[string]string{"X-CCHaven-Signature": goodSignature}).ExpectStatus(http.StatusOK)
 	if got := env.EntitlementOf(userID)["status"]; got != "active" {
@@ -143,7 +144,7 @@ func TestWebhookIsIdempotent(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	headers := map[string]string{"X-CCHaven-Signature": signature}
 
 	for range 3 {
@@ -173,7 +174,7 @@ func TestWebhookRejectsBadSignature(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, _ := notify(t, env, orderNo, true, 6800)
+	payload, _ := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": "forged"}).ExpectStatus(http.StatusForbidden)
 
@@ -199,7 +200,7 @@ func TestFailedPaymentMarksOrderFailed(t *testing.T) {
 
 	orderNo := env.Checkout(userID, "mock")
 
-	payload, signature := notify(t, env, orderNo, false, 6800)
+	payload, signature := notify(t, env, orderNo, false, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -261,7 +262,7 @@ func TestTrialThenPurchaseStacks(t *testing.T) {
 	}
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 
@@ -272,6 +273,352 @@ func TestTrialThenPurchaseStacks(t *testing.T) {
 	// 付费优先级高于试用，徽标应显示「已订阅」。
 	if got := entitlement["status"]; got != "active" {
 		t.Errorf("状态 = %v, want active", got)
+	}
+}
+
+// identifyWithBalance 用 Sub2API 令牌开影子账号并设定余额。
+// SignUp 不返回 token，扣费必须再读 Bearer，所以这里自己 Issue。
+func identifyWithBalance(t *testing.T, env *testsupport.Env, email string, balance float64) (*testsupport.Client, int64, string) {
+	t.Helper()
+
+	token := env.Sub2API.Issue(email)
+	client := env.NewClient().WithBearer(token)
+	client.Get("/api/v1/me").ExpectStatus(http.StatusOK)
+	env.Sub2API.SetBalance(token, balance)
+	return client, env.UserIDOf(email), token
+}
+
+func payWith(client *testsupport.Client, key string) *testsupport.Response {
+	return client.WithHeader("Idempotency-Key", key).Post("/api/v1/billing/pay-with-balance", nil)
+}
+
+func planCents(t *testing.T, env *testsupport.Env) int64 {
+	t.Helper()
+
+	plan, err := env.Svc.Plan(t.Context())
+	if err != nil {
+		t.Fatalf("读取套餐失败: %v", err)
+	}
+	return plan.AmountCents
+}
+
+func purchaseEventCount(t *testing.T, env *testsupport.Env, userID int64) int {
+	t.Helper()
+
+	var events int
+	if err := env.Pool.QueryRow(t.Context(),
+		`SELECT count(*) FROM subscription_events WHERE user_id = $1 AND type = 'purchase'`,
+		userID).Scan(&events); err != nil {
+		t.Fatalf("查询入账事件失败: %v", err)
+	}
+	return events
+}
+
+// TestPayWithBalanceActivatesAMonthWhenBalanceIsEnough 余额够时扣 19.9 并开通一个月。
+func TestPayWithBalanceActivatesAMonthWhenBalanceIsEnough(t *testing.T) {
+	env := testsupport.New(t)
+	client, _, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	resp := payWith(client, "pay-enough").ExpectStatus(http.StatusOK)
+
+	order := resp.Object("order")
+	if order["status"] != "paid" {
+		t.Errorf("order.status = %v, want paid", order["status"])
+	}
+	if order["channel"] != "balance" {
+		t.Errorf("order.channel = %v, want balance", order["channel"])
+	}
+	if order["amount_cents"] != float64(1990) {
+		t.Errorf("order.amount_cents = %v, want 1990", order["amount_cents"])
+	}
+
+	entitlement := resp.Object("entitlement")
+	if entitlement["status"] != "active" {
+		t.Errorf("entitlement.status = %v, want active", entitlement["status"])
+	}
+	if entitlement["days_left"] != float64(30) {
+		t.Errorf("entitlement.days_left = %v, want 30", entitlement["days_left"])
+	}
+
+	calls := env.Sub2API.DebitCalls()
+	if len(calls) != 1 {
+		t.Fatalf("debit 次数 = %d, want 1", len(calls))
+	}
+	if calls[0].AmountCents != 1990 {
+		t.Errorf("debit amount_cents = %v, want 1990", calls[0].AmountCents)
+	}
+	if calls[0].ClientKey != "test-wallet-client" {
+		t.Errorf("消费方身份头未转发")
+	}
+	orderNo, _ := order["order_no"].(string)
+	if calls[0].Ref != orderNo {
+		t.Errorf("debit ref = %q, want order_no %q", calls[0].Ref, orderNo)
+	}
+	if calls[0].IdempotencyKey != orderNo {
+		t.Errorf("debit Idempotency-Key = %q, want order_no", calls[0].IdempotencyKey)
+	}
+	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 1010 {
+		t.Errorf("余额应减少 19.9 元, 剩余分 = %d want 1010", got)
+	}
+}
+
+func yuanToTestCents(value float64) int64 {
+	return int64(value*100 + 0.5)
+}
+
+// TestPayWithBalanceRejectsInsufficientBalance 余额不足不得入账，并给出充值入口。
+func TestPayWithBalanceRejectsInsufficientBalance(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, _ := identifyWithBalance(t, env, "alice@example.com", 1)
+
+	resp := payWith(client, "pay-short").ExpectStatus(http.StatusForbidden)
+	if resp.ErrorCode() != "insufficient_balance" {
+		t.Errorf("error.code = %q, want insufficient_balance", resp.ErrorCode())
+	}
+	if got := resp.ErrorDetail("purchase_url"); got != env.Cfg.PurchaseURL() {
+		t.Errorf("details.purchase_url = %v, want %s", got, env.Cfg.PurchaseURL())
+	}
+	if got := purchaseEventCount(t, env, userID); got != 0 {
+		t.Errorf("不应产生 purchase 事件, got %d", got)
+	}
+}
+
+// TestPayWithBalanceIsIdempotent 同一 Idempotency-Key 只延长一次、只扣一次。
+func TestPayWithBalanceIsIdempotent(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "pay-once"
+	first := payWith(client, key).ExpectStatus(http.StatusOK)
+	second := payWith(client, key).ExpectStatus(http.StatusOK)
+
+	firstNo := first.Object("order")["order_no"]
+	secondNo := second.Object("order")["order_no"]
+	if firstNo != secondNo {
+		t.Errorf("应返回同一订单: %v vs %v", firstNo, secondNo)
+	}
+	if got := second.Object("entitlement")["days_left"]; got != float64(30) {
+		t.Errorf("只应延长一次, days_left = %v want 30", got)
+	}
+	if got := len(env.Sub2API.DebitCalls()); got != 1 {
+		t.Errorf("debit 次数 = %d, want 1", got)
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件应恰好 1 条, got %d", got)
+	}
+}
+
+func TestPayWithBalanceRetriesAfterTokenExpired(t *testing.T) {
+	env := testsupport.New(t)
+	client, _, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "after-expire"
+	env.Sub2API.FailNextDebit(http.StatusUnauthorized, "TOKEN_EXPIRED")
+	if got := payWith(client, key).ErrorCode(); got != "unauthorized" && got != "session_expired" {
+		t.Fatalf("TOKEN_EXPIRED 应回登录过期类错误以便刷新 JWT, got %s", got)
+	}
+
+	paid := payWith(client, key).ExpectStatus(http.StatusOK)
+	if paid.Object("order")["status"] != "paid" {
+		t.Errorf("刷新后同订单应成功, status=%v", paid.Object("order")["status"])
+	}
+	if paid.Object("order")["order_no"] == "" {
+		t.Error("应保存订单号")
+	}
+}
+
+func TestPayWithBalanceRejectsEmptyIdempotencyKey(t *testing.T) {
+	env := testsupport.New(t)
+	client, _, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	resp := client.Post("/api/v1/billing/pay-with-balance", nil).ExpectStatus(http.StatusBadRequest)
+	if resp.ErrorCode() != "idempotency_key_required" {
+		t.Errorf("error.code = %q, want idempotency_key_required", resp.ErrorCode())
+	}
+}
+
+func TestPayWithBalanceExtendsAnActiveSubscription(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, _ := identifyWithBalance(t, env, "alice@example.com", 50)
+
+	first := payWith(client, "month-1").ExpectStatus(http.StatusOK)
+	firstExpiry := first.Object("entitlement")["expires_at"]
+
+	second := payWith(client, "month-2").ExpectStatus(http.StatusOK)
+	if got := second.Object("entitlement")["days_left"]; got != float64(60) {
+		t.Errorf("已订阅再买应顺延 30 天, days_left = %v want 60", got)
+	}
+	if second.Object("entitlement")["expires_at"] == firstExpiry {
+		t.Error("到期日应比第一次更晚")
+	}
+	if got := purchaseEventCount(t, env, userID); got != 2 {
+		t.Errorf("入账事件 = %d, want 2", got)
+	}
+}
+
+func TestPayWithBalanceStartsFromNowWhenExpired(t *testing.T) {
+	env := testsupport.New(t)
+	client, _, _ := identifyWithBalance(t, env, "alice@example.com", 50)
+
+	payWith(client, "old-month").ExpectStatus(http.StatusOK)
+	env.Advance(31 * 24 * time.Hour)
+	if got := env.EntitlementOf(env.UserIDOf("alice@example.com"))["status"]; got != "expired" {
+		t.Fatalf("推进 31 天后应过期, got %v", got)
+	}
+
+	again := payWith(client, "new-month").ExpectStatus(http.StatusOK)
+	if got := again.Object("entitlement")["days_left"]; got != float64(30) {
+		t.Errorf("过期后应从现在起算 30 天, days_left = %v", got)
+	}
+	if got := again.Object("entitlement")["status"]; got != "active" {
+		t.Errorf("status = %v, want active", got)
+	}
+}
+
+func TestPayWithBalanceIsolatesKeysAcrossUsers(t *testing.T) {
+	env := testsupport.New(t)
+	alice, _, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+	bob, _, _ := identifyWithBalance(t, env, "bob@example.com", 30)
+
+	const key = "shared-key"
+	a := payWith(alice, key).ExpectStatus(http.StatusOK).Object("order")["order_no"]
+	b := payWith(bob, key).ExpectStatus(http.StatusOK).Object("order")["order_no"]
+	if a == b {
+		t.Errorf("不同用户同一 key 不能共享订单: %v", a)
+	}
+}
+
+func TestPayWithBalanceIsSafeConcurrently(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "concurrent"
+	var wg sync.WaitGroup
+	nos := make(chan string, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := payWith(client, key)
+			if resp.Status != http.StatusOK {
+				t.Errorf("并发支付 status = %d", resp.Status)
+				return
+			}
+			no, _ := resp.Object("order")["order_no"].(string)
+			nos <- no
+		}()
+	}
+	wg.Wait()
+	close(nos)
+
+	first, ok := <-nos
+	if !ok {
+		t.Fatal("没有收到订单号")
+	}
+	for no := range nos {
+		if no != first {
+			t.Errorf("并发应落到同一订单: %q vs %q", first, no)
+		}
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 1010 {
+		t.Errorf("并发只能扣一次, 剩余分 = %d", got)
+	}
+}
+
+func TestPayWithBalanceRetriesFailedOrderAfterTopUp(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "retry-failed"
+	env.Sub2API.SetDebitUnavailable(true)
+	if got := payWith(client, key).ErrorCode(); got != "debit_unavailable" {
+		t.Fatalf("第一次应 503 debit_unavailable, got %s", got)
+	}
+	env.Sub2API.SetDebitUnavailable(false)
+	env.Sub2API.SetBalance(token, 1)
+
+	if got := payWith(client, key).ErrorCode(); got != "insufficient_balance" {
+		t.Fatalf("余额竞争失败应标 failed, got %s", got)
+	}
+	if got := purchaseEventCount(t, env, userID); got != 0 {
+		t.Fatalf("失败路径不得入账, events=%d", got)
+	}
+
+	env.Sub2API.SetBalance(token, 30)
+	paid := payWith(client, key).ExpectStatus(http.StatusOK)
+	if paid.Object("order")["status"] != "paid" {
+		t.Errorf("充值后同 key 应能重试成功, status=%v", paid.Object("order")["status"])
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+}
+
+func TestPayWithBalanceResumesPendingAfterLocalFailure(t *testing.T) {
+	env := testsupport.New(t)
+	client, userID, token := identifyWithBalance(t, env, "alice@example.com", 30)
+
+	const key = "resume-pending"
+	first := payWith(client, key).ExpectStatus(http.StatusOK)
+	orderNo, _ := first.Object("order")["order_no"].(string)
+
+	if _, err := env.Pool.Exec(t.Context(), `
+		UPDATE orders SET status = 'pending', paid_at = NULL, provider_txn_id = NULL
+		 WHERE order_no = $1`, orderNo); err != nil {
+		t.Fatalf("回滚订单失败: %v", err)
+	}
+	if _, err := env.Pool.Exec(t.Context(), `
+		DELETE FROM subscription_events WHERE user_id = $1 AND type = 'purchase'`, userID); err != nil {
+		t.Fatalf("删除入账事件失败: %v", err)
+	}
+	if _, err := env.Pool.Exec(t.Context(), `
+		UPDATE subscriptions SET expires_at = NULL, kind = NULL WHERE user_id = $1`, userID); err != nil {
+		t.Fatalf("重置订阅失败: %v", err)
+	}
+
+	before := env.Sub2API.BalanceOf(token)
+	again := payWith(client, key).ExpectStatus(http.StatusOK)
+	if again.Object("order")["order_no"] != orderNo {
+		t.Errorf("应复用原 order_no %s", orderNo)
+	}
+	if again.Object("entitlement")["status"] != "active" {
+		t.Errorf("恢复后应 active, got %v", again.Object("entitlement")["status"])
+	}
+	if env.Sub2API.BalanceOf(token) != before {
+		t.Errorf("恢复不得再扣一次, before=%v after=%v", before, env.Sub2API.BalanceOf(token))
+	}
+	if got := purchaseEventCount(t, env, userID); got != 1 {
+		t.Errorf("入账事件 = %d, want 1", got)
+	}
+}
+
+func TestPayWithBalanceFollowsLivePlanPrice(t *testing.T) {
+	env := testsupport.New(t)
+	env.SetOpsConfig("pricing.monthly", `{"amount_cents": 9900, "currency": "CNY"}`)
+	client, _, token := identifyWithBalance(t, env, "alice@example.com", 120)
+
+	resp := payWith(client, "plan-price").ExpectStatus(http.StatusOK)
+	if resp.Object("order")["amount_cents"] != float64(9900) {
+		t.Errorf("订单金额应跟随当前配置, got %v", resp.Object("order")["amount_cents"])
+	}
+	if got := yuanToTestCents(env.Sub2API.BalanceOf(token)); got != 2100 {
+		t.Errorf("应扣 99 元, 剩余分 = %d", got)
+	}
+}
+
+func TestAdminRefundRejectsBalanceOrder(t *testing.T) {
+	env := testsupport.New(t)
+	client, _, _ := identifyWithBalance(t, env, "alice@example.com", 30)
+	orderNo, _ := payWith(client, "no-refund").ExpectStatus(http.StatusOK).Object("order")["order_no"].(string)
+
+	admin := newAdminClient(t, env)
+	resp := admin.Post(fmt.Sprintf("/api/admin/v1/orders/%s/refund", orderNo),
+		map[string]string{"reason": "用户申请"}).ExpectStatus(http.StatusConflict)
+	if resp.ErrorCode() != "order_not_refundable" {
+		t.Errorf("error.code = %q, want order_not_refundable", resp.ErrorCode())
 	}
 }
 
@@ -374,7 +721,7 @@ func TestMockRefundFlow(t *testing.T) {
 	_, userID := env.SignUp("alice@example.com")
 
 	orderNo := env.Checkout(userID, "mock")
-	payload, signature := notify(t, env, orderNo, true, 6800)
+	payload, signature := notify(t, env, orderNo, true, planCents(t, env))
 	env.NewClient().PostRaw("/api/v1/billing/webhook/mock", payload,
 		map[string]string{"X-CCHaven-Signature": signature}).ExpectStatus(http.StatusOK)
 

@@ -80,6 +80,37 @@ pub struct LumioClaudeEntitlementPayload {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LumioClaudePayPayload {
+    pub status: String,
+    pub expires_at: Option<String>,
+    pub days_left: Option<i64>,
+    pub order_no: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioClaudeOrderPayload {
+    pub order_no: String,
+    pub amount_cents: i64,
+    pub status: String,
+    pub paid_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioClaudeOrdersPayload {
+    pub items: Vec<LumioClaudeOrderPayload>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LumioClaudePlanPayload {
+    pub amount_cents: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LumioBootstrapPayload {
     pub version: String,
     pub platform: String,
@@ -503,6 +534,77 @@ pub async fn lumio_claude_entitlement(
         })
         .await;
     result(outcome)
+}
+
+fn claude_order_payload(order: claude_control::ClaudeBillingOrder) -> LumioClaudeOrderPayload {
+    LumioClaudeOrderPayload {
+        order_no: order.order_no,
+        amount_cents: order.amount_cents,
+        status: order.status,
+        paid_at: order.paid_at,
+        created_at: order.created_at,
+    }
+}
+
+#[tauri::command]
+pub async fn lumio_claude_pay_with_balance(
+    session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioClaudePayPayload>, ()> {
+    let client = &session.client;
+    let state_dir = product::state_dir();
+    let key = match state_dir.as_deref() {
+        Some(dir) => claude_control::load_or_create_pay_key(dir),
+        None => claude_control::new_idempotency_key(),
+    };
+    let outcome = session
+        .auth
+        .with_access_token(client, move |token| {
+            let key = key.clone();
+            async move {
+                let snapshot = claude_control::pay_with_balance(&token, &key).await?;
+                Ok(LumioClaudePayPayload {
+                    status: snapshot.entitlement.status,
+                    expires_at: snapshot.entitlement.expires_at,
+                    days_left: snapshot.entitlement.days_left,
+                    order_no: snapshot.order.order_no,
+                })
+            }
+        })
+        .await;
+    if outcome.is_ok() {
+        if let Some(dir) = state_dir.as_deref() {
+            claude_control::clear_pay_key(dir);
+        }
+    }
+    result(outcome)
+}
+
+#[tauri::command]
+pub async fn lumio_claude_orders(
+    session: tauri::State<'_, LumioSession>,
+) -> Result<LumioCommandResult<LumioClaudeOrdersPayload>, ()> {
+    let client = &session.client;
+    let outcome = session
+        .auth
+        .with_access_token(client, move |token| async move {
+            let items = claude_control::list_orders(&token).await?;
+            Ok(LumioClaudeOrdersPayload {
+                items: items.into_iter().map(claude_order_payload).collect(),
+            })
+        })
+        .await;
+    result(outcome)
+}
+
+#[tauri::command]
+pub async fn lumio_claude_plan() -> Result<LumioCommandResult<LumioClaudePlanPayload>, ()> {
+    result(
+        claude_control::fetch_plan()
+            .await
+            .map(|plan| LumioClaudePlanPayload {
+                amount_cents: plan.amount_cents,
+            }),
+    )
 }
 
 #[tauri::command]

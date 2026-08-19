@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 const PROMISES = [
   { title: "独立环境", detail: "Claude 不跑在你的笔记本上，封号风险隔开。" },
   { title: "本机仍能改文件", detail: "远端改动回来，本地编辑上去。冲突不会被静默覆盖。" },
@@ -8,10 +10,12 @@ export function ClaudeEmpty({
   ghost,
   onConnect,
   onBackToCodex,
+  ordersSlot,
 }: {
   ghost?: boolean;
   onConnect: () => void;
   onBackToCodex: () => void;
+  ordersSlot?: ReactNode;
 }) {
   return (
     <main className={`lumio-claude-onboard${ghost ? " is-ghost" : ""}`} aria-hidden={ghost ? true : undefined}>
@@ -39,6 +43,7 @@ export function ClaudeEmpty({
             <button className="lumio-button is-primary is-large" onClick={onConnect} type="button">
               连接一台服务器
             </button>
+            {ordersSlot}
             <p className="lumio-claude-quiet">
               <button className="lumio-link-button" onClick={onBackToCodex} type="button">
                 先留在 Codex

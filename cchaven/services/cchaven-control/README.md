@@ -33,7 +33,8 @@
   `details.portal_url` 指向账号中心。保留路由是为了给存量客户端一个可解释的答复。
 - **桌面 OAuth**：本服务仍是 CC 桌面端的 token issuer，但 `POST /api/v1/oauth/authorize`
   **只认 Sub2API 令牌**（`requireLumioUser`），拿本服务自己签的令牌来授权新设备会被拒。
-- **充值**：`POST /api/v1/billing/checkout` 改为 303 跳 `{Sub2API}/purchase`，不再建单。
+- **充值**：`POST /api/v1/billing/checkout` 返回 303 跳 `{Sub2API}/purchase`，不建单。
+- **余额开通**：`POST /api/v1/billing/pay-with-balance` 用当前用户 JWT + 服务端 `X-Balance-Client-Key` 扣 LumioAPI 站内余额，并在本服务入账 30 天。密钥只来自 `CCHAVEN_BALANCE_CLIENT_SECRET`。
 - **管理后台**：`/api/admin/v1` 的管理员账号与强制 TOTP **完全没有变**，仍在本地。
 - **存量用户迁移**：`cmd/migrate-identities`（一次性、幂等、默认 dry-run）。
   **写生产数据 + 在外部系统建号，执行前必须取得负责人确认**，步骤见
@@ -189,10 +190,10 @@ test/                  集成与端到端测试
 
 ## 尚未接入的部分
 
-- **订单与支付回调只服务存量数据**：新订单不再由本服务创建（充值跳 Sub2API），
-  `/billing/orders*`、`/billing/webhook/*` 与后台退款仍能处理迁移前的订单。
-  待 Sub2API 的订单 / 权益回传接口定稿后，要么改为消费上游账单、要么整体下线，
-  代码里有对应的 `TODO(billing)`。
+- **充值与开通拆开**：`POST /api/v1/billing/checkout` 仍是 303 跳 `{Sub2API}/purchase`，只充值、不建单。
+  Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：本服务建 `channel=balance` 订单并入账 30 天，钱由 Sub2API `POST /api/v1/user/balance/debit` 扣（路径 `CCHAVEN_SUB2API_DEBIT_PATH`）。
+  `GET /billing/orders` 给用户开通记录和后台订单页。`/billing/webhook/*` 与托管渠道退款仍只服务迁移前的支付宝 / 微信等存量单。
+  Sub2API 未交付 debit 时本仓测试走 FakeSub2API；不要把 checkout 改回开通，也不要在 Sub2API 做套餐。
 - **邀请归因依赖 `cch_ref` cookie 与控制面同站**：开户时读它做归因。门户在别的站点上
   完成注册时，需要门户把邀请码带回 CC 侧（跨站 cookie 带不过来）——尚未接通。
 - 支付宝与微信支付：`payments.Provider` 接口已就绪，M1 只实现了 mock 渠道。

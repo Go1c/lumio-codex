@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Go1c/fns-workspace/services/cchaven-control/internal/domain"
@@ -78,6 +79,32 @@ func GetOrderByNo(ctx context.Context, q Querier, orderNo string) (domain.Order,
 	return scanOrder(q.QueryRow(ctx,
 		`SELECT `+orderColumns+` FROM orders o JOIN users u ON u.id = o.user_id WHERE o.order_no = $1`,
 		orderNo))
+}
+
+// GetOrderByUserAndIdempotencyKey 按用户 + 幂等键读取；空键视为未命中。
+func GetOrderByUserAndIdempotencyKey(ctx context.Context, q Querier, userID int64, key string) (domain.Order, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return domain.Order{}, ErrNotFound
+	}
+	return scanOrder(q.QueryRow(ctx,
+		`SELECT `+orderColumns+` FROM orders o JOIN users u ON u.id = o.user_id
+		  WHERE o.user_id = $1 AND o.idempotency_key = $2`,
+		userID, key))
+}
+
+// GetOrderByUserAndIdempotencyKeyForUpdate 在事务里锁住该用户的幂等订单。
+func GetOrderByUserAndIdempotencyKeyForUpdate(
+	ctx context.Context, q Querier, userID int64, key string,
+) (domain.Order, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return domain.Order{}, ErrNotFound
+	}
+	return scanOrder(q.QueryRow(ctx,
+		`SELECT `+orderColumns+` FROM orders o JOIN users u ON u.id = o.user_id
+		  WHERE o.user_id = $1 AND o.idempotency_key = $2 FOR UPDATE OF o`,
+		userID, key))
 }
 
 // LockOrderByNo 取行级锁后读取，用于支付回调与退款的串行处理。

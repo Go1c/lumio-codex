@@ -25,7 +25,6 @@ import {
   signOut,
   updateNoticeShown,
 } from "./lumio/invoke.ts";
-import { CLAUDE_ACCOUNT_URL } from "./lumio/claude/portal.ts";
 import { hydrateClaudeWorkspace } from "./lumio/claude/session.ts";
 import { resetClaudeStore } from "./lumio/claude/store.ts";
 import { HELP_URL } from "./lumio/help.ts";
@@ -202,9 +201,6 @@ export function LumioApp() {
   }, [pushToast]);
 
   const openSettings = useCallback(() => setView("settings"), []);
-  const openClaudeSubscribe = useCallback(() => {
-    void openInBrowser(CLAUDE_ACCOUNT_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
-  }, [pushToast]);
   const openHelp = useCallback(() => {
     void openInBrowser(HELP_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
   }, [pushToast]);
@@ -268,6 +264,11 @@ export function LumioApp() {
       dispatch({ type: "account-refreshed", account, cachedAt }),
     [],
   );
+  const onClaudePaid = useCallback(() => {
+    void refreshAccount()
+      .then((fresh) => onRefreshed(fresh, new Date().toISOString()))
+      .catch(() => undefined);
+  }, [onRefreshed]);
   const onReconnected = useCallback((account: LumioAccountSummary, cachedAt: string) => {
     dispatch({
       type: "online-ready",
@@ -531,8 +532,10 @@ export function LumioApp() {
               <ClaudeWorkspace
                 account={state.account}
                 onBackToCodex={backToCodex}
-                onOpenAccount={openClaudeSubscribe}
                 onOpenHelp={openHelp}
+                onPaid={onClaudePaid}
+                onRecharge={onPayRequested}
+                pushToast={pushToast}
               />
             </div>
             {view === "settings" ? (

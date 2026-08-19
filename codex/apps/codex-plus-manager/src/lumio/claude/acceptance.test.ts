@@ -70,19 +70,23 @@ test("6 offline cannot install without an app, can launch when installed, cannot
   assert.equal(withApp.actions.canRefresh, false);
 });
 
-test("7 none entitlement is the subscribe surface and opens the portal", async () => {
+test("7 none entitlement is the subscribe surface and pays with balance", async () => {
   assert.equal(
     resolveClaudeSurface({ entitlement: { status: "none" }, projectCount: 0, sheetOpen: false }),
     "subscribe",
   );
   const sub = await readFile(new URL("../views/claude/ClaudeSubscribe.tsx", import.meta.url), "utf8");
-  assert.match(sub, /开通 Claude/);
-  assert.match(sub, /¥19\.9/);
-  assert.doesNotMatch(sub, /purchase|cardNumber|支付/);
+  assert.match(sub, /在自己的服务器上/);
+  assert.match(sub, /\/ 月/);
+  assert.match(sub, /用余额支付|去充值/);
+  assert.doesNotMatch(sub, /cardNumber/);
+  assert.doesNotMatch(sub, /CLAUDE_ACCOUNT_URL/);
+  assert.doesNotMatch(sub, /onOpenAccount/);
   const shell = await readFile(new URL("../../LumioApp.tsx", import.meta.url), "utf8");
-  const portal = await readFile(new URL("./portal.ts", import.meta.url), "utf8");
-  assert.match(portal, /https:\/\/bestcodex\.app\/account/);
-  assert.match(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
+  assert.doesNotMatch(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
+  assert.doesNotMatch(shell, /onOpenAccount=\{openClaudeSubscribe\}/);
+  // 充值可以打开 purchase；主支付按钮不能走账户中心门户。
+  assert.match(shell, /paymentUrl/);
 });
 
 test("8 entitled with zero projects is empty, not an ssh form", async () => {

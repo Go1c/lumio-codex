@@ -245,7 +245,7 @@ export function OrdersPage() {
                   </td>
                   <td>{formatDateTime(order.paid_at ?? order.created_at)}</td>
                   <td>
-                    {order.status === "paid" && (
+                    {order.status === "paid" && order.channel !== "balance" && (
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm text-red"

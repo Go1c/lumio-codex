@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XTerm } from "@xterm/xterm";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import {
@@ -32,9 +32,11 @@ import type {
 export function ClaudeHome({
   state,
   onConnect,
+  ordersSlot,
 }: {
   state: ClaudeState;
   onConnect: () => void;
+  ordersSlot?: ReactNode;
 }) {
   const active =
     state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0] ?? null;
@@ -67,6 +69,7 @@ export function ClaudeHome({
             <span className="d">{projectSummary(project, state)}</span>
           </button>
         ))}
+        {ordersSlot}
         <button className="lumio-button is-secondary lumio-claude-add" onClick={onConnect} type="button">
           连接新服务器
         </button>

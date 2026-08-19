@@ -1,12 +1,12 @@
-// Package sub2api 是 Sub2API（Lumio 账号中心）的只读客户端。
+// Package sub2api 是 Sub2API（Lumio 账号中心）的客户端。
 //
-// 本服务不再自持终端用户账号：邮箱、口令、账号状态全部由 Sub2API 保管，
+// 本服务不再自持终端用户账号：邮箱、口令、账号状态与余额全部由 Sub2API 保管，
 // 控制面只拿着调用方出示的 access token 去 Sub2API 换回身份，再把它映射到
-// 本地的 CC 业务数据（订阅 / 邀请 / 设备）。
+// 本地的 CC 业务数据（订阅 / 邀请 / 设备）。写余额走 Debit。
 //
 // 两条硬约束：
 //   - 校验结果带短 TTL 缓存，避免每个请求都打一次外部 API；
-//   - 上游不可用时返回 ErrUnavailable 让调用方渲染 503，**绝不静默放行**。
+//   - 上游不可用时返回 ErrUnavailable / ErrDebitUnavailable 让调用方渲染 503，**绝不静默放行**。
 package sub2api
 
 import (
@@ -74,16 +74,25 @@ type Options struct {
 	BaseURL    string
 	CacheTTL   time.Duration
 	HTTPClient *http.Client
+	// DebitPath 是余额扣费路径；空则 DefaultDebitPath。
+	DebitPath string
+	// ClientKey 是 X-Balance-Client-Key，只允许从服务端 secret 注入。
+	ClientKey string
+	// Sleep 允许测试注入可控等待；生产为 context-aware sleep。
+	Sleep func(context.Context, time.Duration) error
 	// Now 允许测试注入可控时钟；生产为 time.Now。
 	Now func() time.Time
 }
 
 // Client 校验 Sub2API 令牌并缓存结果。可被多个请求并发使用。
 type Client struct {
-	baseURL string
-	http    *http.Client
-	ttl     time.Duration
-	now     func() time.Time
+	baseURL   string
+	debitPath string
+	clientKey string
+	http      *http.Client
+	ttl       time.Duration
+	now       func() time.Time
+	sleepFn   func(context.Context, time.Duration) error
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -112,13 +121,20 @@ func New(opts Options) *Client {
 	if now == nil {
 		now = time.Now
 	}
+	debitPath := strings.TrimSpace(opts.DebitPath)
+	if debitPath == "" {
+		debitPath = DefaultDebitPath
+	}
 
 	return &Client{
-		baseURL: base,
-		http:    httpClient,
-		ttl:     ttl,
-		now:     now,
-		cache:   map[string]cacheEntry{},
+		baseURL:   base,
+		debitPath: debitPath,
+		clientKey: strings.TrimSpace(opts.ClientKey),
+		http:      httpClient,
+		ttl:       ttl,
+		now:       now,
+		sleepFn:   opts.Sleep,
+		cache:     map[string]cacheEntry{},
 	}
 }
 
@@ -143,6 +159,22 @@ func (c *Client) Verify(ctx context.Context, token string) (Identity, error) {
 	}
 
 	c.store(key, identity)
+	return identity, nil
+}
+
+// VerifyFresh 强制回源校验令牌并写回缓存，不得只读旧条目。
+// 扣费前要用它拿到当前余额，TTL 内的 Verify 快照不够。
+func (c *Client) VerifyFresh(ctx context.Context, token string) (Identity, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return Identity{}, ErrInvalidToken
+	}
+
+	identity, err := c.fetch(ctx, token)
+	if err != nil {
+		return Identity{}, err
+	}
+	c.store(cacheKey(token), identity)
 	return identity, nil
 }
 

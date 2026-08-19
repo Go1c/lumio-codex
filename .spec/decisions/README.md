@@ -39,3 +39,4 @@
 | [0009](0009-web-support-bubble-static-channels.md) | 官网客服气泡初版把社群入口写进前端配置，不接后台 | 生效 |
 | [0010](0010-web-support-qq-group-number.md) | 客服气泡的 QQ 入口是群号（可复制），不是加群 URL | 生效 |
 | [0011](0011-windows-msix-store-scaffold.md) | Windows 商店包另开 unsigned MSIX 轨，不改 NSIS / ZIP / Tauri bundle | 生效 |
+| [0012](0012-claude-balance-subscribe.md) | Claude 包月钱在 Sub2API、订阅权在控制面，不在 Sub2API 做套餐 | 生效 |

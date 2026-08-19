@@ -185,7 +185,7 @@ export interface AdminUserDetail {
 
 export type OrderStatus = "pending" | "paid" | "refunding" | "refunded" | "failed";
 export type OrderStatusFilter = "all" | "paid" | "refunding" | "refunded" | "failed";
-export type PaymentChannel = "alipay" | "wechat" | "card" | "mock";
+export type PaymentChannel = "alipay" | "wechat" | "card" | "mock" | "balance";
 
 export interface AdminOrder {
   /** CC{YYYYMMDD}-{6 位序号} */
