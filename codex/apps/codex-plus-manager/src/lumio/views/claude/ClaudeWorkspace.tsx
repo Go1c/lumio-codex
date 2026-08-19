@@ -3,13 +3,10 @@ import { useEffect, useSyncExternalStore } from "react";
 import { LumioCommandError } from "../../invoke.ts";
 import {
   ensureClaudeEngineBridge,
-  formatClaudeOrderYuan,
   hydrateClaudeWorkspace,
   payClaudeSubscribe,
-  toggleClaudeOrders,
 } from "../../claude/session.ts";
 import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
-import type { ClaudeOrder } from "../../claude/types.ts";
 import type { LumioAccountSummary } from "../../types.ts";
 import { ClaudeConnect } from "./ClaudeConnect.tsx";
 import { ClaudeEmpty } from "./ClaudeEmpty.tsx";
@@ -21,54 +18,16 @@ export type ClaudeWorkspaceProps = {
   account: LumioAccountSummary | null;
   onBackToCodex: () => void;
   onOpenHelp: () => void;
+  onOpenOrders: () => void;
   onRecharge: () => void;
   onPaid?: () => void;
   pushToast: (input: string) => void;
 };
 
-function orderStatusLabel(status: string): string {
-  if (status === "paid") return "已支付";
-  if (status === "pending") return "处理中，请勿重复支付";
-  if (status === "failed") return "失败";
-  return status;
-}
-
-function ClaudeOrderHistory({
-  orders,
-  open,
-  onToggle,
-}: {
-  orders: ClaudeOrder[];
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="lumio-claude-orders">
-      <button className="lumio-link-button" onClick={onToggle} type="button">
-        开通记录
-      </button>
-      {open ? (
-        orders.length === 0 ? (
-          <p className="lumio-claude-quiet">暂无开通记录</p>
-        ) : (
-          <ul>
-            {orders.map((order) => (
-              <li key={order.orderNo}>
-                <span>¥{formatClaudeOrderYuan(order.amountCents)}</span>
-                <span>{orderStatusLabel(order.status)}</span>
-                <span>{order.createdAt.slice(0, 10)}</span>
-              </li>
-            ))}
-          </ul>
-        )
-      ) : null}
-    </div>
-  );
-}
-
 export function ClaudeWorkspace({
   account,
   onBackToCodex,
+  onOpenOrders,
   onRecharge,
   onPaid,
   pushToast,
@@ -86,19 +45,13 @@ export function ClaudeWorkspace({
     }
   }, [account?.balance]);
 
-  useEffect(() => {
-    if (state.page === "subscribe") {
-      dispatchClaude({ type: "orders-toggled", open: true });
-    }
-  }, [state.page]);
-
   const openConnect = () => dispatchClaude({ type: "open-connect" });
   const ordersSlot = (
-    <ClaudeOrderHistory
-      open={state.ordersOpen}
-      orders={state.orders}
-      onToggle={() => toggleClaudeOrders()}
-    />
+    <div className="lumio-claude-orders">
+      <button className="lumio-link-button" onClick={onOpenOrders} type="button">
+        开通记录
+      </button>
+    </div>
   );
 
   return (

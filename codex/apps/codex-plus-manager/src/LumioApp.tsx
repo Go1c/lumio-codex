@@ -25,6 +25,7 @@ import {
   signOut,
   updateNoticeShown,
 } from "./lumio/invoke.ts";
+import { CLAUDE_ORDERS_URL } from "./lumio/claude/portal.ts";
 import { hydrateClaudeWorkspace } from "./lumio/claude/session.ts";
 import { resetClaudeStore } from "./lumio/claude/store.ts";
 import { HELP_URL } from "./lumio/help.ts";
@@ -203,6 +204,11 @@ export function LumioApp() {
   const openSettings = useCallback(() => setView("settings"), []);
   const openHelp = useCallback(() => {
     void openInBrowser(HELP_URL).catch((error: unknown) => pushToast(errorCodeOf(error)));
+  }, [pushToast]);
+  const openClaudeOrders = useCallback(() => {
+    void openInBrowser(CLAUDE_ORDERS_URL).catch((error: unknown) =>
+      pushToast(errorCodeOf(error)),
+    );
   }, [pushToast]);
   const backToCodex = useCallback(() => {
     setWorkspace("codex");
@@ -533,6 +539,7 @@ export function LumioApp() {
                 account={state.account}
                 onBackToCodex={backToCodex}
                 onOpenHelp={openHelp}
+                onOpenOrders={openClaudeOrders}
                 onPaid={onClaudePaid}
                 onRecharge={onPayRequested}
                 pushToast={pushToast}

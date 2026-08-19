@@ -85,6 +85,7 @@ test("7 none entitlement is the subscribe surface and pays with balance", async 
   const shell = await readFile(new URL("../../LumioApp.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(shell, /openInBrowser\(CLAUDE_ACCOUNT_URL\)/);
   assert.doesNotMatch(shell, /onOpenAccount=\{openClaudeSubscribe\}/);
+  assert.match(shell, /openInBrowser\(CLAUDE_ORDERS_URL\)/);
   // 充值可以打开 purchase；主支付按钮不能走账户中心门户。
   assert.match(shell, /paymentUrl/);
 });
