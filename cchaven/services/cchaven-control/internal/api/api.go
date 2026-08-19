@@ -105,6 +105,7 @@ func (s *Server) Routes() http.Handler {
 				r.Post("/pay-with-balance", s.handlePayWithBalance)
 				r.Get("/orders", s.handleListMyOrders)
 				r.Get("/orders/{orderNo}", s.handleGetMyOrder)
+				r.Post("/orders/{orderNo}/resume", s.handleResumeBalanceOrder)
 			})
 		})
 

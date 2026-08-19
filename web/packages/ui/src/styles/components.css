@@ -1307,6 +1307,9 @@
 .acct-table tbody tr:last-child td {
   border-bottom: none;
 }
+.acct-resume {
+  margin-top: 8px;
+}
 .acct-section {
   background: var(--glass);
   border: 1px solid var(--line);

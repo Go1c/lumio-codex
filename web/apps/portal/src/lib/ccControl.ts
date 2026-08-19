@@ -190,6 +190,38 @@ export async function fetchClaudeEntitlement(accessToken: string): Promise<Claud
   };
 }
 
+/** POST /api/v1/billing/orders/{orderNo}/resume。用原单同步开通，不换新幂等键。 */
+export async function resumeClaudeOrder(
+  accessToken: string,
+  orderNo: string,
+): Promise<{ order: ClaudeOrder; entitlement: ClaudeEntitlement }> {
+  const response = await send(urlPath(`/billing/orders/${encodeURIComponent(orderNo)}/resume`), {
+    method: "POST",
+    headers: authHeaders(accessToken),
+  });
+  const data = await readData(response);
+  const rawOrder = (data.order ?? {}) as Json;
+  const rawEntitlement = (data.entitlement ?? {}) as Json;
+  return {
+    order: {
+      orderNo: str(rawOrder.order_no),
+      amountCents: num(rawOrder.amount_cents),
+      currency: str(rawOrder.currency, "CNY"),
+      channel: str(rawOrder.channel),
+      status: str(rawOrder.status),
+      paidAt: str(rawOrder.paid_at) || null,
+      createdAt: str(rawOrder.created_at),
+    },
+    entitlement: {
+      status: entitlementStatus(rawEntitlement.status),
+      kind: str(rawEntitlement.kind),
+      expiresAt: str(rawEntitlement.expires_at) || null,
+      daysLeft: num(rawEntitlement.days_left),
+      expiringSoon: rawEntitlement.expiring_soon === true,
+    },
+  };
+}
+
 /** GET /api/v1/billing/orders。开通记录，不是套餐页。 */
 export async function fetchClaudeOrders(accessToken: string): Promise<ClaudeOrder[]> {
   const response = await send(urlPath("/billing/orders"), {

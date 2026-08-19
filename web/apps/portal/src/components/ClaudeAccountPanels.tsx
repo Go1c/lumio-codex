@@ -6,6 +6,7 @@ import {
   fetchClaudeEntitlement,
   fetchClaudeOrders,
   messageOfControlError,
+  resumeClaudeOrder,
   type ClaudeEntitlement,
   type ClaudeOrder,
 } from "@/lib/ccControl";
@@ -49,7 +50,59 @@ function orderStatusLabel(status: string): string {
   return status || "—";
 }
 
-export function ClaudeSubscriptionCard({ accessToken }: { accessToken: string }) {
+function canResumeBalanceOrder(order: ClaudeOrder): boolean {
+  return order.channel === "balance" && order.status === "pending";
+}
+
+function ResumePendingButton({
+  accessToken,
+  orderNo,
+  onDone,
+}: {
+  accessToken: string;
+  orderNo: string;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function resume(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await resumeClaudeOrder(accessToken, orderNo);
+      onDone();
+    } catch (failure) {
+      setError(messageOfControlError(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="acct-resume">
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={busy}
+        onClick={() => void resume()}
+      >
+        {busy ? "正在同步…" : "刷新开通状态"}
+      </button>
+      {error ? <p className="note">{error}</p> : null}
+    </div>
+  );
+}
+
+export function ClaudeSubscriptionCard({
+  accessToken,
+  reloadKey = 0,
+  onBillingChanged,
+}: {
+  accessToken: string;
+  reloadKey?: number;
+  onBillingChanged?: () => void;
+}) {
   const [entitlement, setEntitlement] = useState<ClaudeEntitlement | null>(null);
   const [orders, setOrders] = useState<ClaudeOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +123,9 @@ export function ClaudeSubscriptionCard({ accessToken }: { accessToken: string })
     return () => {
       cancelled = true;
     };
-  }, [accessToken, nonce]);
+  }, [accessToken, nonce, reloadKey]);
+
+  const pending = orders?.find(canResumeBalanceOrder);
 
   return (
     <SectionCard title="Claude 订阅" id="claude-subscription">
@@ -84,11 +139,20 @@ export function ClaudeSubscriptionCard({ accessToken }: { accessToken: string })
             {formatClaudeEntitlementLine(entitlement)}
             {entitlement.expiringSoon ? <span> 即将到期，请及时续期。</span> : null}
           </p>
-          {(entitlement.status === "none" || entitlement.status === "expired") &&
-          orders?.some((order) => order.status === "pending") ? (
-            <p className="note">
-              钱可能已扣、权益尚未到账，请勿重复支付。账单里的处理中订单是同一笔开通。
-            </p>
+          {(entitlement.status === "none" || entitlement.status === "expired") && pending ? (
+            <>
+              <p className="note">
+                钱可能已扣、权益尚未到账。点「刷新开通状态」同步原单，请勿重新支付。
+              </p>
+              <ResumePendingButton
+                accessToken={accessToken}
+                orderNo={pending.orderNo}
+                onDone={() => {
+                  setNonce((n) => n + 1);
+                  onBillingChanged?.();
+                }}
+              />
+            </>
           ) : null}
           {entitlement.status === "none" || entitlement.status === "expired" ? (
             <p className="note">
@@ -103,7 +167,15 @@ export function ClaudeSubscriptionCard({ accessToken }: { accessToken: string })
   );
 }
 
-export function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
+export function ClaudeOrdersCard({
+  accessToken,
+  reloadKey = 0,
+  onBillingChanged,
+}: {
+  accessToken: string;
+  reloadKey?: number;
+  onBillingChanged?: () => void;
+}) {
   const [orders, setOrders] = useState<ClaudeOrder[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -121,7 +193,7 @@ export function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
     return () => {
       cancelled = true;
     };
-  }, [accessToken, nonce]);
+  }, [accessToken, nonce, reloadKey]);
 
   return (
     <SectionCard title="账单 / 开通记录" id="claude-orders">
@@ -147,7 +219,19 @@ export function ClaudeOrdersCard({ accessToken }: { accessToken: string }) {
               {orders.map((order) => (
                 <tr key={order.orderNo}>
                   <td>{formatCentsYuan(order.amountCents)}</td>
-                  <td>{orderStatusLabel(order.status)}</td>
+                  <td>
+                    <div>{orderStatusLabel(order.status)}</div>
+                    {canResumeBalanceOrder(order) ? (
+                      <ResumePendingButton
+                        accessToken={accessToken}
+                        orderNo={order.orderNo}
+                        onDone={() => {
+                          setNonce((n) => n + 1);
+                          onBillingChanged?.();
+                        }}
+                      />
+                    ) : null}
+                  </td>
                   <td>{channelLabel(order.channel)}</td>
                   <td>{formatLocalCalendarDate(order.createdAt)}</td>
                   <td className="mono">{order.orderNo}</td>
