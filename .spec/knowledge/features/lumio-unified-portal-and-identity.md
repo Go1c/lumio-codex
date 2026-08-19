@@ -81,7 +81,7 @@ LumioAPI 控制台会话；未登录仍直开 `/purchase`。桌面端 `payment_u
 `PurchaseURL()` 不带浏览器会话，保持 `/purchase`。
 
 控制面 `POST /api/v1/billing/checkout` 仍是 303 到 `/purchase`，只充值、不建单、不开通。
-Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：控制面用**当前用户** JWT 调 LumioAPI `POST /api/v1/user/balance/debit`，并带服务端 `X-Balance-Client-Key`（`CCHAVEN_BALANCE_CLIENT_SECRET`，禁止进前端/日志）。金额按分编码成 `19.90`，`currency=CNY`，`purpose=cchaven_monthly`，`Idempotency-Key` 与 `ref` 都是本地订单号。订阅天数只写在控制面（+30 天，不自动续费）。余额不足返回 403 `insufficient_balance` + `purchase_url`。LumioAPI 回执余额是 `numeric(20,8)`（如 `583.46000000`），控制面 `ParseYuan` 先去掉尾零再按分校验，非零第三位小数仍拒绝。扣款已成功但本地还 pending 时，必须用原 `order_no` 重放 debit，成功后再标 `paid` 并 `CreditPurchase`；解析失败不得把订单标 failed。
+Claude 包月开通走 `POST /api/v1/billing/pay-with-balance`：控制面用**当前用户** JWT 调 LumioAPI `POST /api/v1/user/balance/debit`，并带服务端 `X-Balance-Client-Key`（`CCHAVEN_BALANCE_CLIENT_SECRET`，禁止进前端/日志）。金额按分编码成 `19.90`，`currency=CNY`，`purpose=cchaven_monthly`，`Idempotency-Key` 与 `ref` 都是本地订单号。订阅天数只写在控制面（+30 天，不自动续费）。余额不足返回 403 `insufficient_balance` + `purchase_url`。请求金额走严格 `ParseYuan`（`19.901` 仍拒绝）。回执余额只是快照：`ParseYuanSnapshot` 允许 0、超过两位小数按分四舍五入；`txn_id` 与金额已对上时，余额解不开或为 0 不得返回 503，只打 warn（余额原文，禁止 token / `bcs_` / 完整 body），`BalanceCents` 可当 0，订单仍标 `paid` 并 `CreditPurchase`。扣款已成功但本地还 pending 时，必须用原 `order_no` 重放 debit，禁止换新幂等键。
 门户 `/account` 登录后用页签分栏：账户 / 余额 / 开通记录 / 邀请返利。`#orders`（及旧锚 `#claude-orders`）落地开通记录页签。开通记录页签读控制面 `GET /api/v1/me/entitlement` 与 `GET /api/v1/billing/orders`（信封走 `lib/ccControl.ts`，不复用 `@lumio/auth`）：展示当前有效期 / 剩余天数，以及开通账单表格。pending 写「处理中，请勿重复支付」。门户**不做套餐、不扣款**；none / expired 引导回桌面 Claude Tab。时长一律用服务端 `days_left` / `expires_at`（本地日历日），不要用 `account.planLabel` 或 `created_at+30`。桌面 Claude Tab 的「开通记录」打开 `https://bestcodex.app/account#orders`，不在客户端内嵌账单列表。
 
 ## 待解决
