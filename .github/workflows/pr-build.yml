@@ -178,6 +178,9 @@ jobs:
           pwsh -NoProfile -NonInteractive -Command "Compress-Archive -Path dist/windows/app/* -DestinationPath '$archive' -Force" < /dev/null
 
       - name: Build Windows installer
+        env:
+          # Git Bash rewrites unquoted /INPUTCHARSET to C:/Program Files/Git/INPUTCHARSET.
+          MSYS_NO_PATHCONV: "1"
         run: |
           set -euo pipefail
           makensis="makensis"
@@ -191,7 +194,7 @@ jobs:
           fi
           (
             cd scripts/installer/windows
-            "$makensis" /INPUTCHARSET UTF8 "/DVERSION=${PACKAGE_VERSION}" "/DOUT_SUFFIX=${WINDOWS_OUT_SUFFIX}" "/DPRODUCT_VERSION_QUAD=${PRODUCT_VERSION_QUAD}" LumioCodex.nsi
+            "$makensis" -INPUTCHARSET UTF8 "-DVERSION=${PACKAGE_VERSION}" "-DOUT_SUFFIX=${WINDOWS_OUT_SUFFIX}" "-DPRODUCT_VERSION_QUAD=${PRODUCT_VERSION_QUAD}" LumioCodex.nsi
           )
 
       - name: Upload unsigned Windows setup for SignPath

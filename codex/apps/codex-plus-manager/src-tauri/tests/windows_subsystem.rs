@@ -197,6 +197,24 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
     assert!(workflow.contains("target/release/lumio-codex.exe"));
     assert!(workflow.contains("target/release/lumio-codex-launcher.exe"));
     assert!(workflow.contains("LumioCodex.nsi"));
+    // Git Bash rewrites unquoted /INPUTCHARSET to C:/Program Files/Git/INPUTCHARSET.
+    let installer_escapes_msys_switches = workflow.contains("MSYS_NO_PATHCONV")
+        || workflow.contains("//INPUTCHARSET")
+        || workflow.contains("-INPUTCHARSET");
+    assert!(
+        installer_escapes_msys_switches,
+        "Build Windows installer must disable Git Bash path conversion for NSIS switches"
+    );
+    let makensis_line_has_bare_slash_inputcharset = workflow.lines().any(|line| {
+        let cmd = line.trim();
+        cmd.contains("\"$makensis\"")
+            && cmd.contains("/INPUTCHARSET")
+            && !cmd.contains("//INPUTCHARSET")
+    });
+    assert!(
+        !makensis_line_has_bare_slash_inputcharset || workflow.contains("MSYS_NO_PATHCONV"),
+        "unquoted /INPUTCHARSET is rewritten by Git Bash to C:/Program Files/Git/INPUTCHARSET"
+    );
     assert!(workflow.contains(
         "LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
     ));
