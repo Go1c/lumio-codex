@@ -37,6 +37,14 @@ func TestParseYuanAcceptsTwoDecimalForms(t *testing.T) {
 	if err != nil || got != 1990 {
 		t.Fatalf("19.90 → %d, %v", got, err)
 	}
+	got, err = ParseYuan("10.10000000")
+	if err != nil || got != 1010 {
+		t.Fatalf("10.10000000 → %d, %v", got, err)
+	}
+	got, err = ParseYuanJSON(json.RawMessage(`3.25000000`))
+	if err != nil || got != 325 {
+		t.Fatalf("3.25000000 → %d, %v", got, err)
+	}
 }
 
 func TestParseYuanJSONRejectsStringAmount(t *testing.T) {
