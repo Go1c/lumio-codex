@@ -213,7 +213,8 @@ mod tests {
     #[test]
     fn remote_command_quotes_the_project_root() {
         let command = TerminalManager::remote_command("my project", "~/bestcodex/my-project");
-        assert!(command.contains("\"$HOME\"/'bestcodex/my-project'"));
+        assert!(command.contains("~/'bestcodex/my-project'"));
+        assert!(!command.contains('"'), "tilde path must not add double quotes");
         assert!(command.contains("'my-project'"));
     }
 }
