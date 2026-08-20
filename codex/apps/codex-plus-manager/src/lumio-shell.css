@@ -216,6 +216,21 @@ a:focus-visible {
   overflow: auto;
 }
 
+.lumio-workspace-pane {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lumio-workspace-pane > * {
+  height: 100%;
+  min-height: 0;
+}
+
+.lumio-main:has(.lumio-workspace-pane:not([hidden])) {
+  overflow: hidden;
+}
+
 .lumio-signed-out,
 .lumio-dashboard,
 .lumio-loading {

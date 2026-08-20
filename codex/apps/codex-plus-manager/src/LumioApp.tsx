@@ -523,7 +523,7 @@ export function LumioApp() {
           </section>
         ) : (
           <>
-            <div aria-hidden={!showCodexHome} hidden={!showCodexHome}>
+            <div className="lumio-workspace-pane" aria-hidden={!showCodexHome} hidden={!showCodexHome}>
               <HomeView
                 onCodexAppChanged={onCodexAppChanged}
                 onInstallProgress={onInstallProgress}
@@ -534,7 +534,7 @@ export function LumioApp() {
                 state={state}
               />
             </div>
-            <div aria-hidden={!showClaude} hidden={!showClaude}>
+            <div className="lumio-workspace-pane" aria-hidden={!showClaude} hidden={!showClaude}>
               <ClaudeWorkspace
                 account={state.account}
                 onBackToCodex={backToCodex}

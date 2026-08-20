@@ -186,6 +186,7 @@ export function TerminalPane({
     void attach();
 
     const onResize = () => {
+      if (wrapRef.current?.hidden) return;
       try {
         fit.fit();
         void resizeClaudeTerminal(project.id, term.cols || 80, term.rows || 24, sessionId);
@@ -194,9 +195,13 @@ export function TerminalPane({
       }
     };
     window.addEventListener("resize", onResize);
+    const observer = new ResizeObserver(onResize);
+    observer.observe(containerRef.current);
+    requestAnimationFrame(onResize);
 
     return () => {
       window.removeEventListener("resize", onResize);
+      observer.disconnect();
       for (const stop of disposers) stop();
       term.dispose();
       termRef.current = null;
@@ -206,12 +211,19 @@ export function TerminalPane({
 
   useEffect(() => {
     if (hidden) return;
-    try {
-      fitRef.current?.fit();
-    } catch {
-      /* ignore */
-    }
-  }, [hidden]);
+    const fitNow = () => {
+      try {
+        const term = termRef.current;
+        fitRef.current?.fit();
+        if (term) void resizeClaudeTerminal(project.id, term.cols || 80, term.rows || 24, sessionId);
+      } catch {
+        /* ignore */
+      }
+    };
+    fitNow();
+    const frame = requestAnimationFrame(fitNow);
+    return () => cancelAnimationFrame(frame);
+  }, [hidden, project.id, sessionId]);
 
   const closeMenu = () => setMenu(null);
 

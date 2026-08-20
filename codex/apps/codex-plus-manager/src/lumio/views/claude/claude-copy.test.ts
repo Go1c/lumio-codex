@@ -170,6 +170,7 @@ test("the workspace shows files and conflicts tabs next to the terminal", async 
   assert.match(source, /连接新服务器/);
   assert.match(css, /grid-template-columns:\s*236px minmax\(0,\s*1fr\) 282px/);
   assert.match(css, /grid-template-rows:\s*minmax\(0,\s*1fr\) 26px/);
+  assert.match(css, /\.lumio-claude-sheet-back\s*\{[^}]*position:\s*fixed/);
   assert.doesNotMatch(home, /lumio-claude-stage-tabs/);
   assert.doesNotMatch(home, /set-stage-tab/);
   assert.doesNotMatch(home, /ClaudeEntitlementLine/);
@@ -186,6 +187,14 @@ test("session title locking and last-tab refill are wired from the workspace", a
   assert.match(home, /close-session/);
   assert.match(home, /open-session/);
   assert.match(home, /lumio_claude_close_chat|closeClaudeProjectChat/);
+});
+
+test("the terminal viewport is clipped to the pane and refits on resize", async () => {
+  const source = await readView("TerminalPane.tsx");
+  const css = await readFile(new URL("./TerminalPane.css", import.meta.url), "utf8");
+  assert.match(source, /ResizeObserver/);
+  assert.match(css, /\.lumio-claude-xterm-wrap\s*\{[^}]*overflow:\s*hidden/);
+  assert.match(css, /\.lumio-claude-xterm\s*\{[^}]*overflow:\s*hidden/);
 });
 
 test("terminalBanner and terminal output are mutually exclusive", async () => {
