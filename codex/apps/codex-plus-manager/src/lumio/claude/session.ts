@@ -13,7 +13,7 @@ import {
   hasClaudeEntitlement,
   resolveClaudeEntitlement,
 } from "./entitlement.ts";
-import { createProjectFromDraft } from "./machine.ts";
+import { createProjectFromDraft, sshFieldsForProbe } from "./machine.ts";
 import {
   CLAUDE_SYNC_PROGRESS_EVENT,
   firstClaudeSync,
@@ -58,14 +58,15 @@ function asEntitlementStatus(value: unknown): ClaudeEntitlementStatus | null {
 function sshFromDraft(): ClaudeSshArgs | null {
   const sheet = getClaudeState().sheet;
   if (sheet === null) return null;
+  const draft = sshFieldsForProbe(sheet.draft);
   return {
-    host: sheet.draft.host,
-    user: sheet.draft.user,
-    port: sheet.draft.port,
-    password: draftPassword(),
-    keyPath: sheet.draft.keyPath,
-    hostAlias: sheet.draft.hostAlias,
-    auth: sheet.draft.auth,
+    host: draft.host,
+    user: draft.user,
+    port: draft.port,
+    password: draft.auth === "password" ? draftPassword() : undefined,
+    keyPath: draft.keyPath,
+    hostAlias: draft.hostAlias,
+    auth: draft.auth,
   };
 }
 
