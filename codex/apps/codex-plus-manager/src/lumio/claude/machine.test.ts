@@ -479,3 +479,161 @@ test("createProjectFromDraft keeps user-chosen folders", () => {
   assert.equal(created.localRoot, "/Users/me/code/shop");
   assert.equal(created.remoteRoot, "~/sites/shop");
 });
+
+test("initial Claude state defaults new session fields without changing stageTab", () => {
+  const state = initialClaudeState();
+  assert.equal(state.stageTab, "terminal");
+  assert.equal(state.statusDrawer, "closed");
+  assert.deepEqual(state.sessionsByProject, {});
+  assert.deepEqual(state.activeSessionByProject, {});
+  assert.deepEqual(state.collapsedHosts, {});
+  assert.deepEqual(state.cliByHost, {});
+  assert.deepEqual(state.loginByHost, {});
+  assert.deepEqual(state.workspacePhaseByProject, {});
+});
+
+test("open-session appends the session and makes it active", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-my-project", sessionId: "s1" },
+    { type: "open-session", projectId: "p-my-project", sessionId: "s2" },
+  ]);
+  assert.equal(state.sessionsByProject["p-my-project"].length, 2);
+  assert.equal(state.sessionsByProject["p-my-project"][1]?.id, "s2");
+  assert.equal(state.sessionsByProject["p-my-project"][0]?.title, null);
+  assert.equal(state.sessionsByProject["p-my-project"][0]?.titleLocked, false);
+  assert.equal(state.sessionsByProject["p-my-project"][0]?.running, false);
+  assert.equal(state.activeSessionByProject["p-my-project"], "s2");
+});
+
+test("close-session removes the session and keeps nextSessionId active", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "open-session", projectId: "p-docs", sessionId: "s2" },
+    { type: "close-session", projectId: "p-docs", sessionId: "s1", nextSessionId: "s2" },
+  ]);
+  assert.deepEqual(
+    state.sessionsByProject["p-docs"].map((session) => session.id),
+    ["s2"],
+  );
+  assert.equal(state.activeSessionByProject["p-docs"], "s2");
+});
+
+test("close-session synthesizes the next session when it is not already in the list", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "close-session", projectId: "p-docs", sessionId: "s1", nextSessionId: "s2" },
+  ]);
+  assert.equal(state.sessionsByProject["p-docs"].length, 1);
+  assert.equal(state.sessionsByProject["p-docs"][0]?.id, "s2");
+  assert.equal(state.sessionsByProject["p-docs"][0]?.title, null);
+  assert.equal(state.sessionsByProject["p-docs"][0]?.titleLocked, false);
+  assert.equal(state.sessionsByProject["p-docs"][0]?.running, false);
+  assert.equal(state.activeSessionByProject["p-docs"], "s2");
+});
+
+test("select-session only changes the active session id", () => {
+  const opened = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "open-session", projectId: "p-docs", sessionId: "s2" },
+  ]);
+  const state = reduceClaudeState(opened, {
+    type: "select-session",
+    projectId: "p-docs",
+    sessionId: "s1",
+  });
+  assert.equal(state.activeSessionByProject["p-docs"], "s1");
+  assert.equal(state.sessionsByProject["p-docs"].length, 2);
+  assert.equal(state.stageTab, "terminal");
+});
+
+test("session-title-locked writes the title and locks it", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "session-title-locked", projectId: "p-docs", sessionId: "s1", title: "抽重试逻辑" },
+  ]);
+  assert.equal(state.sessionsByProject["p-docs"][0]?.title, "抽重试逻辑");
+  assert.equal(state.sessionsByProject["p-docs"][0]?.titleLocked, true);
+});
+
+test("session-running toggles the running flag", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "session-running", projectId: "p-docs", sessionId: "s1", running: true },
+  ]);
+  assert.equal(state.sessionsByProject["p-docs"][0]?.running, true);
+});
+
+test("toggle-server-group flips collapsedHosts for that host", () => {
+  const collapsed = reduceClaudeState(initialClaudeState(), {
+    type: "toggle-server-group",
+    host: "108.80.81.15",
+  });
+  assert.equal(collapsed.collapsedHosts["108.80.81.15"], true);
+  const opened = reduceClaudeState(collapsed, { type: "toggle-server-group", host: "108.80.81.15" });
+  assert.equal(opened.collapsedHosts["108.80.81.15"], false);
+});
+
+test("cli-install-progress merges status by host", () => {
+  const detecting = reduceClaudeState(initialClaudeState(), {
+    type: "cli-install-progress",
+    host: "108.80.81.15",
+    phase: "detect",
+    version: "1.0.0",
+  });
+  assert.equal(detecting.cliByHost["108.80.81.15"]?.phase, "detect");
+  assert.equal(detecting.cliByHost["108.80.81.15"]?.version, "1.0.0");
+  const failed = reduceClaudeState(detecting, {
+    type: "cli-install-progress",
+    host: "108.80.81.15",
+    phase: "fail",
+    errorCode: "CLI_INSTALL_FAILED",
+    detail: "没能装上 Claude",
+  });
+  assert.equal(failed.cliByHost["108.80.81.15"]?.phase, "fail");
+  assert.equal(failed.cliByHost["108.80.81.15"]?.version, "1.0.0");
+  assert.equal(failed.cliByHost["108.80.81.15"]?.errorCode, "CLI_INSTALL_FAILED");
+  assert.equal(failed.cliByHost["108.80.81.15"]?.detail, "没能装上 Claude");
+});
+
+test("login-status merges by host", () => {
+  const loggingIn = reduceClaudeState(initialClaudeState(), {
+    type: "login-status",
+    host: "108.80.81.15",
+    phase: "logging-in",
+  });
+  assert.equal(loggingIn.loginByHost["108.80.81.15"]?.phase, "logging-in");
+  const loggedIn = reduceClaudeState(loggingIn, {
+    type: "login-status",
+    host: "108.80.81.15",
+    phase: "logged-in",
+    errorCode: null,
+  });
+  assert.equal(loggedIn.loginByHost["108.80.81.15"]?.phase, "logged-in");
+  assert.equal(loggedIn.loginByHost["108.80.81.15"]?.errorCode, null);
+});
+
+test("set-status-drawer and set-workspace-phase write through", () => {
+  const drawer = reduceClaudeState(initialClaudeState(), {
+    type: "set-status-drawer",
+    pane: "conflicts",
+  });
+  assert.equal(drawer.statusDrawer, "conflicts");
+  const phased = reduceClaudeState(drawer, {
+    type: "set-workspace-phase",
+    projectId: "p-docs",
+    phase: "resume",
+  });
+  assert.equal(phased.workspacePhaseByProject["p-docs"], "resume");
+  assert.equal(phased.statusDrawer, "conflicts");
+});
+
+test("session fields stay out of persistable snapshots", () => {
+  const state = apply([
+    { type: "open-session", projectId: "p-docs", sessionId: "s1" },
+    { type: "set-status-drawer", pane: "server" },
+  ]);
+  const persisted = JSON.stringify(persistableClaudeState(state));
+  assert.doesNotMatch(persisted, /"sessionsByProject"/);
+  assert.doesNotMatch(persisted, /"statusDrawer"/);
+  assert.doesNotMatch(persisted, /"cliByHost"/);
+});

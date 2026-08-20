@@ -1,0 +1,76 @@
+.lumio-claude-explorer {
+  min-width: 0;
+}
+
+.lumio-claude-explorer-root {
+  margin: 0 0 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.lumio-claude-file-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 18px;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  padding: 3px 8px 3px calc(8px + (var(--depth, 0) * 14px));
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-file-row:hover {
+  background: rgb(255 255 255 / 6%);
+}
+
+.lumio-claude-file-row .chev {
+  color: #8e8e93;
+}
+
+.lumio-claude-file-row.is-directory .name {
+  font-weight: 600;
+  color: #9cdcfe;
+}
+
+.lumio-claude-file-row.is-untracked .name,
+.lumio-claude-file-row.is-untracked .badge {
+  color: #3fb950;
+}
+
+.lumio-claude-file-row.is-modified .name,
+.lumio-claude-file-row.is-modified .badge {
+  color: #d29922;
+}
+
+.lumio-claude-file-row .badge {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.lumio-claude-files button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lumio-claude-preview {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+  white-space: pre-wrap;
+}
+
+.lumio-claude-files ul {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}

@@ -224,6 +224,47 @@ export interface ClaudeSessionsSnapshot {
   error?: ClaudeStatusError | null;
 }
 
+export interface ClaudeChatSession {
+  id: string;
+  projectId: string;
+  title: string | null; // null 表示显示「新对话」
+  titleLocked: boolean;
+  running: boolean;
+}
+
+export type ClaudeCliInstallPhase =
+  | "idle"
+  | "detect"
+  | "install"
+  | "upgrade"
+  | "skip"
+  | "ok"
+  | "fail";
+
+export interface ClaudeCliInstallStatus {
+  phase: ClaudeCliInstallPhase;
+  version: string | null;
+  latest: string | null;
+  errorCode: string | null;
+  detail: string | null;
+}
+
+export type ClaudeLoginPhase =
+  | "unknown"
+  | "logged-out"
+  | "logging-in"
+  | "logged-in"
+  | "expired";
+
+export interface ClaudeLoginStatus {
+  phase: ClaudeLoginPhase;
+  errorCode: string | null;
+}
+
+export type ClaudeStatusDrawerPane = "closed" | "server" | "sessions" | "conflicts";
+
+export type ClaudeWorkspacePhase = "init" | "ready" | "resume" | "offline";
+
 export interface ClaudeState {
   entitlement: ClaudeEntitlement;
   controlUnreachable: boolean;
@@ -242,6 +283,13 @@ export interface ClaudeState {
   orders: ClaudeOrder[];
   ordersOpen: boolean;
   planAmountCents: number;
+  sessionsByProject: Record<string, ClaudeChatSession[]>;
+  activeSessionByProject: Record<string, string | null>;
+  collapsedHosts: Record<string, boolean>;
+  cliByHost: Record<string, ClaudeCliInstallStatus>;
+  loginByHost: Record<string, ClaudeLoginStatus>;
+  statusDrawer: ClaudeStatusDrawerPane;
+  workspacePhaseByProject: Record<string, ClaudeWorkspacePhase>;
 }
 
 export interface PersistableClaudeState {
@@ -295,4 +343,22 @@ export type ClaudeEvent =
   | { type: "pay-failed"; errorCode: string; forceRecharge?: boolean }
   | { type: "orders-loaded"; orders: ClaudeOrder[] }
   | { type: "orders-toggled"; open?: boolean }
-  | { type: "plan-loaded"; amountCents: number };
+  | { type: "plan-loaded"; amountCents: number }
+  | { type: "open-session"; projectId: string; sessionId: string }
+  | { type: "close-session"; projectId: string; sessionId: string; nextSessionId: string }
+  | { type: "select-session"; projectId: string; sessionId: string }
+  | { type: "session-title-locked"; projectId: string; sessionId: string; title: string }
+  | { type: "session-running"; projectId: string; sessionId: string; running: boolean }
+  | { type: "toggle-server-group"; host: string }
+  | {
+      type: "cli-install-progress";
+      host: string;
+      phase: ClaudeCliInstallPhase;
+      version?: string | null;
+      latest?: string | null;
+      errorCode?: string | null;
+      detail?: string | null;
+    }
+  | { type: "login-status"; host: string; phase: ClaudeLoginPhase; errorCode?: string | null }
+  | { type: "set-status-drawer"; pane: ClaudeStatusDrawerPane }
+  | { type: "set-workspace-phase"; projectId: string; phase: ClaudeWorkspacePhase };

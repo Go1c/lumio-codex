@@ -1,0 +1,10 @@
+.lumio-claude-status {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  background: #101117;
+  color: #8e8e93;
+  font-size: 11px;
+  line-height: 28px;
+}

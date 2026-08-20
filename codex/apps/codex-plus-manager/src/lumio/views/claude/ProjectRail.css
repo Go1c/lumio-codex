@@ -1,0 +1,74 @@
+.lumio-claude-rail .lumio-claude-entitlement {
+  margin: 0 12px 10px;
+}
+
+.lumio-claude-rail .lumio-claude-orders {
+  margin: 8px 8px 12px;
+}
+
+.lumio-claude-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 14px 10px 12px;
+  border-right: 1px solid var(--cc-line);
+  background: color-mix(in srgb, var(--cc-glass) 70%, transparent);
+  backdrop-filter: blur(20px);
+}
+
+.lumio-claude-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 12px;
+}
+
+.lumio-claude-rail-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 610;
+  letter-spacing: -0.02em;
+}
+
+.lumio-claude-rail-head .lumio-button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.lumio-claude-proj {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-proj:hover {
+  background: rgb(120 120 128 / 10%);
+}
+
+.lumio-claude-proj.is-on {
+  background: var(--cc-bg-elev);
+  box-shadow: 0 8px 24px rgb(20 20 40 / 6%);
+}
+
+.lumio-claude-proj .k {
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.lumio-claude-proj .d {
+  display: block;
+  margin-top: 3px;
+  color: var(--cc-ink-3);
+  font-size: 11px;
+}
+
+.lumio-claude-add {
+  width: 100%;
+  margin-top: auto;
+}

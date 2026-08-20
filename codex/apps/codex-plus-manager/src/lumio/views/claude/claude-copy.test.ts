@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
+import { readAllClaudeViews } from "../../claude/read-claude-views.ts";
+
 async function readView(name: string): Promise<string> {
   return readFile(new URL(name, import.meta.url), "utf8");
 }
@@ -10,14 +12,25 @@ test("the Claude workspace folder ships the four prototype surfaces", async () =
   const names = (await readdir(new URL(".", import.meta.url)))
     .filter((name) => name.endsWith(".tsx"))
     .sort();
-  assert.deepEqual(names, [
+  for (const required of [
     "ClaudeConnect.tsx",
     "ClaudeEmpty.tsx",
     "ClaudeEntitlementLine.tsx",
     "ClaudeHome.tsx",
     "ClaudeSubscribe.tsx",
     "ClaudeWorkspace.tsx",
-  ]);
+    "ProjectRail.tsx",
+    "TerminalPane.tsx",
+    "FileExplorer.tsx",
+    "ConflictsPane.tsx",
+    "StatusDrawer.tsx",
+    "StatusBar.tsx",
+    "SessionTabs.tsx",
+    "InitChecklist.tsx",
+    "LoginCard.tsx",
+  ]) {
+    assert.ok(names.includes(required), `missing ${required}`);
+  }
 });
 
 test("the subscribe card uses the plan price and pays with account balance", async () => {
@@ -123,20 +136,20 @@ test("user-visible Claude copy never says agent or tmux", async () => {
 });
 
 test("the terminal copies locally and opens login links in the system browser", async () => {
-  const home = await readView("ClaudeHome.tsx");
+  const views = await readAllClaudeViews();
   const logic = await readFile(new URL("../../claude/terminal-clipboard.ts", import.meta.url), "utf8");
-  assert.match(home, /onContextMenu/);
-  assert.match(home, /复制/);
-  assert.match(home, /用浏览器打开/);
-  assert.match(home, /openInBrowser/);
-  assert.match(home, /attachCustomKeyEventHandler/);
-  assert.match(home, /copyTextForKey/);
+  assert.match(views, /onContextMenu/);
+  assert.match(views, /复制/);
+  assert.match(views, /用浏览器打开/);
+  assert.match(views, /openInBrowser/);
+  assert.match(views, /attachCustomKeyEventHandler/);
+  assert.match(views, /copyTextForKey/);
   assert.match(logic, /stitchWrappedHttpsUrls/);
-  assert.doesNotMatch(home, /window\.open/);
+  assert.doesNotMatch(views, /window\.open/);
 });
 
 test("the workspace shows files and conflicts tabs next to the terminal", async () => {
-  const source = await readView("ClaudeHome.tsx");
+  const source = await readAllClaudeViews();
   assert.match(source, />终端</);
   assert.match(source, />文件</);
   assert.match(source, />冲突</);
@@ -148,15 +161,13 @@ test("the workspace shows files and conflicts tabs next to the terminal", async 
 
 test("ClaudeWorkspace keeps session state in the module store, not only in the leaf", async () => {
   const source = await readView("ClaudeWorkspace.tsx");
-  const empty = await readView("ClaudeEmpty.tsx");
-  const home = await readView("ClaudeHome.tsx");
-  const subscribe = await readView("ClaudeSubscribe.tsx");
+  const views = await readAllClaudeViews();
   assert.match(source, /getClaudeState|subscribeClaudeStore/);
   assert.match(source, /onBackToCodex/);
   assert.match(source, /onRecharge/);
   assert.match(source, /onOpenOrders/);
   assert.doesNotMatch(source, /onOpenAccount/);
-  assert.match(`${source}\n${empty}\n${home}\n${subscribe}`, /开通记录|ordersSlot/);
+  assert.match(views, /开通记录|ordersSlot/);
   assert.doesNotMatch(source, /toggleClaudeOrders/);
   assert.doesNotMatch(source, /暂无开通记录/);
 });
@@ -169,12 +180,11 @@ test("开通记录 opens the account-center orders tab", async () => {
 
 test("empty and home surfaces show remaining subscription days from the server", async () => {
   const line = await readView("ClaudeEntitlementLine.tsx");
-  const empty = await readView("ClaudeEmpty.tsx");
-  const home = await readView("ClaudeHome.tsx");
+  const views = await readAllClaudeViews();
   const copy = await readFile(new URL("../../claude/copy.ts", import.meta.url), "utf8");
   assert.match(copy, /有效期至/);
   assert.match(copy, /剩余/);
-  assert.match(`${empty}\n${home}`, /ClaudeEntitlementLine/);
+  assert.match(views, /ClaudeEntitlementLine/);
   assert.match(line, /即将到期/);
 });
 

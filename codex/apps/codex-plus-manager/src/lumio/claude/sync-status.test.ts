@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { readAllClaudeViews } from "./read-claude-views.ts";
 import {
   projectsToResume,
   resumeSavedProjects,
@@ -77,14 +78,14 @@ test("engine not running is not 本机目录已就绪", () => {
 
 test("hydrate and open invoke resume, not only SSH list files", async () => {
   const session = await readFile(new URL("./session.ts", import.meta.url), "utf8");
-  const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
+  const views = await readAllClaudeViews();
   const api = await readFile(new URL("./api.ts", import.meta.url), "utf8");
   assert.match(session, /resumeSavedProjects/);
   assert.match(session, /hydrateClaudeWorkspace[\s\S]*resumeSavedProjects/s);
   assert.match(session, /resumeClaudeSync/);
-  assert.match(home, /resumeClaudeSync/);
-  assert.match(home, /workspaceStatusCopy/);
-  assert.doesNotMatch(home, /本机目录已就绪/);
+  assert.match(views, /resumeClaudeSync/);
+  assert.match(views, /workspaceStatusCopy/);
+  assert.doesNotMatch(views, /本机目录已就绪/);
   assert.match(api, /lumio_claude_resume_sync/);
   assert.doesNotMatch(session, /listClaudeFiles\(\{[\s\S]*\}\);\s*dispatchClaude\(\{\s*type: "project-sync-updated"/);
 });

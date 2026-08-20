@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { flattenExplorer, listingsFromEntries, mergeExplorerTrees } from "./file-tree.ts";
 import type { ExplorerListing } from "./file-tree.ts";
+import { readAllClaudeCss, readAllClaudeViews } from "./read-claude-views.ts";
 import type { ClaudeFileEntry } from "./types.ts";
 
 function dir(
@@ -111,14 +111,11 @@ test("matching fingerprints on both sides stay unmarked", () => {
 });
 
 test("Files markup is a single indented explorer, not a two-column wrap", async () => {
-  const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
-  const css = await readFile(
-    new URL("../views/claude/claude-workspace.css", import.meta.url),
-    "utf8",
-  );
-  assert.match(home, /mergeExplorerTrees/);
-  assert.match(home, /listingsFromEntries/);
-  assert.doesNotMatch(home, /lumio-claude-files-split/);
+  const views = await readAllClaudeViews();
+  const css = await readAllClaudeCss();
+  assert.match(views, /mergeExplorerTrees/);
+  assert.match(views, /listingsFromEntries/);
+  assert.doesNotMatch(views, /lumio-claude-files-split/);
   assert.doesNotMatch(css, /\.lumio-claude-files-split/);
   assert.doesNotMatch(css, /\.lumio-claude-files li\s*\{[^}]*display:\s*flex/s);
   assert.match(css, /\.lumio-claude-file-row/);

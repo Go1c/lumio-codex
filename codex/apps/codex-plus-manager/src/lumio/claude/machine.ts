@@ -3,6 +3,7 @@ import { localProjectRoot, projectSlug, remoteProjectRoot } from "./paths.ts";
 import { parseSshTarget } from "./ssh-target.ts";
 import {
   DEFAULT_CLAUDE_PLAN_CENTS,
+  type ClaudeChatSession,
   type ClaudeConnectSheet,
   type ClaudeEntitlement,
   type ClaudeEvent,
@@ -104,6 +105,13 @@ export function initialClaudeState(): ClaudeState {
     orders: [],
     ordersOpen: false,
     planAmountCents: DEFAULT_CLAUDE_PLAN_CENTS,
+    sessionsByProject: {},
+    activeSessionByProject: {},
+    collapsedHosts: {},
+    cliByHost: {},
+    loginByHost: {},
+    statusDrawer: "closed",
+    workspacePhaseByProject: {},
   };
 }
 
@@ -176,6 +184,16 @@ export function persistableClaudeState(state: ClaudeState): PersistableClaudeSta
     entitlement: state.entitlement,
     projects: state.projects,
     activeProjectId: state.activeProjectId,
+  };
+}
+
+function defaultChatSession(projectId: string, sessionId: string): ClaudeChatSession {
+  return {
+    id: sessionId,
+    projectId,
+    title: null,
+    titleLocked: false,
+    running: false,
   };
 }
 
@@ -429,6 +447,112 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
       return {
         ...state,
         planAmountCents: event.amountCents > 0 ? event.amountCents : DEFAULT_CLAUDE_PLAN_CENTS,
+      };
+    case "open-session": {
+      const current = state.sessionsByProject[event.projectId] ?? [];
+      const sessions = current.some((session) => session.id === event.sessionId)
+        ? current
+        : [...current, defaultChatSession(event.projectId, event.sessionId)];
+      return {
+        ...state,
+        sessionsByProject: { ...state.sessionsByProject, [event.projectId]: sessions },
+        activeSessionByProject: {
+          ...state.activeSessionByProject,
+          [event.projectId]: event.sessionId,
+        },
+      };
+    }
+    case "close-session": {
+      const current = state.sessionsByProject[event.projectId] ?? [];
+      let remaining = current.filter((session) => session.id !== event.sessionId);
+      if (!remaining.some((session) => session.id === event.nextSessionId)) {
+        remaining = [...remaining, defaultChatSession(event.projectId, event.nextSessionId)];
+      }
+      return {
+        ...state,
+        sessionsByProject: { ...state.sessionsByProject, [event.projectId]: remaining },
+        activeSessionByProject: {
+          ...state.activeSessionByProject,
+          [event.projectId]: event.nextSessionId,
+        },
+      };
+    }
+    case "select-session":
+      return {
+        ...state,
+        activeSessionByProject: {
+          ...state.activeSessionByProject,
+          [event.projectId]: event.sessionId,
+        },
+      };
+    case "session-title-locked":
+      return {
+        ...state,
+        sessionsByProject: {
+          ...state.sessionsByProject,
+          [event.projectId]: (state.sessionsByProject[event.projectId] ?? []).map((session) =>
+            session.id === event.sessionId
+              ? { ...session, title: event.title, titleLocked: true }
+              : session,
+          ),
+        },
+      };
+    case "session-running":
+      return {
+        ...state,
+        sessionsByProject: {
+          ...state.sessionsByProject,
+          [event.projectId]: (state.sessionsByProject[event.projectId] ?? []).map((session) =>
+            session.id === event.sessionId ? { ...session, running: event.running } : session,
+          ),
+        },
+      };
+    case "toggle-server-group":
+      return {
+        ...state,
+        collapsedHosts: {
+          ...state.collapsedHosts,
+          [event.host]: !state.collapsedHosts[event.host],
+        },
+      };
+    case "cli-install-progress": {
+      const current = state.cliByHost[event.host];
+      return {
+        ...state,
+        cliByHost: {
+          ...state.cliByHost,
+          [event.host]: {
+            phase: event.phase,
+            version: event.version !== undefined ? event.version : (current?.version ?? null),
+            latest: event.latest !== undefined ? event.latest : (current?.latest ?? null),
+            errorCode: event.errorCode !== undefined ? event.errorCode : (current?.errorCode ?? null),
+            detail: event.detail !== undefined ? event.detail : (current?.detail ?? null),
+          },
+        },
+      };
+    }
+    case "login-status": {
+      const current = state.loginByHost[event.host];
+      return {
+        ...state,
+        loginByHost: {
+          ...state.loginByHost,
+          [event.host]: {
+            phase: event.phase,
+            errorCode: event.errorCode !== undefined ? event.errorCode : (current?.errorCode ?? null),
+          },
+        },
+      };
+    }
+    case "set-status-drawer":
+      return { ...state, statusDrawer: event.pane };
+    case "set-workspace-phase":
+      return {
+        ...state,
+        workspacePhaseByProject: {
+          ...state.workspacePhaseByProject,
+          [event.projectId]: event.phase,
+        },
       };
     default:
       return state;

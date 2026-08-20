@@ -1,0 +1,78 @@
+.lumio-claude-status-pane {
+  min-height: 0;
+  padding: 16px 18px;
+  overflow: auto;
+}
+
+.lumio-claude-status-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.lumio-claude-status-card {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 4%);
+}
+
+.lumio-claude-status-card h3 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8e8e93;
+}
+
+.lumio-claude-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.lumio-claude-metrics strong {
+  display: block;
+  font-size: 20px;
+}
+
+.lumio-claude-metrics span {
+  color: #8e8e93;
+  font-size: 12px;
+}
+
+.lumio-claude-meter {
+  overflow: hidden;
+  height: 8px;
+  margin-top: 10px;
+  border-radius: 99px;
+  background: rgb(255 255 255 / 8%);
+}
+
+.lumio-claude-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #0a84ff;
+}
+
+.lumio-claude-status-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.lumio-claude-status-table th,
+.lumio-claude-status-table td {
+  padding: 6px 8px 6px 0;
+  text-align: left;
+}
+
+.lumio-claude-status-table th {
+  color: #8e8e93;
+  font-weight: 560;
+}
