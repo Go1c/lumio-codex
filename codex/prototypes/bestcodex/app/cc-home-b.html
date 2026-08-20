@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>方案 B · 三栏 · Claude 工作台</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio" data-cc>
+      <div class="toolbar">
+        <div>
+          <h1>方案 B · 三栏：项目 / 对话 / 文件</h1>
+          <p>文件与冲突常驻右栏，一眼能看见。代价是中间对话区被挤窄</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-lab.html">← 三套方案对比</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom: 14px">
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-cc-go="installing">装 Claude</button>
+          <button type="button" data-cc-go="login">需登录</button>
+          <button type="button" data-cc-go="ready">已就绪</button>
+          <button type="button" data-cc-go="conflicts">有冲突</button>
+          <button type="button" data-cc-go="offline">离线</button>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-home-b.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="cc-frame">
+            <aside class="cc-rail">
+              <div class="cc-rail-head">
+                <h2>项目</h2>
+                <a class="btn is-sm is-ghost" href="cc-connect.html">新建</a>
+              </div>
+              <p class="quiet" style="margin: 0 8px 10px">已订阅 · 有效期至 2026 年 9 月 19 日（剩余 30 天）</p>
+              <a class="cc-proj is-on" href="cc-home-b.html">
+                <span class="k">my-project</span>
+                <span class="d" data-when="installing">正在安装 Claude · 108.80.81.15</span>
+                <span class="d" data-when="login">需要登录 · 108.80.81.15</span>
+                <span class="d" data-when="ready">已同步 · 108.80.81.15</span>
+                <span class="d" data-when="conflicts">2 个冲突 · 108.80.81.15</span>
+                <span class="d" data-when="offline">离线 · 108.80.81.15</span>
+              </a>
+              <a class="cc-proj" href="cc-home-b.html">
+                <span class="k">docs-site</span>
+                <span class="d">已同步 · gpu-box</span>
+              </a>
+              <p class="quiet" style="margin: 12px 8px 0"><a href="../site/help.html">开通记录</a></p>
+              <a class="btn is-sm add" href="cc-connect.html">连接新服务器</a>
+            </aside>
+
+            <section class="ws">
+              <header class="ws-head">
+                <h2>my-project</h2>
+                <span class="host">root@108.80.81.15 · ~/bestcodex/my-project</span>
+              </header>
+
+              <div class="ws-body is-split">
+                <div class="ws-card" data-view="installing">
+                  <header>
+                    <h3>正在安装 Claude</h3>
+                    <span class="note">第 2 / 4 步</span>
+                  </header>
+                  <p class="meta">从官方渠道装最新版 2.1.228。装完直接能用。</p>
+                  <div class="progress"><i style="width: 42%"></i></div>
+                  <div class="check-list">
+                    <div class="check-row is-done"><i></i><div>取到官方最新版本<span>2.1.228</span></div></div>
+                    <div class="check-row is-now"><i></i><div>下载官方安装包<span>38.2 MB / 96.4 MB</span></div></div>
+                    <div class="check-row"><i></i><div>校验安装包</div></div>
+                    <div class="check-row"><i></i><div>装到服务器上</div></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" disabled>正在安装…</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="login">
+                  <header>
+                    <h3>还需要登录 Anthropic</h3>
+                    <span class="pill-warn">差最后一步</span>
+                  </header>
+                  <p class="meta">Claude 2.1.228 已装好。授权一次，之后不用再登。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">在浏览器中登录</button>
+                    <button class="btn is-ghost" type="button">复制登录链接</button>
+                  </div>
+                  <label class="paste-label" for="b-code">浏览器给了授权码？贴在这里</label>
+                  <div class="paste-row">
+                    <input class="field" id="b-code" placeholder="粘贴授权码" />
+                    <button class="btn is-sm" type="button" data-cc-go="ready">完成登录</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="ready">
+                  <header>
+                    <h3>Claude 已就绪</h3>
+                    <span class="pill-ok">已登录 · 2.1.228</span>
+                  </header>
+                  <p class="meta">my-project 已同步，本机和服务器文件一致。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">开始对话</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="conflicts">
+                  <header>
+                    <h3>有 2 个文件需要你决定</h3>
+                    <span class="pill-warn">不会静默覆盖</span>
+                  </header>
+                  <p class="meta">右栏已经列出来了。你选了才写。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">逐个看差异</button>
+                    <button class="btn is-ghost" type="button" data-cc-go="ready">先开始对话</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="offline">
+                  <header>
+                    <h3>离线 · 本机目录仍可用</h3>
+                    <span class="note">连不上服务器</span>
+                  </header>
+                  <p class="meta">现在连不上 108.80.81.15。本机文件照常能改，恢复连接后自动对齐。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" data-cc-go="ready">重试连接</button>
+                  </div>
+                </div>
+
+                <div class="ws-term" data-when="ready conflicts">
+                  <div class="ws-term-bar"><span class="grow">终端 · my-project</span><a href="#term">收起</a></div>
+                  <div class="ws-term-body">
+                    <div class="dim">Claude Code · my-project</div>
+                    <div class="ok">已连上 root@108.80.81.15</div>
+                    <div>&nbsp;</div>
+                    <div>&gt; <span class="dim">_</span></div>
+                  </div>
+                </div>
+                <div class="ws-term is-folded" data-when="installing login offline">
+                  <div class="ws-term-bar">
+                    <span class="grow" data-when="installing">安装日志</span>
+                    <span class="grow" data-when="login">终端 · 登录完成后可用</span>
+                    <span class="grow" data-when="offline">终端 · 暂时不可用</span>
+                    <a href="#term">展开</a>
+                  </div>
+                </div>
+
+                <aside class="ws-side">
+                  <h4>文件</h4>
+                  <ul>
+                    <li>src/app.ts <span class="path">已同步</span></li>
+                    <li>src/lib/sync.ts <span class="path">已同步</span></li>
+                    <li>README.md <span class="path">已同步</span></li>
+                    <li>package.json <span class="path">已同步</span></li>
+                  </ul>
+                  <h4 data-when="conflicts" style="color: var(--warn)">冲突 2</h4>
+                  <div class="conflict-rows" data-when="conflicts">
+                    <div class="conflict-row" style="grid-template-columns: 1fr">
+                      <div><b>src/app.ts</b><span>两边都改过</span></div>
+                      <div class="picks">
+                        <button class="btn is-sm is-ghost" type="button">本机</button>
+                        <button class="btn is-sm is-ghost" type="button">服务器</button>
+                        <button class="btn is-sm is-ghost" type="button">都留</button>
+                      </div>
+                    </div>
+                    <div class="conflict-row" style="grid-template-columns: 1fr">
+                      <div><b>README.md</b><span>两边都改过</span></div>
+                      <div class="picks">
+                        <button class="btn is-sm is-ghost" type="button">本机</button>
+                        <button class="btn is-sm is-ghost" type="button">服务器</button>
+                        <button class="btn is-sm is-ghost" type="button">都留</button>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="quiet" data-when="installing login offline" style="margin-top: auto">
+                    还没到看文件的时候，先把上面那步走完。
+                  </p>
+                </aside>
+              </div>
+
+              <footer class="ws-foot">
+                <span data-when="installing">正在安装 Claude（第 2 / 4 步）</span>
+                <span class="is-warn" data-when="login">等你登录 Anthropic · 其余都已就绪</span>
+                <span class="is-ok" data-when="ready">已就绪 · 文件与远端一致</span>
+                <span class="is-warn" data-when="conflicts">2 个冲突待处理 · 其余文件已同步</span>
+                <span data-when="offline">离线 · 本机目录可用</span>
+                <span>root@108.80.81.15</span>
+              </footer>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-note">
+        <b>取舍。</b>文件和冲突不用点开就看得见，冲突最难被忽略。
+        代价：1080 宽的窗口里，左轨 232 + 右栏 300 之后，中间只剩 500 出头——状态卡和终端都被挤窄，
+        终端一行放不下多少字；而大多数时候右栏是「4 个已同步文件」，占着最贵的横向空间。
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

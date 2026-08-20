@@ -1,0 +1,64 @@
+.lumio-claude-conflicts {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 0;
+  height: 100%;
+}
+
+.lumio-claude-conflict-list {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  list-style: none;
+  border-right: 1px solid rgb(255 255 255 / 7%);
+}
+
+.lumio-claude-conflict-list button {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.lumio-claude-conflict-list button.is-on {
+  background: rgb(255 255 255 / 8%);
+}
+
+.lumio-claude-conflict-detail {
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.lumio-claude-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.lumio-claude-color-diff {
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 10px;
+  overflow: auto;
+  background: rgb(255 255 255 / 4%);
+}
+
+.lumio-claude-color-diff .ln {
+  padding: 0 10px;
+  white-space: pre-wrap;
+}
+
+.lumio-claude-color-diff .ln.is-add {
+  background: rgb(46 160 67 / 22%);
+  color: #7ee787;
+}
+
+.lumio-claude-color-diff .ln.is-del {
+  background: rgb(248 81 73 / 22%);
+  color: #ffa198;
+}

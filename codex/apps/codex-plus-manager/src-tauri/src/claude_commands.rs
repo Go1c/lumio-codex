@@ -20,7 +20,7 @@ use crate::claude_ssh::{
     resolve_from_user_config, ssh_invocation_args,
 };
 use crate::claude_sync::{self, SYNC_PROGRESS_EVENT, SyncEngine, SyncProgress};
-use crate::claude_terminal::TerminalManager;
+use crate::claude_terminal::{TerminalManager, close_remote_session_command};
 use crate::claude_tunnel::TunnelManager;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -1046,6 +1046,7 @@ pub fn lumio_claude_start_terminal(
     remote_root: String,
     cols: u16,
     rows: u16,
+    session_id: Option<String>,
 ) -> ClaudeCommandResult<()> {
     let alias = host_alias.as_deref().filter(|v| !v.is_empty());
     let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
@@ -1054,6 +1055,7 @@ pub fn lumio_claude_start_terminal(
     };
     match app.state::<TerminalManager>().start(
         &project_id,
+        session_id.as_deref(),
         &target,
         key_path.as_deref(),
         password.as_deref(),
@@ -1258,8 +1260,12 @@ pub fn lumio_claude_write_terminal(
     app: AppHandle,
     project_id: String,
     bytes: Vec<u8>,
+    session_id: Option<String>,
 ) -> ClaudeCommandResult<()> {
-    match app.state::<TerminalManager>().write(&project_id, &bytes) {
+    match app
+        .state::<TerminalManager>()
+        .write(&project_id, session_id.as_deref(), &bytes)
+    {
         Ok(()) => ClaudeCommandResult::ok(()),
         Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
     }
@@ -1271,12 +1277,100 @@ pub fn lumio_claude_resize_terminal(
     project_id: String,
     cols: u16,
     rows: u16,
+    session_id: Option<String>,
 ) -> ClaudeCommandResult<()> {
     match app
         .state::<TerminalManager>()
-        .resize(&project_id, cols, rows)
+        .resize(&project_id, session_id.as_deref(), cols, rows)
     {
         Ok(()) => ClaudeCommandResult::ok(()),
+        Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
+    }
+}
+
+#[allow(dead_code)]
+#[tauri::command]
+pub fn lumio_claude_open_chat(
+    app: AppHandle,
+    project_id: String,
+    session_id: String,
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    remote_root: String,
+    cols: u16,
+    rows: u16,
+) -> ClaudeCommandResult<()> {
+    if session_id.trim().is_empty() {
+        return ClaudeCommandResult::failed("SSH_CLIENT_MISSING");
+    }
+    lumio_claude_start_terminal(
+        app,
+        project_id,
+        host,
+        user,
+        port,
+        password,
+        key_path,
+        host_alias,
+        remote_root,
+        cols,
+        rows,
+        Some(session_id),
+    )
+}
+
+#[allow(dead_code)]
+#[tauri::command]
+pub fn lumio_claude_close_chat(
+    app: AppHandle,
+    project_id: String,
+    session_id: String,
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+) -> ClaudeCommandResult<()> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return ClaudeCommandResult::failed("SSH_CLIENT_MISSING");
+    }
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
+    let remote_result = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias)
+    {
+        Ok(target) => {
+            let remote = close_remote_session_command(&project_id, session_id);
+            run_ssh_target(&target, password.as_deref(), key_path.as_deref(), &remote)
+        }
+        Err(code) => {
+            let _ = app
+                .state::<TerminalManager>()
+                .close(&project_id, session_id);
+            return ClaudeCommandResult::failed(code);
+        }
+    };
+    let local_result = app
+        .state::<TerminalManager>()
+        .close(&project_id, session_id);
+    match (remote_result, local_result) {
+        (Ok(_), Ok(())) => ClaudeCommandResult::ok(()),
+        _ => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
+    }
+}
+
+#[allow(dead_code)]
+#[tauri::command]
+pub fn lumio_claude_list_chats(
+    app: AppHandle,
+    project_id: String,
+) -> ClaudeCommandResult<Vec<String>> {
+    match app.state::<TerminalManager>().list_chats(&project_id) {
+        Ok(ids) => ClaudeCommandResult::ok(ids),
         Err(_) => ClaudeCommandResult::failed("SSH_CLIENT_MISSING"),
     }
 }

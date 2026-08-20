@@ -42,3 +42,4 @@
 | [0012](0012-claude-balance-subscribe.md) | Claude 包月钱在 Sub2API、订阅权在控制面，不在 Sub2API 做套餐 | 生效 |
 | [0013](0013-bestcodex-sync-components-bundling.md) | 同步组件为构建产物不入库，占位由 build.rs 生成，fns-server 源留仓外 pin | 被 0014 取代 |
 | [0014](0014-fns-server-in-repo.md) | fns-server 源落仓内独立维护，不再绑定外部 git | 生效 |
+| [0015](0015-claude-workspace-scheme-d.md) | Claude 工作台采用方案 D：三栏 + 分阶段，远端 CLI 走官方安装器 | 生效 |

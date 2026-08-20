@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { readAllClaudeViews } from "./read-claude-views.ts";
 import { formatStatusBytes, serviceDisplayName } from "./remote-status.ts";
 
 test("connected workspace exposes 服务器状态 and 对话状态", async () => {
-  const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
+  const views = await readAllClaudeViews();
   const api = await readFile(new URL("./api.ts", import.meta.url), "utf8");
   const session = await readFile(new URL("./session.ts", import.meta.url), "utf8");
-  assert.match(home, />服务器状态</);
-  assert.match(home, />对话状态</);
-  assert.match(home, /fetchClaudeServerStatus/);
-  assert.match(home, /fetchClaudeSessions/);
+  assert.match(views, />服务器状态</);
+  assert.match(views, />对话状态</);
+  assert.match(views, /StatusBar/);
+  assert.match(views, /StatusDrawer/);
+  assert.match(views, /set-status-drawer/);
+  assert.doesNotMatch(views, /set-stage-tab/);
+  assert.match(views, /fetchClaudeServerStatus/);
+  assert.match(views, /fetchClaudeSessions/);
   assert.match(api, /lumio_claude_server_status/);
   assert.match(api, /lumio_claude_list_sessions/);
   assert.match(session, /fetchClaudeServerStatus|listClaudeServerStatus/);

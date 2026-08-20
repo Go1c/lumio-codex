@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>方案 D · 重新进来 · Claude 工作台</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio" data-cc>
+      <div class="toolbar">
+        <div>
+          <h1>方案 D · 期三：退出后重新进来</h1>
+          <p>左栏列出所有项目，点一下就自动连接。不再问任何东西</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-lab.html">← 方案对比</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom: 14px">
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-cc-go="pick">刚进来 · 还没选</button>
+          <button type="button" data-cc-go="connecting">正在连接</button>
+          <button type="button" data-cc-go="expired">登录过期</button>
+          <button type="button" data-cc-go="offline">离线</button>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-resume.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="d-frame">
+            <aside class="d-rail" data-rail></aside>
+
+            <div class="d-mid-wrap">
+              <div class="d-tabs" data-tabs data-when="expired"></div>
+
+            <!-- 刚进来，还没点任何项目 -->
+            <section class="d-mid is-light" data-view="pick">
+              <div class="d-pane is-center">
+                <div style="max-width: 340px; text-align: center">
+                  <span class="app-icon is-card" aria-hidden="true" style="margin: 0 auto 16px">
+                    <img src="../assets/icons/app-icon.jpg" alt="" />
+                  </span>
+                  <h3 style="margin: 0 0 8px; font-size: 19px; letter-spacing: -0.02em">挑一个项目</h3>
+                  <p class="note" style="margin: 0">
+                    左边点一下就自动连上那台服务器，上次的对话还在。<br />
+                    每个项目就是一台服务器加一个文件夹。
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 点了项目：自动连接，三行进度 -->
+            <section class="d-mid is-light" data-view="connecting">
+              <div class="d-pane is-center">
+                <div class="ws-card" style="width: min(400px, 100%)">
+                  <header>
+                    <h3>正在连接 my-project</h3>
+                    <span class="note">root@108.80.81.15</span>
+                  </header>
+                  <p class="meta">不用你再填什么，几秒就好。</p>
+                  <div class="progress is-indeterminate"><i></i></div>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连上服务器</b></div><span class="when">1 秒</span></div>
+                    <div class="d-step is-now"><i></i><div><b>恢复上次的对话</b></div><span class="when">进行中</span></div>
+                    <div class="d-step"><i></i><div><b>对齐文件</b></div><span class="when">待办</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <a class="btn is-blue" href="cc-home-d.html">进去看看</a>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- 登录过期：终端本身没坏，用浮层盖住 -->
+            <section class="d-mid" data-view="expired">
+              <div class="d-over">
+                <div class="d-term">
+                  <div class="dim">&gt; 帮我把 sync.ts 里的重试逻辑抽成一个函数</div>
+                  <div class="dim">我看了 src/lib/sync.ts，重试那段在 3 个地方重复。</div>
+                  <div>&nbsp;</div>
+                  <div class="dim">&gt; _</div>
+                </div>
+                <div class="ws-card">
+                  <header>
+                    <h3>登录已过期</h3>
+                    <span class="pill-warn">重新授权一次</span>
+                  </header>
+                  <p class="meta">服务器和文件都是好的，Claude 也还是 2.1.228。只是授权到期了。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">在浏览器中登录</button>
+                    <button class="btn is-ghost" type="button">复制登录链接</button>
+                  </div>
+                  <label class="paste-label" for="res-code">浏览器给了授权码？贴在这里</label>
+                  <div class="paste-row">
+                    <input class="field" id="res-code" placeholder="粘贴授权码" />
+                    <button class="btn is-sm" type="button">完成登录</button>
+                  </div>
+                  <p class="quiet">后面那段对话还在，授权完接着用。</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 连不上：本机目录仍可用 -->
+            <section class="d-mid is-light" data-view="offline">
+              <div class="d-pane is-center">
+                <div class="ws-card" style="width: min(420px, 100%)">
+                  <header>
+                    <h3>连不上这台服务器</h3>
+                    <span class="note">离线</span>
+                  </header>
+                  <p class="meta">
+                    现在连不上 108.80.81.15。本机 ~/BestCodex/my-project 里的文件照常能改，
+                    恢复连接后自动对齐，不会静默覆盖谁。
+                  </p>
+                  <div class="fail-box">
+                    连接超时。检查这台服务器是否开机、网络是否可达。
+                    <span class="code">CLAUDE_SSH_TIMEOUT</span>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" data-cc-go="connecting">重试连接</button>
+                    <a class="btn is-ghost" href="#files">看本机文件</a>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            </div>
+
+            <aside
+              class="d-files"
+              data-fx
+              data-fx-root="my-project"
+              data-fx-blank-states="pick"
+              data-fx-partial-states="connecting"
+              data-fx-partial-note="正在对齐…"
+            ></aside>
+
+            <footer class="d-bar">
+              <button type="button">
+                <span data-when="pick">● 选个项目就自动连接</span>
+                <span data-when="connecting">● 正在连接 108.80.81.15…</span>
+                <span class="is-warn" data-when="expired">● 登录已过期 · 重新授权一次</span>
+                <span class="is-bad" data-when="offline">● 离线 · 本机目录仍可用</span>
+              </button>
+              <span class="sep" data-when="connecting expired offline">·</span>
+              <button data-when="connecting" type="button">正在对齐文件</button>
+              <button data-when="expired" type="button">Claude 2.1.228 · 已同步</button>
+              <button data-when="offline" type="button">上次同步：昨天 21:04</button>
+              <span class="grow"></span>
+              <span class="nudge" data-when="expired">有新版 2.1.230 · 登录完再升</span>
+              <span class="host" data-when="connecting expired offline">root@108.80.81.15</span>
+            </footer>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-note">
+        <b>三条分支怎么分。</b>点项目即自动连接，中间先给三行进度（连上服务器 → 恢复上次的对话 → 对齐文件），
+        几秒后换成终端。登录过期用浮层盖住终端——终端本身没坏，后面那段对话还在，所以不该整页重来。
+        连不上则整格换成离线态，重点是「本机目录仍可用」而不是报错。
+        Claude 偏旧只在底栏出一行「有新版」，永不打断。
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

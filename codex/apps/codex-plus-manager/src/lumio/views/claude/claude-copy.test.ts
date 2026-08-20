@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
+import { readAllClaudeViews } from "../../claude/read-claude-views.ts";
+
 async function readView(name: string): Promise<string> {
   return readFile(new URL(name, import.meta.url), "utf8");
 }
@@ -10,14 +12,25 @@ test("the Claude workspace folder ships the four prototype surfaces", async () =
   const names = (await readdir(new URL(".", import.meta.url)))
     .filter((name) => name.endsWith(".tsx"))
     .sort();
-  assert.deepEqual(names, [
+  for (const required of [
     "ClaudeConnect.tsx",
     "ClaudeEmpty.tsx",
     "ClaudeEntitlementLine.tsx",
     "ClaudeHome.tsx",
     "ClaudeSubscribe.tsx",
     "ClaudeWorkspace.tsx",
-  ]);
+    "ProjectRail.tsx",
+    "TerminalPane.tsx",
+    "FileExplorer.tsx",
+    "ConflictsPane.tsx",
+    "StatusDrawer.tsx",
+    "StatusBar.tsx",
+    "SessionTabs.tsx",
+    "InitChecklist.tsx",
+    "LoginCard.tsx",
+  ]) {
+    assert.ok(names.includes(required), `missing ${required}`);
+  }
 });
 
 test("the subscribe card uses the plan price and pays with account balance", async () => {
@@ -110,7 +123,12 @@ test("user-visible Claude copy never says agent or tmux", async () => {
     assert.doesNotMatch(source, /\bagent\b/i, `${name} leaked agent`);
     assert.doesNotMatch(source, /\btmux\b/i, `${name} leaked tmux`);
   }
-  for (const rel of ["../../claude/session.ts", "../../claude/api.ts", "../../claude/machine.ts"]) {
+  for (const rel of [
+    "../../claude/session.ts",
+    "../../claude/api.ts",
+    "../../claude/machine.ts",
+    "../../claude/terminal-status.ts",
+  ]) {
     const source = await readFile(new URL(rel, import.meta.url), "utf8");
     const visible = source
       .split("\n")
@@ -123,40 +141,68 @@ test("user-visible Claude copy never says agent or tmux", async () => {
 });
 
 test("the terminal copies locally and opens login links in the system browser", async () => {
-  const home = await readView("ClaudeHome.tsx");
+  const views = await readAllClaudeViews();
   const logic = await readFile(new URL("../../claude/terminal-clipboard.ts", import.meta.url), "utf8");
-  assert.match(home, /onContextMenu/);
-  assert.match(home, /复制/);
-  assert.match(home, /用浏览器打开/);
-  assert.match(home, /openInBrowser/);
-  assert.match(home, /attachCustomKeyEventHandler/);
-  assert.match(home, /copyTextForKey/);
+  assert.match(views, /onContextMenu/);
+  assert.match(views, /复制/);
+  assert.match(views, /用浏览器打开/);
+  assert.match(views, /openInBrowser/);
+  assert.match(views, /attachCustomKeyEventHandler/);
+  assert.match(views, /copyTextForKey/);
   assert.match(logic, /stitchWrappedHttpsUrls/);
-  assert.doesNotMatch(home, /window\.open/);
+  assert.doesNotMatch(views, /window\.open/);
 });
 
 test("the workspace shows files and conflicts tabs next to the terminal", async () => {
-  const source = await readView("ClaudeHome.tsx");
-  assert.match(source, />终端</);
-  assert.match(source, />文件</);
-  assert.match(source, />冲突</);
-  assert.match(source, />服务器状态</);
-  assert.match(source, />对话状态</);
+  const source = await readAllClaudeViews();
+  const css = await readFile(new URL("./claude-workspace.css", import.meta.url), "utf8");
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /ProjectRail/);
+  assert.match(home, /SessionTabs/);
+  assert.match(home, /FileExplorer/);
+  assert.match(home, /StatusBar/);
+  assert.match(home, /StatusDrawer/);
+  assert.match(source, /服务器与项目/);
+  assert.match(source, /新建项目/);
   assert.match(source, /连接新服务器/);
-  assert.match(source, />项目</);
+  assert.match(css, /grid-template-columns:\s*236px minmax\(0,\s*1fr\) 282px/);
+  assert.match(css, /grid-template-rows:\s*minmax\(0,\s*1fr\) 26px/);
+  assert.doesNotMatch(home, /lumio-claude-stage-tabs/);
+  assert.doesNotMatch(home, /set-stage-tab/);
+  assert.doesNotMatch(home, /ClaudeEntitlementLine/);
+  assert.doesNotMatch(home, /ordersSlot/);
+});
+
+test("session title locking and last-tab refill are wired from the workspace", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  const terminal = await readView("TerminalPane.tsx");
+  assert.match(terminal, /lockTitleFromInput/);
+  assert.match(terminal, /session-title-locked/);
+  assert.match(terminal, /sessionId/);
+  assert.match(home, /nextSessionId/);
+  assert.match(home, /close-session/);
+  assert.match(home, /open-session/);
+  assert.match(home, /lumio_claude_close_chat|closeClaudeProjectChat/);
+});
+
+test("terminalBanner and terminal output are mutually exclusive", async () => {
+  const terminal = await readView("TerminalPane.tsx");
+  const status = await readFile(new URL("../../claude/terminal-status.ts", import.meta.url), "utf8");
+  assert.match(terminal, /terminalBanner/);
+  assert.match(terminal, /setHasOutput\(true\)/);
+  assert.match(status, /没能打开终端/);
+  assert.doesNotMatch(terminal, /setStatus\("没能打开终端。"\)/);
 });
 
 test("ClaudeWorkspace keeps session state in the module store, not only in the leaf", async () => {
   const source = await readView("ClaudeWorkspace.tsx");
-  const empty = await readView("ClaudeEmpty.tsx");
-  const home = await readView("ClaudeHome.tsx");
-  const subscribe = await readView("ClaudeSubscribe.tsx");
+  const views = await readAllClaudeViews();
   assert.match(source, /getClaudeState|subscribeClaudeStore/);
   assert.match(source, /onBackToCodex/);
   assert.match(source, /onRecharge/);
   assert.match(source, /onOpenOrders/);
   assert.doesNotMatch(source, /onOpenAccount/);
-  assert.match(`${source}\n${empty}\n${home}\n${subscribe}`, /开通记录|ordersSlot/);
+  assert.match(views, /开通记录|ordersSlot/);
   assert.doesNotMatch(source, /toggleClaudeOrders/);
   assert.doesNotMatch(source, /暂无开通记录/);
 });
@@ -169,12 +215,11 @@ test("开通记录 opens the account-center orders tab", async () => {
 
 test("empty and home surfaces show remaining subscription days from the server", async () => {
   const line = await readView("ClaudeEntitlementLine.tsx");
-  const empty = await readView("ClaudeEmpty.tsx");
-  const home = await readView("ClaudeHome.tsx");
+  const views = await readAllClaudeViews();
   const copy = await readFile(new URL("../../claude/copy.ts", import.meta.url), "utf8");
   assert.match(copy, /有效期至/);
   assert.match(copy, /剩余/);
-  assert.match(`${empty}\n${home}`, /ClaudeEntitlementLine/);
+  assert.match(views, /ClaudeEntitlementLine/);
   assert.match(line, /即将到期/);
 });
 
@@ -205,4 +250,17 @@ test("artifact-missing blames the build, not the machine or the connection", asy
   assert.match(connect, /setupErrorCode === "DEPLOY_ARTIFACT_MISSING"/);
   assert.match(connect, /打开帮助页/);
   assert.match(connect, /HELP_URL/);
+});
+
+test("ClaudeHome maps TerminalPane from sessionsByProject, not only the active sessions alias", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /Object\.entries\(\s*state\.sessionsByProject\s*\)/);
+  assert.match(home, /<TerminalPane/);
+  assert.doesNotMatch(home, /sessions\.map\(\(session\) =>\s*\(\s*<TerminalPane/);
+});
+
+test("ClaudeHome passes onlineHosts into ProjectRail from state", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /onlineHosts=/);
+  assert.match(home, /onlineHostsFromState/);
 });
