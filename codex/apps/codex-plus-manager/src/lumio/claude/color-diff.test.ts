@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { tagColorDiff } from "./color-diff.ts";
+import { readAllClaudeCss, readAllClaudeViews } from "./read-claude-views.ts";
 
 test("color-diff tags an unchanged line, a deleted line, and an inserted line", () => {
   const tagged = tagColorDiff("keep\nremove\n", "keep\ninsert\n");
@@ -17,14 +17,11 @@ test("color-diff tags an unchanged line, a deleted line, and an inserted line", 
 });
 
 test("conflict detail is a single colored view, not two raw file dumps", async () => {
-  const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
-  const css = await readFile(
-    new URL("../views/claude/claude-workspace.css", import.meta.url),
-    "utf8",
-  );
-  assert.match(home, /tagColorDiff/);
-  assert.match(home, /lumio-claude-color-diff/);
-  assert.doesNotMatch(home, /lumio-claude-diff/);
+  const views = await readAllClaudeViews();
+  const css = await readAllClaudeCss();
+  assert.match(views, /tagColorDiff/);
+  assert.match(views, /lumio-claude-color-diff/);
+  assert.doesNotMatch(views, /lumio-claude-diff/);
   assert.doesNotMatch(css, /\.lumio-claude-diff\s*\{[^}]*grid-template-columns:\s*1fr 1fr/s);
   assert.match(css, /\.lumio-claude-color-diff/);
   assert.match(css, /\.is-add/);

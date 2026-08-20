@@ -1,0 +1,265 @@
+.lumio-claude-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 8px 10px;
+  border-right: 1px solid var(--cc-line);
+  background: color-mix(in srgb, var(--cc-glass) 70%, transparent);
+  backdrop-filter: blur(20px);
+  overflow: auto;
+}
+
+.lumio-claude-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px 10px;
+}
+
+.lumio-claude-rail-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 610;
+  letter-spacing: -0.02em;
+}
+
+.lumio-claude-rail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0 -2px;
+}
+
+.lumio-claude-srv-group + .lumio-claude-srv-group {
+  margin-top: 2px;
+}
+
+.lumio-claude-srv {
+  display: grid;
+  grid-template-columns: 14px 6px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-srv:hover {
+  background: var(--cc-field);
+  text-decoration: none;
+}
+
+.lumio-claude-srv .chev {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--cc-ink-3);
+}
+
+.lumio-claude-srv .chev svg {
+  width: 11px;
+  height: 11px;
+  transition: transform 120ms ease;
+}
+
+.lumio-claude-srv.is-open .chev svg {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lumio-claude-srv .chev svg {
+    transition: none;
+  }
+}
+
+.lumio-claude-srv .host {
+  grid-column: 3;
+  overflow: hidden;
+  font: 590 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-claude-srv .meta {
+  grid-column: 3;
+  overflow: hidden;
+  color: var(--cc-ink-3);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-claude-srv-body {
+  padding: 2px 0 6px 12px;
+}
+
+.lumio-claude-newproj {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--cc-ink-3);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-newproj:hover {
+  background: var(--cc-field);
+  color: var(--cc-ink);
+}
+
+.lumio-claude-newproj .glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.lumio-claude-newproj .glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lumio-claude-proj {
+  display: block;
+  width: 100%;
+  padding: 7px 10px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lumio-claude-proj:hover {
+  text-decoration: none;
+  background: var(--cc-field);
+}
+
+.lumio-claude-proj.is-on {
+  background: var(--cc-bg-elev);
+  box-shadow: 0 6px 20px rgb(20 20 40 / 6%);
+}
+
+.lumio-claude-proj .k {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 560;
+}
+
+.lumio-claude-proj .k .glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--cc-accent);
+}
+
+.lumio-claude-proj .k .glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lumio-claude-live {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--cc-accent);
+}
+
+.lumio-claude-proj .dir {
+  display: block;
+  margin-top: 2px;
+  color: var(--cc-ink-3);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lumio-claude-proj .st {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--cc-ink-2);
+}
+
+.lumio-claude-proj .st.is-warn {
+  color: var(--cc-warn, var(--warn, #ff9f0a));
+}
+
+.lumio-claude-proj .st.is-ok {
+  color: var(--cc-ok);
+}
+
+.lumio-claude-proj .st.is-bad {
+  color: var(--cc-danger);
+}
+
+.lumio-claude-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cc-ink-3);
+  flex: 0 0 auto;
+}
+
+.lumio-claude-dot.is-ok {
+  background: var(--cc-ok);
+}
+
+.lumio-claude-rail-foot {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.lumio-claude-connect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--cc-line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lumio-claude-connect:hover {
+  background: var(--cc-field);
+}
+
+.lumio-claude-connect .glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.lumio-claude-connect .glyph svg {
+  width: 13px;
+  height: 13px;
+}

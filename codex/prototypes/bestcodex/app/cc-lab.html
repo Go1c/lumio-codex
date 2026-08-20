@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Claude 工作台 · 方案与取舍</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <main class="gallery" style="max-width: 1100px">
+      <header class="gallery-head" style="max-width: 760px">
+        <div class="brand">
+          <span class="app-icon" aria-hidden="true"><img src="../assets/icons/app-icon.jpg" alt="" /></span>
+          BestCodex
+        </div>
+        <h1>接入之后：右侧到底长什么样</h1>
+        <p>
+          真机上原来是「整页黑终端」：连上就丢进黑窗，Claude 甩出几十行登录地址，
+          顶上还写着「没能打开终端。」而下面 Claude 明明在跑。
+          <b>已定案：方案 D。</b>A / B / C 留在下面当决策留痕。
+        </p>
+        <div class="seg" style="margin-top: 16px">
+          <button type="button" data-theme-set="light">浅色</button>
+          <button type="button" data-theme-set="dark">深色</button>
+        </div>
+      </header>
+
+      <h2 style="margin: 8px 0 14px; font-size: 22px; letter-spacing: -0.02em">定案 · 方案 D：三栏 + 分阶段</h2>
+      <div class="compare" style="grid-template-columns: repeat(3, 1fr)">
+        <article class="is-pick">
+          <p class="kicker">期一</p>
+          <h3>初始化</h3>
+          <p>第一次接上这台服务器。终端里还没东西可看，中间那格是五步清单：连接 / 装同步组件 / 首次同步 / 装 Claude / 登录 Anthropic。登录就地给浏览器按钮和贴码框。</p>
+          <a class="btn is-blue" href="cc-init.html">打开期一</a>
+          <div class="links">
+            <a href="cc-init.html?state=syncing">首次同步</a>
+            <a href="cc-init.html?state=installing">装 Claude</a>
+            <a href="cc-init.html?state=install-fail">装失败</a>
+            <a href="cc-init.html?state=login">需登录</a>
+            <a href="cc-init.html?state=done">完成</a>
+          </div>
+        </article>
+
+        <article class="is-pick">
+          <p class="kicker">期二</p>
+          <h3>日常使用</h3>
+          <p>左边按服务器分组列项目（一台服务器 N 个项目），中间顶部一条会话标签、下面整格终端，右边文件，底栏一行细状态。塞不进小字的表格与差异对比，点底栏从下面升起抽屉。</p>
+          <a class="btn is-blue" href="cc-home-d.html">打开期二</a>
+          <div class="links">
+            <a href="cc-home-d.html?state=ready">已就绪</a>
+            <a href="cc-home-d.html?state=conflicts">有冲突</a>
+            <a href="cc-home-d.html?state=update">有新版</a>
+            <a href="cc-home-d.html?state=term-fail">终端真失败</a>
+            <a href="cc-home-d.html?drawer=server">抽屉 · 服务器</a>
+            <a href="cc-home-d.html?drawer=sessions">抽屉 · 对话</a>
+            <a href="cc-home-d.html?state=conflicts&amp;drawer=conflicts">抽屉 · 冲突差异</a>
+          </div>
+        </article>
+
+        <article class="is-pick">
+          <p class="kicker">期三</p>
+          <h3>退出后重新进来</h3>
+          <p>左栏列出所有项目（名称 / IP / 文件夹 / 上次状态），点一下就自动连接，不再问任何东西。登录过期用浮层，连不上则强调本机目录仍可用。</p>
+          <a class="btn is-blue" href="cc-resume.html">打开期三</a>
+          <div class="links">
+            <a href="cc-resume.html?state=pick">刚进来</a>
+            <a href="cc-resume.html?state=connecting">正在连接</a>
+            <a href="cc-resume.html?state=expired">登录过期</a>
+            <a href="cc-resume.html?state=offline">离线</a>
+          </div>
+        </article>
+      </div>
+
+      <div class="lab-note" style="max-width: none">
+        <b>方案 D 的四条硬规矩。</b>
+        一，中间归终端，状态一律走底栏那行小字，且必须说清「你现在卡在哪」，不再只说「本机目录已就绪」。
+        二，「没能打开终端。」只允许在终端真的没打开时出现，且带重试；一旦有输出必须消失。
+        三，左栏只有项目和它的关键信息——名称、服务器 IP、文件夹、上次状态。没有订阅行，没有开通记录。
+        四，冲突不打断：底栏红角标加右栏文件角标，处理入口在抽屉里，`keepLocal` / `keepRemote` / `keepBoth` 与不静默覆盖照旧。
+        <br /><br />
+        <b>已定的另外四项。</b>Claude 装在你自己的 Linux 服务器上，走官方签名安装包并校验，不用 sudo、不套安装脚本；
+        安装挂在工作台的初始化清单里，接入向导仍是四步，老项目也走得到；
+        登录是「在浏览器中登录 + 正规输入框贴授权码」，凭据仍由官方 Claude 自己保管；
+        默认不自动进 Claude，点「开始对话」才进。
+      </div>
+
+      <h2 style="margin: 32px 0 6px; font-size: 22px; letter-spacing: -0.02em">落选留痕</h2>
+      <p class="note" style="margin: 0 0 14px">下面三套都被否了，留着是为了别再兜回来。</p>
+      <div class="compare">
+        <article>
+          <p class="kicker">方案 A · 落选</p>
+          <h3>上状态卡 + 下终端</h3>
+          <p>中间一张会变的状态卡，卡下面才是终端。</p>
+          <dl>
+            <dt>为什么落选</dt>
+            <dd>状态卡常驻，永久吃掉终端的高度。日常使用时那张卡九成时间只是在说「已就绪」，却一直占着最贵的纵向空间。</dd>
+          </dl>
+          <a class="btn" href="cc-home-a.html">打开方案 A</a>
+        </article>
+
+        <article>
+          <p class="kicker">方案 B · 落选</p>
+          <h3>三栏，文件冲突常驻右栏</h3>
+          <p>左轨 + 中间状态卡与终端 + 右边常驻文件与冲突栏。</p>
+          <dl>
+            <dt>为什么落选</dt>
+            <dd>方向对了，但中间同时塞状态卡和终端，1080 宽的窗口里终端只剩 500 出头。D 保留了右栏文件，把状态挪去底栏，中间整格让给终端。</dd>
+          </dl>
+          <a class="btn" href="cc-home-b.html">打开方案 B</a>
+        </article>
+
+        <article>
+          <p class="kicker">方案 C · 落选</p>
+          <h3>保留 Tab，加「概览」当默认</h3>
+          <p>四个 Tab，默认落在概览。</p>
+          <dl>
+            <dt>为什么落选</dt>
+            <dd>状态和终端被 Tab 切开：安装时看不到日志滚，对话时看不到状态。每次确认「Claude 好了没」都要切页，跟「终端只是工具」反着走。</dd>
+          </dl>
+          <a class="btn" href="cc-home-c.html">打开方案 C</a>
+        </article>
+      </div>
+
+      <div class="lab-note" style="max-width: none">
+        <b>还没画的（known gaps）：</b>
+        文件面板的完整层级与预览（现在只画了树和角标）；抽屉里超过两个冲突时的列表分页；
+        底栏 CPU 与内存的刷新节奏按 30 秒一次画的，真机上要不要这么勤还得看开销。
+      </div>
+
+      <p class="note" style="margin-top: 22px">
+        <a href="../index.html">← 回设计稿总览</a> ·
+        <a href="cc-home.html">看被推翻的那版（整页终端）</a>
+      </p>
+    </main>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

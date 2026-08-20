@@ -1,0 +1,202 @@
+.lumio-claude-init-pane {
+  display: grid;
+  align-content: start;
+  min-height: 0;
+  height: 100%;
+  padding: 22px 24px;
+  overflow: auto;
+}
+
+.lumio-claude-shell-center {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  height: 100%;
+  padding: 24px;
+}
+
+.lumio-claude-ws-card {
+  position: relative;
+  overflow: hidden;
+  width: min(560px, 100%);
+  padding: 20px 22px 18px;
+  border: 1px solid var(--cc-glass-border);
+  border-radius: 20px;
+  background: var(--cc-glass);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 70%) inset,
+    0 14px 32px rgb(20 24 32 / 6%);
+  backdrop-filter: blur(22px);
+}
+
+.lumio-claude-ws-card::after {
+  position: absolute;
+  top: -52px;
+  right: -30px;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(224 122 98 / 16%), transparent 68%);
+  content: "";
+  pointer-events: none;
+}
+
+.lumio-claude-ws-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.lumio-claude-ws-card h3 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 590;
+  letter-spacing: -0.02em;
+}
+
+.lumio-claude-init-note {
+  color: var(--cc-ink-2);
+  font-size: 13px;
+}
+
+.lumio-claude-init-pill {
+  font-size: 13px;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+.lumio-claude-init-pill.is-ok {
+  color: var(--cc-ok);
+}
+
+.lumio-claude-init-pill.is-warn {
+  color: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lumio-claude-ws-card {
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 6%) inset,
+      0 18px 40px rgb(0 0 0 / 28%);
+  }
+
+  .lumio-claude-init-pill.is-warn {
+    color: #ffd60a;
+  }
+}
+
+.lumio-claude-init-meta {
+  margin: 0 0 16px;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.lumio-claude-ws-card .lumio-claude-progress {
+  margin-bottom: 16px;
+}
+
+.lumio-claude-init-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0 0 16px;
+}
+
+.lumio-claude-init-step {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 0;
+  border-top: 0.5px solid var(--cc-line);
+}
+
+.lumio-claude-init-step:first-child {
+  border-top: 0;
+}
+
+.lumio-claude-init-step > i {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--cc-field);
+}
+
+.lumio-claude-init-step.is-now > i {
+  background: var(--cc-accent);
+}
+
+.lumio-claude-init-step.is-done > i {
+  background: var(--cc-ok);
+}
+
+.lumio-claude-init-step.is-fail > i {
+  background: var(--cc-danger);
+}
+
+.lumio-claude-init-step b {
+  display: block;
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.lumio-claude-init-step .d {
+  display: block;
+  margin-top: 2px;
+  color: var(--cc-ink-2);
+  font-size: 12px;
+}
+
+.lumio-claude-init-when {
+  color: var(--cc-ink-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lumio-claude-ws-card .lumio-claude-fail {
+  margin: 0 0 16px;
+}
+
+.lumio-claude-ws-card .lumio-claude-fail-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lumio-claude-init-quiet {
+  margin: 12px 0 0;
+  color: var(--cc-ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lumio-claude-resume-card {
+  width: min(400px, 100%);
+}
+
+.lumio-claude-offline-card {
+  width: min(420px, 100%);
+}
+
+.lumio-claude-pick {
+  max-width: 340px;
+  text-align: center;
+}
+
+.lumio-claude-pick .lumio-claude-icon {
+  margin: 0 auto 16px;
+}
+
+.lumio-claude-pick h3 {
+  margin: 0 0 8px;
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+
+.lumio-claude-pick p {
+  margin: 0;
+  color: var(--cc-ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}

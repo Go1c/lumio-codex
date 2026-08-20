@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>方案 D · 初始化 · Claude 工作台</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio" data-cc>
+      <div class="toolbar">
+        <div>
+          <h1>方案 D · 期一：初始化</h1>
+          <p>第一次接上这台服务器。终端里还没东西可看，中间那格是清单，不是终端</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-lab.html">← 方案对比</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom: 14px">
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-cc-go="syncing">首次同步</button>
+          <button type="button" data-cc-go="installing">装 Claude</button>
+          <button type="button" data-cc-go="install-fail">装失败</button>
+          <button type="button" data-cc-go="login">需登录</button>
+          <button type="button" data-cc-go="done">完成</button>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-init.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="d-frame">
+            <aside class="d-rail" data-rail></aside>
+
+            <section class="d-mid is-light">
+              <div class="d-pane">
+                <!-- 第 3 步：首次同步 -->
+                <div class="ws-card" data-view="syncing">
+                  <header>
+                    <h3>正在把这个项目准备好</h3>
+                    <span class="note">第 3 / 5 步</span>
+                  </header>
+                  <p class="meta">全自动，不用你敲命令。装完就能直接用。</p>
+                  <div class="progress"><i style="width: 46%"></i></div>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连接服务器</b><span>root@108.80.81.15</span></div><span class="when">2 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>装同步组件</b><span>本机与服务器双向同步已就位</span></div><span class="when">18 秒</span></div>
+                    <div class="d-step is-now"><i></i><div><b>首次同步文件</b><span>142 / 386 个文件 · 已用 24 秒</span></div><span class="when">进行中</span></div>
+                    <div class="d-step"><i></i><div><b>安装 Claude</b><span>取官方当前最新版</span></div><span class="when">待办</span></div>
+                    <div class="d-step"><i></i><div><b>登录 Anthropic</b><span>用你的 Claude 账号授权一次</span></div><span class="when">待办</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" disabled>正在准备…</button>
+                    <a class="btn is-ghost" href="home.html">切到 Codex（这边继续跑）</a>
+                  </div>
+                </div>
+
+                <!-- 第 4 步：装 Claude -->
+                <div class="ws-card" data-view="installing">
+                  <header>
+                    <h3>正在安装 Claude</h3>
+                    <span class="note">第 4 / 5 步</span>
+                  </header>
+                  <p class="meta">从官方渠道取当前最新版 2.1.228，装在这台服务器上。你不用自己敲安装命令。</p>
+                  <div class="progress"><i style="width: 68%"></i></div>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连接服务器</b></div><span class="when">2 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>装同步组件</b></div><span class="when">18 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>首次同步文件</b><span>386 个文件</span></div><span class="when">41 秒</span></div>
+                    <div class="d-step is-now">
+                      <i></i>
+                      <div>
+                        <b>安装 Claude</b>
+                        <span>取到最新版 2.1.228 · 正在下载 38.2 MB / 96.4 MB · 校验后装到 ~/.local/bin</span>
+                      </div>
+                      <span class="when">进行中</span>
+                    </div>
+                    <div class="d-step"><i></i><div><b>登录 Anthropic</b></div><span class="when">待办</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" disabled>正在安装…</button>
+                  </div>
+                  <p class="quiet">下载和安装都在服务器上跑，不占用这台电脑。</p>
+                </div>
+
+                <!-- 第 4 步失败 -->
+                <div class="ws-card" data-view="install-fail">
+                  <header>
+                    <h3>没能装上 Claude</h3>
+                    <span class="pill-warn">需要处理</span>
+                  </header>
+                  <p class="meta">前面三步都成了。卡在这台服务器取不到官方安装包。</p>
+                  <div class="fail-box">
+                    服务器连不上官方下载地址。确认这台服务器能访问外网，或稍后再试。
+                    <span class="code">CLAUDE_CLI_DOWNLOAD_FAILED</span>
+                  </div>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连接服务器</b></div><span class="when">2 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>装同步组件</b></div><span class="when">18 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>首次同步文件</b><span>386 个文件</span></div><span class="when">41 秒</span></div>
+                    <div class="d-step is-fail"><i></i><div><b>安装 Claude</b><span>下载中断</span></div><span class="when">失败</span></div>
+                    <div class="d-step"><i></i><div><b>登录 Anthropic</b></div><span class="when">等这步好了再来</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" data-cc-go="installing">重试这一步</button>
+                    <a class="btn is-ghost" href="../site/help.html">打开帮助页</a>
+                  </div>
+                  <p class="quiet">文件已经同步好了。这步失败不影响你在本机 ~/BestCodex/my-project 里改文件。</p>
+                </div>
+
+                <!-- 第 5 步：登录 -->
+                <div class="ws-card" data-view="login">
+                  <header>
+                    <h3>最后一步：登录 Anthropic</h3>
+                    <span class="note">第 5 / 5 步</span>
+                  </header>
+                  <p class="meta">Claude 2.1.228 已经装好。用你的 Claude 账号授权一次，之后不用再登。</p>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连接服务器</b></div><span class="when">2 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>装同步组件</b></div><span class="when">18 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>首次同步文件</b><span>386 个文件</span></div><span class="when">41 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>安装 Claude</b><span>2.1.228 · 已校验</span></div><span class="when">1 分 12 秒</span></div>
+                    <div class="d-step is-now"><i></i><div><b>登录 Anthropic</b><span>点下面的按钮，浏览器里授权</span></div><span class="when">等你</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">在浏览器中登录</button>
+                    <button class="btn is-ghost" type="button">复制登录链接</button>
+                  </div>
+                  <label class="paste-label" for="init-code">浏览器给了授权码？贴在这里</label>
+                  <div class="paste-row">
+                    <input class="field" id="init-code" placeholder="粘贴授权码" />
+                    <button class="btn is-sm" type="button" data-cc-go="done">完成登录</button>
+                  </div>
+                  <p class="quiet">不用在黑底窗口里复制几十行地址、再对着提示盲贴。</p>
+                </div>
+
+                <!-- 完成 -->
+                <div class="ws-card" data-view="done">
+                  <header>
+                    <h3>准备好了</h3>
+                    <span class="pill-ok">5 / 5</span>
+                  </header>
+                  <p class="meta">Claude 2.1.228 已装好并登录，386 个文件已同步。中间这块马上换成终端。</p>
+                  <div class="d-steps">
+                    <div class="d-step is-done"><i></i><div><b>连接服务器</b></div><span class="when">2 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>装同步组件</b></div><span class="when">18 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>首次同步文件</b><span>386 个文件</span></div><span class="when">41 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>安装 Claude</b><span>2.1.228</span></div><span class="when">1 分 12 秒</span></div>
+                    <div class="d-step is-done"><i></i><div><b>登录 Anthropic</b><span>已授权</span></div><span class="when">9 秒</span></div>
+                  </div>
+                  <div class="card-actions">
+                    <a class="btn is-blue" href="cc-home-d.html">开始对话</a>
+                  </div>
+                  <p class="quiet">默认不自动进 Claude。点了「开始对话」才进。</p>
+                </div>
+              </div>
+            </section>
+
+            <aside
+              class="d-files"
+              data-fx
+              data-fx-root="my-project"
+              data-fx-partial-states="syncing"
+              data-fx-partial-note="正在拉取… 142 / 386"
+            ></aside>
+
+            <footer class="d-bar">
+              <button type="button">
+                <span data-when="syncing">● 正在准备 · 第 3 / 5 步</span>
+                <span data-when="installing">● 正在安装 Claude · 第 4 / 5 步</span>
+                <span class="is-bad" data-when="install-fail">● 安装失败 · CLAUDE_CLI_DOWNLOAD_FAILED</span>
+                <span class="is-warn" data-when="login">● 等你登录 Anthropic · 第 5 / 5 步</span>
+                <span class="is-ok" data-when="done">● 初始化完成</span>
+              </button>
+              <span class="sep">·</span>
+              <button type="button">
+                <span data-when="syncing">正在同步 142 / 386</span>
+                <span data-when="installing install-fail login done">已同步 386 个文件</span>
+              </button>
+              <span class="grow"></span>
+              <span class="host">root@108.80.81.15</span>
+            </footer>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-note">
+        <b>为什么初始化期中间不是终端。</b>这个阶段终端里没东西可看——Claude 还没装、还没登录，
+        丢一个黑窗给用户等于把最难的一步塞进最不该出现的地方。所以中间放清单，五步都有人话、进度和耗时，
+        失败原地转失败态并能重试。走完清单，中间自动换成终端，清单只在底栏留一行「初始化完成」。
+        接入向导仍是四步；Claude 的安装挂在工作台这份清单里，所以老项目也走得到这条路。
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

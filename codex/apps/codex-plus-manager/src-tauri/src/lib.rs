@@ -1,7 +1,9 @@
+mod claude_cli;
 mod claude_commands;
 mod claude_conflicts;
 mod claude_deploy;
 mod claude_files;
+mod claude_login;
 mod claude_remote;
 mod claude_ssh;
 mod claude_sync;
@@ -105,9 +107,16 @@ pub fn run() {
             claude_commands::lumio_claude_start_terminal,
             claude_commands::lumio_claude_write_terminal,
             claude_commands::lumio_claude_resize_terminal,
+            claude_commands::lumio_claude_open_chat,
+            claude_commands::lumio_claude_close_chat,
+            claude_commands::lumio_claude_list_chats,
             claude_commands::lumio_claude_resume_sync,
             claude_commands::lumio_claude_server_status,
             claude_commands::lumio_claude_list_sessions,
+            claude_cli::lumio_claude_install_cli,
+            claude_login::lumio_claude_login_start,
+            claude_login::lumio_claude_login_submit,
+            claude_login::lumio_claude_login_status,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])
