@@ -8,7 +8,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { previewClaudeFile } from "../../claude/api.ts";
+import { localFsErrorCopy, mutateClaudeLocalFile, previewClaudeFile } from "../../claude/api.ts";
+import { LumioCommandError } from "../../invoke.ts";
 import {
   compileExplorerMatcher,
   filterExplorerNodes,
@@ -44,23 +45,31 @@ type FxRow = {
 
 type CtxItem =
   | { sep: true }
-  | { id: string; label: string; keys?: string; danger?: boolean; only?: "md"; icon: keyof typeof FX_ICONS };
+  | {
+      id: string;
+      label: string;
+      keys?: string;
+      danger?: boolean;
+      only?: "md";
+      skipRoot?: boolean;
+      icon: keyof typeof FX_ICONS;
+    };
 
 const FX_CTX_ITEMS: CtxItem[] = [
   { id: "new-file", label: "新文件", icon: "filePlus" },
   { id: "new-folder", label: "新建文件夹", icon: "folderPlus" },
   { sep: true },
-  { id: "copy", label: "复制", icon: "copy" },
+  { id: "copy", label: "复制", icon: "copy", skipRoot: true },
   { id: "copy-path", label: "复制路径", keys: "⌘⌥C", icon: "clipboard" },
-  { id: "copy-rel", label: "复制相对路径", keys: "⌘⌥⇧C", icon: "clipboard" },
-  { id: "duplicate", label: "复制", icon: "duplicate" },
-  { id: "view", label: "查看文件", icon: "fileEye" },
+  { id: "copy-rel", label: "复制相对路径", keys: "⌘⌥⇧C", icon: "clipboard", skipRoot: true },
+  { id: "duplicate", label: "复制", icon: "duplicate", skipRoot: true },
+  { id: "view", label: "查看文件", icon: "fileEye", skipRoot: true },
   { id: "browser", label: "在内置浏览器中打开", icon: "globe" },
-  { id: "md", label: "打开 Markdown 预览", only: "md", icon: "eye" },
+  { id: "md", label: "打开 Markdown 预览", only: "md", icon: "eye", skipRoot: true },
   { id: "finder", label: "在 Finder 中显示", icon: "external" },
   { sep: true },
-  { id: "rename", label: "重命名", keys: "↵", icon: "pencil" },
-  { id: "delete", label: "删除", keys: "⌘Backspace, Delete", danger: true, icon: "trash" },
+  { id: "rename", label: "重命名", keys: "↵", icon: "pencil", skipRoot: true },
+  { id: "delete", label: "删除", keys: "⌘Backspace, Delete", danger: true, icon: "trash", skipRoot: true },
 ];
 
 export function FileExplorer({
@@ -86,7 +95,20 @@ export function FileExplorer({
   const [picked, setPicked] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(false);
   const [conflictPaths, setConflictPaths] = useState<Set<string>>(() => readConflictPaths(project.id));
-  const [ctx, setCtx] = useState<{ x: number; y: number; path: string; ext: string } | null>(null);
+  const [ctx, setCtx] = useState<{
+    x: number;
+    y: number;
+    path: string;
+    ext: string;
+    kind: FxKind;
+  } | null>(null);
+  const [ask, setAsk] = useState<{
+    kind: "new-file" | "new-folder" | "rename" | "delete";
+    path: string;
+    isDir: boolean;
+    value: string;
+  } | null>(null);
+  const [fsError, setFsError] = useState<string | null>(null);
   const [contentByPath, setContentByPath] = useState<Map<string, string>>(() => new Map());
   const contentRef = useRef(contentByPath);
   contentRef.current = contentByPath;
@@ -177,17 +199,8 @@ export function FileExplorer({
       if (moreOpen && headRef.current && target && !headRef.current.contains(target)) setMoreOpen(false);
       if (ctx && ctxRef.current && target && !ctxRef.current.contains(target)) setCtx(null);
     };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setMoreOpen(false);
-      setCtx(null);
-    };
     document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("pointerdown", onPointer);
   }, [ctx, moreOpen]);
 
   const allRows = useMemo(() => {
@@ -260,10 +273,10 @@ export function FileExplorer({
     if (row.kind === "file") openFile(row.path);
   };
 
-  const onRowContext = (event: MouseEvent<HTMLButtonElement>, row: FxRow) => {
+  const openCtxAt = (event: MouseEvent, path: string, kind: FxKind) => {
     event.preventDefault();
     event.stopPropagation();
-    setPicked(row.path);
+    setPicked(path || null);
     setMoreOpen(false);
     const box = paneRef.current?.getBoundingClientRect();
     let x = event.clientX - (box?.left ?? 0);
@@ -272,18 +285,185 @@ export function FileExplorer({
     const height = box?.height ?? 480;
     if (x + 240 > width) x = Math.max(4, width - 244);
     if (y + 380 > height) y = Math.max(4, height - 384);
-    setCtx({ x, y, path: row.path, ext: fileExt(row.path) });
+    setCtx({ x, y, path, ext: fileExt(path), kind });
+  };
+
+  const onRowContext = (event: MouseEvent<HTMLButtonElement>, row: FxRow) => {
+    openCtxAt(event, row.path, row.kind);
+  };
+
+  const onTreeContext = (event: MouseEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement | null)?.closest(".lumio-claude-fx-row")) {
+      event.preventDefault();
+      return;
+    }
+    openCtxAt(event, "", "dir");
   };
 
   const closeCtx = () => setCtx(null);
 
+  const runLocal = async (
+    action: Parameters<typeof mutateClaudeLocalFile>[0]["action"],
+    path: string,
+    extra?: { isDir?: boolean; name?: string },
+  ) => {
+    try {
+      const next = await mutateClaudeLocalFile({
+        localRoot: project.localRoot,
+        action,
+        path,
+        isDir: extra?.isDir,
+        name: extra?.name,
+      });
+      setFsError(null);
+      await refreshClaudeFiles(project.id);
+      if (next) {
+        setPicked(next);
+        const parent = relativeParent(next);
+        if (parent) {
+          setExpanded((current) => {
+            const more = new Set(current);
+            more.add(parent);
+            return more;
+          });
+        }
+        if (action === "create-file") openFile(next);
+      }
+      if (action === "delete" && preview?.path === path) setPreview(null);
+      return next;
+    } catch (error: unknown) {
+      const code = error instanceof LumioCommandError ? error.errorCode : "FILE_WRITE_FAILED";
+      setFsError(localFsErrorCopy(code));
+      return null;
+    }
+  };
+
   const onCtxAction = (id: string) => {
     if (!ctx) return;
-    if (id === "view" || id === "md") openFile(ctx.path);
-    if (id === "copy-path") void writeClipboard(joinProjectPath(project.localRoot, ctx.path));
-    if (id === "copy-rel" || id === "copy") void writeClipboard(id === "copy" ? basename(ctx.path) : ctx.path);
+    const path = ctx.path;
+    const isDir = ctx.kind === "dir";
     closeCtx();
+    if (id === "new-file") {
+      setAsk({ kind: "new-file", path, isDir, value: "untitled" });
+      return;
+    }
+    if (id === "new-folder") {
+      setAsk({ kind: "new-folder", path, isDir, value: "untitled-folder" });
+      return;
+    }
+    if (id === "rename") {
+      setAsk({ kind: "rename", path, isDir, value: basename(path) });
+      return;
+    }
+    if (id === "delete") {
+      setAsk({ kind: "delete", path, isDir, value: basename(path) });
+      return;
+    }
+    if (id === "view" || id === "md") {
+      if (!isDir) openFile(path);
+      return;
+    }
+    if (id === "copy-path") {
+      void writeClipboard(joinProjectPath(project.localRoot, path));
+      return;
+    }
+    if (id === "copy-rel") {
+      void writeClipboard(path);
+      return;
+    }
+    if (id === "copy") {
+      if (isDir) {
+        void writeClipboard(basename(path));
+        return;
+      }
+      void previewClaudeFile({
+        host: project.host,
+        user: project.user,
+        port: project.port,
+        password: projectPassword(project.id),
+        keyPath: project.keyPath,
+        hostAlias: project.hostAlias,
+        auth: project.auth,
+        localRoot: project.localRoot,
+        remoteRoot: project.remoteRoot,
+        path,
+        side: "local",
+      }).then((preview) => {
+        void writeClipboard(preview?.content || basename(path));
+      });
+      return;
+    }
+    if (id === "duplicate") void runLocal("duplicate", path);
+    if (id === "finder") void runLocal("reveal", path);
+    if (id === "browser") {
+      if (isDir) void runLocal("reveal", path);
+      else {
+        openFile(path);
+        void runLocal("open-file", path);
+      }
+    }
   };
+
+  const confirmAsk = () => {
+    if (!ask) return;
+    const current = ask;
+    if (current.kind !== "delete" && !current.value.trim()) {
+      setFsError(localFsErrorCopy("FILE_NAME_INVALID"));
+      return;
+    }
+    setAsk(null);
+    if (current.kind === "new-file") {
+      void runLocal("create-file", current.path, { isDir: current.isDir, name: current.value });
+      return;
+    }
+    if (current.kind === "new-folder") {
+      void runLocal("create-folder", current.path, { isDir: current.isDir, name: current.value });
+      return;
+    }
+    if (current.kind === "rename") {
+      void runLocal("rename", current.path, { name: current.value });
+      return;
+    }
+    if (current.kind === "delete") {
+      void runLocal("delete", current.path);
+    }
+  };
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMoreOpen(false);
+        setCtx(null);
+        setAsk(null);
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (ask || typing) return;
+      if (!picked) return;
+      const row = allRows.find((item) => item.path === picked);
+      const isDir = row?.kind === "dir";
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        setAsk({ kind: "rename", path: picked, isDir: Boolean(isDir), value: basename(picked) });
+        return;
+      }
+      if (event.key === "Delete" || (event.key === "Backspace" && (event.metaKey || event.ctrlKey))) {
+        event.preventDefault();
+        setAsk({ kind: "delete", path: picked, isDir: Boolean(isDir), value: basename(picked) });
+        return;
+      }
+      if ((event.key === "c" || event.key === "C") && event.metaKey && event.altKey) {
+        event.preventDefault();
+        if (event.shiftKey) void writeClipboard(picked);
+        else void writeClipboard(joinProjectPath(project.localRoot, picked));
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [allRows, ask, picked, project.localRoot]);
 
   const isName = mode === "name";
   const emptyTree = allRows.length === 0;
@@ -369,7 +549,14 @@ export function FileExplorer({
             全部展开
           </button>
           <hr />
-          <button type="button" role="menuitem" onClick={() => setMoreOpen(false)}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMoreOpen(false);
+              void runLocal("open-folder", "");
+            }}
+          >
             <span className="tick" />
             在本机打开项目文件夹
           </button>
@@ -460,11 +647,7 @@ export function FileExplorer({
         </label>
       </div>
 
-      <div
-        className="lumio-claude-fx-tree"
-        role="tree"
-        onContextMenu={(event) => event.preventDefault()}
-      >
+      <div className="lumio-claude-fx-tree" role="tree" onContextMenu={onTreeContext}>
         {shown === "hint" ? (
           <p className="lumio-claude-fx-hint">输入要在文件中搜索的内容</p>
         ) : shown === "bad" ? (
@@ -521,15 +704,11 @@ export function FileExplorer({
         )}
       </div>
 
-      <p className="lumio-claude-fx-foot">{foot}</p>
+      <p className={`lumio-claude-fx-foot${fsError ? " is-error" : ""}`}>{fsError ?? foot}</p>
 
       {preview ? (
         <pre className="lumio-claude-preview">
-          {preview.tooLarge
-            ? "文件太大，没法在这里预览。"
-            : preview.binary
-              ? "这是二进制文件，没法预览。"
-              : preview.content}
+          {previewCopy(preview)}
         </pre>
       ) : null}
 
@@ -541,7 +720,12 @@ export function FileExplorer({
           role="menu"
           style={{ left: ctx.x, top: ctx.y }}
         >
-          {FX_CTX_ITEMS.filter((item) => !("only" in item && item.only) || item.only === ctx.ext).map((item, index) =>
+          {FX_CTX_ITEMS.filter((item) => {
+            if ("sep" in item && item.sep) return true;
+            if ("only" in item && item.only && item.only !== ctx.ext) return false;
+            if ("skipRoot" in item && item.skipRoot && !ctx.path) return false;
+            return true;
+          }).map((item, index) =>
             "sep" in item && item.sep ? (
               <hr key={`sep-${index}`} />
             ) : (
@@ -562,8 +746,46 @@ export function FileExplorer({
           )}
         </div>
       ) : null}
+
+      {ask ? (
+        <div className="lumio-claude-fx-ask" role="dialog" aria-label={askTitle(ask.kind)}>
+          {ask.kind === "delete" ? (
+            <p>要删除「{ask.value}」？删了之后同步也会删服务器上的这份。</p>
+          ) : (
+            <label>
+              {ask.kind === "rename" ? "新名字" : ask.kind === "new-folder" ? "文件夹名" : "文件名"}
+              <input
+                autoFocus
+                value={ask.value}
+                onChange={(event) => setAsk({ ...ask, value: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    confirmAsk();
+                  }
+                }}
+              />
+            </label>
+          )}
+          <div className="acts">
+            <button className="is-yes" type="button" onClick={confirmAsk}>
+              {ask.kind === "delete" ? "删除" : ask.kind === "rename" ? "重命名" : "创建"}
+            </button>
+            <button className="is-no" type="button" onClick={() => setAsk(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function askTitle(kind: "new-file" | "new-folder" | "rename" | "delete"): string {
+  if (kind === "new-folder") return "新建文件夹";
+  if (kind === "rename") return "重命名";
+  if (kind === "delete") return "删除";
+  return "新文件";
 }
 
 function tagFor(
@@ -606,8 +828,36 @@ function readConflictPaths(projectId: string): Set<string> {
   return new Set(list.map((item) => item.path));
 }
 
+function previewCopy(preview: ClaudeFilePreview): string {
+  if (preview.tooLarge) return "文件太大，没法在这里预览。";
+  if (preview.binary || looksBinaryPreview(preview.path, preview.content)) {
+    return "这是二进制文件，没法预览。";
+  }
+  return preview.content;
+}
+
+function looksBinaryPreview(path: string, content: string): boolean {
+  if (content.startsWith("%PDF")) return true;
+  if (content.includes("\uFFFD")) return true;
+  const ext = fileExt(path);
+  return (
+    ext === "pdf" ||
+    ext === "png" ||
+    ext === "jpg" ||
+    ext === "jpeg" ||
+    ext === "gif" ||
+    ext === "webp" ||
+    ext === "zip"
+  );
+}
+
 function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
+}
+
+function relativeParent(path: string): string {
+  const at = path.lastIndexOf("/");
+  return at >= 0 ? path.slice(0, at) : "";
 }
 
 function fileExt(path: string): string {

@@ -4,6 +4,8 @@ export type ClaudePage = "subscribe" | "empty" | "workspace";
 
 export type ClaudeConnectStep = "host" | "probe" | "setup" | "sync";
 
+export type ClaudeConnectMode = "server" | "project";
+
 export type ClaudeEntitlementStatus = "none" | "active" | "trialing" | "expired";
 
 export type ClaudeEntitlementSource = "account" | "control-plane" | "local";
@@ -101,6 +103,7 @@ export interface ClaudeProject {
 }
 
 export interface ClaudeConnectSheet {
+  mode: ClaudeConnectMode;
   step: ClaudeConnectStep;
   draft: ClaudeHostDraft;
   probeStatus: ClaudeProbeStatus;
@@ -298,7 +301,7 @@ export interface PersistableClaudeState {
 
 export type ClaudeEvent =
   | { type: "entitlement-resolved"; entitlement: ClaudeEntitlement; controlUnreachable?: boolean }
-  | { type: "open-connect" }
+  | { type: "open-connect"; host?: string; skipHost?: boolean }
   | { type: "cancel-connect" }
   | { type: "draft-updated"; draft: Partial<ClaudeHostDraft> }
   | { type: "ssh-pasted"; text: string }

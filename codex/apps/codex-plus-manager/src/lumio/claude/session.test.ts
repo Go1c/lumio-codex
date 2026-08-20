@@ -5,12 +5,52 @@ import { readFile } from "node:fs/promises";
 
 import {
   DEFAULT_CLAUDE_PLAN_CENTS,
+  beginNewProjectOnHost,
   cancelClaudeConnect,
   formatClaudeOrderYuan,
   formatClaudePlanYuan,
   runConnectSync,
 } from "./session.ts";
-import { dispatchClaude, getClaudeState, resetClaudeStore } from "./store.ts";
+import {
+  dispatchClaude,
+  draftPassword,
+  getClaudeState,
+  rememberProjectPassword,
+  resetClaudeStore,
+} from "./store.ts";
+
+test("beginNewProjectOnHost reuses the sibling machine and remembered password", () => {
+  resetClaudeStore();
+  dispatchClaude({ type: "entitlement-resolved", entitlement: { status: "active", source: "local" } });
+  dispatchClaude({
+    type: "projects-hydrated",
+    projects: [
+      {
+        id: "p-my-project",
+        name: "my-project",
+        host: "43.156.20.8",
+        user: "ubuntu",
+        port: 22,
+        auth: "password",
+        keyPath: null,
+        hostAlias: null,
+        remoteRoot: "~/bestcodex/my-project",
+        localRoot: "~/BestCodex/my-project",
+        createdAt: "2026-08-16T00:00:00.000Z",
+      },
+    ],
+    activeProjectId: "p-my-project",
+  });
+  rememberProjectPassword("p-my-project", "s3cret");
+  beginNewProjectOnHost("43.156.20.8");
+  const sheet = getClaudeState().sheet;
+  assert.equal(sheet?.mode, "project");
+  assert.equal(sheet?.step, "probe");
+  assert.equal(sheet?.draft.host, "43.156.20.8");
+  assert.equal(sheet?.draft.user, "ubuntu");
+  assert.equal(sheet?.draft.projectName, "my-project-2");
+  assert.equal(draftPassword(), "s3cret");
+});
 
 test("canceling connect does not leave a project in the store", () => {
   resetClaudeStore();

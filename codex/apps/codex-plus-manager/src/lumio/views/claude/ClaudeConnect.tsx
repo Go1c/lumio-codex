@@ -14,7 +14,7 @@ import { openInBrowser } from "../../invoke.ts";
 import { CONNECT_STEPS } from "../../claude/machine.ts";
 import { folderNameFromPath, localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
 import { cancelClaudeConnect, runConnectProbe, runConnectSetup, runConnectSync } from "../../claude/session.ts";
-import { dispatchClaude, setDraftPassword } from "../../claude/store.ts";
+import { dispatchClaude, draftPassword, setDraftPassword } from "../../claude/store.ts";
 import type { ClaudeConnectSheet, ClaudeConnectStep, ClaudeSshHost } from "../../claude/types.ts";
 
 const TROUBLESHOOTING = [
@@ -34,7 +34,7 @@ export function ClaudeConnect({
   sheet: ClaudeConnectSheet;
   onBackToCodex: () => void;
 }) {
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(() => draftPassword());
   const [sshHosts, setSshHosts] = useState<ClaudeSshHost[]>([]);
   const [setupElapsed, setSetupElapsed] = useState(0);
   const draft = sheet.draft;
@@ -44,6 +44,7 @@ export function ClaudeConnect({
   const local = draft.localRoot.trim() || localProjectRoot(draft.projectName);
   const foldersReady = local !== "" && remote !== "";
   const current = stepIndex(sheet.step);
+  const isNewProject = sheet.mode === "project";
 
   const onPassword = (value: string) => {
     setPassword(value);
@@ -102,7 +103,34 @@ export function ClaudeConnect({
 
         {sheet.step === "host" ? (
           <form onSubmit={onHostSubmit}>
-            <h2 id="lumio-claude-connect-title">连接服务器</h2>
+            <h2 id="lumio-claude-connect-title">{isNewProject ? "新建项目" : "连接服务器"}</h2>
+            {isNewProject ? (
+              <>
+                <p className="lumio-claude-lede">在这台服务器上再建一个项目。密码和上次一样。</p>
+                <p className="lumio-claude-quiet">
+                  {draft.user}@{draft.host || draft.hostAlias}:{draft.port}
+                </p>
+                {draft.auth === "password" ? (
+                  <>
+                    <label className="lumio-claude-note" htmlFor="lumio-claude-pass">
+                      密码
+                    </label>
+                    <input
+                      autoComplete="off"
+                      className="lumio-claude-field"
+                      disabled={probing}
+                      id="lumio-claude-pass"
+                      onChange={(event) => onPassword(event.target.value)}
+                      type="password"
+                      value={password}
+                    />
+                    <p className="lumio-claude-quiet">密码只留在这台电脑上。</p>
+                  </>
+                ) : null}
+              </>
+            ) : null}
+            {isNewProject ? null : (
+            <>
             <div className="lumio-claude-mode-tabs" role="tablist" aria-label="连接方式">
               <button
                 aria-selected={draft.auth !== "config"}
@@ -204,6 +232,8 @@ export function ClaudeConnect({
                 </p>
               </>
             )}
+            </>
+            )}
             <div className="lumio-claude-actions">
               <button
                 className="lumio-button is-secondary"
@@ -255,7 +285,11 @@ export function ClaudeConnect({
             </div>
             {sheet.probeStatus === "ok" ? (
               <>
-                <p className="lumio-claude-lede">探测通过。选好本机和服务器上的项目目录，再装组件。</p>
+                <p className="lumio-claude-lede">
+                  {isNewProject
+                    ? "在这台服务器上再建一个项目。选好本机和服务器上的文件夹，再装组件。"
+                    : "探测通过。选好本机和服务器上的项目目录，再装组件。"}
+                </p>
                 <label className="lumio-claude-note" htmlFor="lumio-claude-local-root">
                   本机文件夹
                 </label>

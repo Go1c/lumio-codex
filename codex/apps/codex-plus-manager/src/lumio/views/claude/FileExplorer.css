@@ -509,6 +509,76 @@
   line-height: 1.5;
 }
 
+.lumio-claude-fx-foot.is-error {
+  color: #ff8a80;
+}
+
+.lumio-claude-fx-ask {
+  display: grid;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--cc-line, var(--line, rgb(255 255 255 / 10%)));
+  background: var(--cc-bg-elev, var(--bg-elev, #1c1c1e));
+  color: var(--cc-ink, var(--ink, #f5f5f7));
+  font-size: 12px;
+}
+
+.lumio-claude-fx-ask p {
+  margin: 0;
+  color: var(--cc-ink-2, var(--ink-2, #98989d));
+  line-height: 1.45;
+}
+
+.lumio-claude-fx-ask label {
+  display: grid;
+  gap: 4px;
+  color: var(--cc-ink-2, var(--ink-2, #98989d));
+  font-size: 11px;
+}
+
+.lumio-claude-fx-ask input {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--cc-field, var(--field, rgb(118 118 128 / 24%)));
+  color: var(--cc-ink, var(--ink, #f5f5f7));
+  font: inherit;
+  font-size: 12px;
+}
+
+.lumio-claude-fx-ask input:focus {
+  outline: 2px solid var(--cc-accent, var(--accent, #0a84ff));
+  background: var(--cc-bg, var(--bg, #111));
+}
+
+.lumio-claude-fx-ask .acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.lumio-claude-fx-ask .acts button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lumio-claude-fx-ask .is-yes {
+  background: var(--cc-accent, var(--accent, #0a84ff));
+  color: #fff;
+}
+
+.lumio-claude-fx-ask .is-no {
+  background: transparent;
+  color: var(--cc-accent, var(--accent, #0a84ff));
+}
+
 .lumio-claude-fx-ctx {
   position: absolute;
   z-index: 50;
@@ -590,8 +660,9 @@
 }
 
 .lumio-claude-preview {
-  flex: 0 0 auto;
-  max-height: 36%;
+  flex: 0 1 auto;
+  max-height: 180px;
+  min-height: 0;
   margin: 0;
   padding: 12px;
   overflow: auto;

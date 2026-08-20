@@ -69,6 +69,7 @@ import {
   getClaudeState,
   projectPassword,
   rememberProjectPassword,
+  setDraftPassword,
   takeDraftPassword,
 } from "./store.ts";
 
@@ -275,6 +276,19 @@ export function toggleClaudeOrders(): void {
 export function cancelClaudeConnect(): void {
   takeDraftPassword();
   dispatchClaude({ type: "cancel-connect" });
+}
+
+export function beginNewProjectOnHost(host: string): void {
+  const sibling = getClaudeState().projects.find((project) => project.host === host);
+  if (!sibling) {
+    dispatchClaude({ type: "open-connect" });
+    return;
+  }
+  const password = projectPassword(sibling.id) ?? "";
+  if (password) setDraftPassword(password);
+  const skipHost = sibling.auth !== "password" || Boolean(password);
+  dispatchClaude({ type: "open-connect", host, skipHost });
+  if (skipHost) void runConnectProbe();
 }
 
 export async function runConnectProbe(): Promise<void> {

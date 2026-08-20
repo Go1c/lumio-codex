@@ -40,6 +40,7 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
   background: #0c0d11;
 }
 
@@ -90,7 +91,14 @@
 .lumio-claude-xterm {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
   padding: 8px;
+}
+
+.lumio-claude-xterm .xterm,
+.lumio-claude-xterm .xterm-viewport,
+.lumio-claude-xterm .xterm-screen {
+  height: 100%;
 }
 
 .lumio-claude-xterm-status {

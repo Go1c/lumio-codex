@@ -107,6 +107,10 @@ a:focus-visible {
   background: var(--window-bg);
 }
 
+.lumio-app.is-claude-workspace {
+  grid-template-rows: 54px minmax(0, 1fr);
+}
+
 .lumio-topbar {
   z-index: 4;
   display: grid;
@@ -214,6 +218,21 @@ a:focus-visible {
 .lumio-main {
   min-height: 0;
   overflow: auto;
+}
+
+.lumio-workspace-pane {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lumio-workspace-pane > * {
+  height: 100%;
+  min-height: 0;
+}
+
+.lumio-main:has(.lumio-workspace-pane:not([hidden])) {
+  overflow: hidden;
 }
 
 .lumio-signed-out,

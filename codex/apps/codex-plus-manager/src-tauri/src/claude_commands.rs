@@ -936,13 +936,20 @@ pub fn lumio_claude_preview_file(
             host_alias.as_deref(),
             &format!("head -c 1048576 {}", remote_shell_join(&remote_root, &path)),
         ) {
-            Ok(output) => ClaudeCommandResult::ok(claude_files::FilePreview {
-                path,
-                side,
-                content: String::from_utf8_lossy(&output.stdout).into_owned(),
-                too_large: false,
-                binary: output.stdout.iter().take(512).any(|b| *b == 0),
-            }),
+            Ok(output) => {
+                let binary = claude_files::preview_is_binary(&path, &output.stdout);
+                ClaudeCommandResult::ok(claude_files::FilePreview {
+                    path,
+                    side,
+                    content: if binary {
+                        String::new()
+                    } else {
+                        String::from_utf8_lossy(&output.stdout).into_owned()
+                    },
+                    too_large: false,
+                    binary,
+                })
+            }
             Err(code) => ClaudeCommandResult::failed(code),
         }
     } else {
@@ -950,6 +957,104 @@ pub fn lumio_claude_preview_file(
             Ok(preview) => ClaudeCommandResult::ok(preview),
             Err(_) => ClaudeCommandResult::failed("SSH_PREPARE_FAILED"),
         }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFsOutcome {
+    pub path: String,
+}
+
+fn spawn_os_command(cmd: &str, args: &[String]) -> Result<(), String> {
+    Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| "FILE_REVEAL_FAILED".to_string())
+}
+
+#[tauri::command]
+pub fn lumio_claude_local_fs(
+    local_root: String,
+    action: String,
+    path: String,
+    is_dir: Option<bool>,
+    name: Option<String>,
+) -> ClaudeCommandResult<LocalFsOutcome> {
+    let root = expand_local_root(&local_root);
+    let is_dir = is_dir.unwrap_or(false);
+    let result = match action.as_str() {
+        "create-file" => {
+            let dir = claude_files::target_dir(&path, is_dir);
+            let file_name = match name.as_deref() {
+                Some(raw) => match claude_files::unique_named_relative(&root, &dir, raw) {
+                    Ok(rel) => rel,
+                    Err(code) => return ClaudeCommandResult::failed(&code),
+                },
+                None => match claude_files::unique_relative(&root, &dir, "untitled", "") {
+                    Ok(rel) => rel,
+                    Err(code) => return ClaudeCommandResult::failed(&code),
+                },
+            };
+            claude_files::create_empty_file(&root, &file_name).map(|()| file_name)
+        }
+        "create-folder" => {
+            let dir = claude_files::target_dir(&path, is_dir);
+            let folder_name = match name.as_deref() {
+                Some(raw) => match claude_files::unique_named_relative(&root, &dir, raw) {
+                    Ok(rel) => rel,
+                    Err(code) => return ClaudeCommandResult::failed(&code),
+                },
+                None => match claude_files::unique_relative(&root, &dir, "untitled-folder", "") {
+                    Ok(rel) => rel,
+                    Err(code) => return ClaudeCommandResult::failed(&code),
+                },
+            };
+            claude_files::create_folder(&root, &folder_name).map(|()| folder_name)
+        }
+        "duplicate" => claude_files::duplicate_entry(&root, &path),
+        "rename" => match name.as_deref() {
+            Some(raw) => claude_files::rename_entry(&root, &path, raw),
+            None => Err("FILE_NAME_INVALID".into()),
+        },
+        "delete" => claude_files::delete_entry(&root, &path).map(|()| path),
+        "reveal" => {
+            let target = if path.is_empty() {
+                root.clone()
+            } else {
+                match claude_files::resolve_existing(&root, &path) {
+                    Ok(p) => p,
+                    Err(code) => return ClaudeCommandResult::failed(&code),
+                }
+            };
+            let (cmd, args) = if path.is_empty() {
+                claude_files::open_path_invocation(&target)
+            } else {
+                claude_files::reveal_invocation(&target)
+            };
+            spawn_os_command(&cmd, &args).map(|()| path)
+        }
+        "open-folder" => {
+            let (cmd, args) = claude_files::open_path_invocation(&root);
+            spawn_os_command(&cmd, &args).map(|()| String::new())
+        }
+        "open-file" => {
+            let target = match claude_files::resolve_existing(&root, &path) {
+                Ok(p) => p,
+                Err(code) => return ClaudeCommandResult::failed(&code),
+            };
+            let (cmd, args) = claude_files::open_path_invocation(&target);
+            spawn_os_command(&cmd, &args).map(|()| path)
+        }
+        _ => Err("FILE_WRITE_FAILED".into()),
+    };
+    match result {
+        Ok(next) => ClaudeCommandResult::ok(LocalFsOutcome { path: next }),
+        Err(code) => ClaudeCommandResult::failed(&code),
     }
 }
 

@@ -36,6 +36,22 @@ test("LumioApp keeps HomeView and ClaudeWorkspace mounted behind hidden", async 
   assert.match(shell, /<ClaudeWorkspace/);
   assert.match(shell, /hidden=\{!showCodexHome\}/);
   assert.match(shell, /hidden=\{!showClaude\}/);
+  assert.match(shell, /lumio-workspace-pane/);
   assert.doesNotMatch(shell, /showClaude \? \(/);
   assert.doesNotMatch(shell, /workspace === "codex" && <HomeView/);
+});
+
+test("workspace panes fill the main stage instead of growing the window", async () => {
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+  assert.match(css, /\.lumio-workspace-pane/);
+  assert.match(css, /\.lumio-workspace-pane\s*\{[^}]*height:\s*100%/);
+  assert.match(css, /\.lumio-workspace-pane\s*\{[^}]*overflow:\s*hidden/);
+});
+
+test("Claude workspace hides the launcher footer so the 26px status bar is the window bottom", async () => {
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+  assert.match(shell, /is-claude-workspace/);
+  assert.match(shell, /hidden=\{showClaude\}/);
+  assert.match(css, /\.lumio-app\.is-claude-workspace\s*\{[^}]*grid-template-rows:\s*54px minmax\(0,\s*1fr\)/);
 });

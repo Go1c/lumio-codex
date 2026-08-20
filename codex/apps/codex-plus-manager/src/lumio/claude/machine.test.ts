@@ -467,6 +467,37 @@ test("createProjectFromDraft writes BestCodex directory presets", () => {
   assert.equal(created.localRoot, "~/BestCodex/my-project");
 });
 
+test("new project on an existing host reuses that machine and a fresh folder name", () => {
+  let state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    {
+      type: "projects-hydrated",
+      projects: [project()],
+      activeProjectId: "p-my-project",
+    },
+  ]);
+  state = reduceClaudeState(state, { type: "open-connect", host: "43.156.20.8", skipHost: true });
+  assert.equal(state.sheet?.mode, "project");
+  assert.equal(state.sheet?.step, "probe");
+  assert.equal(state.sheet?.draft.host, "43.156.20.8");
+  assert.equal(state.sheet?.draft.user, "root");
+  assert.equal(state.sheet?.draft.port, 22);
+  assert.equal(state.sheet?.draft.auth, "password");
+  assert.equal(state.sheet?.draft.projectName, "my-project-2");
+  assert.equal(state.sheet?.draft.remoteRoot, "~/bestcodex/my-project-2");
+  assert.equal(state.sheet?.draft.localRoot, "~/BestCodex/my-project-2");
+});
+
+test("connecting a new server still starts on the host step", () => {
+  const opened = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+  ]);
+  assert.equal(opened.sheet?.mode, "server");
+  assert.equal(opened.sheet?.step, "host");
+  assert.equal(opened.sheet?.draft.host, "");
+});
+
 test("createProjectFromDraft keeps user-chosen folders", () => {
   const created = createProjectFromDraft(
     {

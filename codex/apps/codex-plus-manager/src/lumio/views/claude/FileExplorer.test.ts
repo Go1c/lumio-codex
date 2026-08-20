@@ -100,3 +100,42 @@ test("FileExplorer rows hover, 1px selected stroke, and ellipsis", async () => {
   assert.match(css, /inset 0 0 0 1px/);
   assert.match(css, /text-overflow:\s*ellipsis/);
 });
+
+test("FileExplorer context actions call local fs and ask before write", async () => {
+  const source = await readExplorer();
+  assert.match(source, /mutateClaudeLocalFile/);
+  assert.match(source, /localFsErrorCopy/);
+  for (const action of [
+    "create-file",
+    "create-folder",
+    "duplicate",
+    "rename",
+    "delete",
+    "reveal",
+    "open-folder",
+    "open-file",
+  ]) {
+    assert.match(source, new RegExp(action), action);
+  }
+  assert.match(source, /lumio-claude-fx-ask/);
+  assert.match(source, /要删除「/);
+  assert.match(source, /untitled-folder/);
+  assert.match(source, /"Enter"/);
+  assert.match(source, /"Delete"/);
+  assert.match(source, /"Backspace"/);
+  assert.match(source, /onBlankContext|onTreeContext/);
+});
+
+test("FileExplorer CSS styles the name overlay", async () => {
+  const css = await readExplorerCss();
+  assert.match(css, /\.lumio-claude-fx-ask/);
+});
+
+test("FileExplorer does not dump PDF bytes and caps the preview pane", async () => {
+  const source = await readExplorer();
+  const css = await readExplorerCss();
+  assert.match(source, /%PDF/);
+  assert.match(source, /这是二进制文件，没法预览。/);
+  assert.match(css, /\.lumio-claude-preview\s*\{[^}]*max-height:\s*180px/);
+  assert.match(css, /\.lumio-claude-preview\s*\{[^}]*overflow:\s*auto/);
+});

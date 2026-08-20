@@ -30,6 +30,7 @@ export const CLAUDE_COMMANDS = {
   listFiles: "lumio_claude_list_local_files",
   listTree: "lumio_claude_list_files",
   previewFile: "lumio_claude_preview_file",
+  localFs: "lumio_claude_local_fs",
   listConflicts: "lumio_claude_list_conflicts",
   resolveConflict: "lumio_claude_resolve_conflict",
   conflictDiff: "lumio_claude_conflict_diff",
@@ -151,6 +152,25 @@ export function prepareErrorCopy(code: string | null, host: string, port: number
       return probeErrorCopy(code, host, port);
     default:
       return "没能在服务器上装好同步组件。";
+  }
+}
+
+export function localFsErrorCopy(code: string | null): string {
+  switch (code) {
+    case "FILE_EXISTS":
+      return "已经有这个名字。";
+    case "FILE_MISSING":
+      return "找不到这个文件。";
+    case "FILE_NAME_INVALID":
+      return "这个名字不能用。";
+    case "FILE_REVEAL_FAILED":
+      return "没能在 Finder 里打开。";
+    case "PATH_OUTSIDE_PROJECT":
+      return "路径必须位于项目文件夹内。";
+    case "FILE_WRITE_FAILED":
+    default:
+      if (code && /[\u4e00-\u9fff]/.test(code)) return code;
+      return "没能改这个文件。";
   }
 }
 
@@ -489,6 +509,34 @@ export async function previewClaudeFile(input: ClaudeSshArgs & {
   } catch {
     return null;
   }
+}
+
+export async function mutateClaudeLocalFile(input: {
+  localRoot: string;
+  action:
+    | "create-file"
+    | "create-folder"
+    | "duplicate"
+    | "rename"
+    | "delete"
+    | "reveal"
+    | "open-folder"
+    | "open-file";
+  path: string;
+  isDir?: boolean;
+  name?: string;
+}): Promise<string> {
+  if (!isTauri()) {
+    missingBackend("FILE_WRITE_FAILED");
+  }
+  const payload = await runClaudeCommand<{ path: string }>(CLAUDE_COMMANDS.localFs, {
+    localRoot: input.localRoot,
+    action: input.action,
+    path: input.path,
+    isDir: input.isDir ?? false,
+    name: input.name ?? null,
+  });
+  return payload.path;
 }
 
 export async function listClaudeConflicts(input: {

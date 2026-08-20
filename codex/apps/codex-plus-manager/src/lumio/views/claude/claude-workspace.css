@@ -199,9 +199,9 @@
 }
 
 .lumio-claude-sheet-back {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 3;
+  z-index: 20;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -474,6 +474,7 @@
   grid-template-rows: minmax(0, 1fr) 26px;
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .lumio-claude-rail {
@@ -503,6 +504,7 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .lumio-claude-mid-body > .lumio-claude-xterm-wrap {

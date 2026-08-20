@@ -68,6 +68,7 @@ export function sshFieldsForProbe(draft: ClaudeHostDraft): ClaudeHostDraft {
 
 function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
   return {
+    mode: "server",
     step: "host",
     draft: {
       ...emptyHostDraft(),
@@ -207,7 +208,29 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
     case "open-connect": {
       if (!hasClaudeEntitlement(state.entitlement)) return state;
       const projectName = nextProjectName(state.projects.map((project) => project.name));
-      return withPage({ ...state, sheet: emptySheet(projectName) });
+      const sibling = event.host
+        ? state.projects.find((project) => project.host === event.host)
+        : undefined;
+      const sheet = emptySheet(projectName);
+      if (sibling) {
+        sheet.mode = "project";
+        sheet.draft = {
+          ...sheet.draft,
+          host: sibling.host,
+          user: sibling.user,
+          port: sibling.port,
+          auth: sibling.auth,
+          keyPath: sibling.keyPath ?? "",
+          hostAlias: sibling.hostAlias ?? "",
+          projectName,
+          localRoot: localProjectRoot(projectName),
+          remoteRoot: remoteProjectRoot(sibling.user, projectName),
+        };
+        if (event.skipHost) sheet.step = "probe";
+      } else if (event.host) {
+        sheet.draft = { ...sheet.draft, host: event.host };
+      }
+      return withPage({ ...state, sheet });
     }
     case "cancel-connect":
       return withPage({ ...state, sheet: null });
