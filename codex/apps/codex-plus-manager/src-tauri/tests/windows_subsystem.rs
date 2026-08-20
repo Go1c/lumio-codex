@@ -237,9 +237,19 @@ fn github_internal_workflow_builds_all_unsigned_desktop_artifacts() {
         !makensis_line_has_bare_slash_inputcharset || workflow.contains("MSYS_NO_PATHCONV"),
         "unquoted /INPUTCHARSET is rewritten by Git Bash to C:/Program Files/Git/INPUTCHARSET"
     );
-    assert!(workflow.contains(
-        "LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
-    ));
+    assert!(
+        workflow.contains(
+            "LumioCodex-${PACKAGE_VERSION}-windows-x64-portable${WINDOWS_OUT_SUFFIX}.zip"
+        )
+    );
+    assert!(
+        workflow.contains("LUMIO_PACKAGE_VERSION=${version}"),
+        "cargo build must receive the same internal label the site shows"
+    );
+    assert!(
+        workflow.matches("LUMIO_PACKAGE_VERSION=${version}").count() >= 2,
+        "Windows and macOS cargo build both need the display version env"
+    );
     assert!(workflow.contains("WINDOWS_OUT_SUFFIX"));
     assert!(workflow.contains("signpath/github-action-submit-signing-request@v2"));
     assert!(workflow.contains("SIGNPATH_API_TOKEN"));

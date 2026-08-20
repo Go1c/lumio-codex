@@ -200,6 +200,28 @@ fn lumio_settings_payload_carries_the_invitation_switch() {
 }
 
 #[test]
+fn bootstrap_version_uses_the_ci_package_display_label() {
+    // 官网下载卡写 `v1.2.46-internal-95`；页脚若只吐 CARGO_PKG_VERSION，
+    // 安装包与站点对不上，长标签还会在右下角被裁切。
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = fs::read_to_string(root.join("src/lumio_commands.rs")).expect("lumio_commands.rs");
+    let body = source
+        .split_once("pub fn lumio_bootstrap(")
+        .and_then(|(_, rest)| rest.split_once("#[tauri::command]"))
+        .map(|(body, _)| body)
+        .expect("lumio_bootstrap body");
+
+    assert!(
+        body.contains("resolve_display_version"),
+        "bootstrap.version must use the package display label:\n{body}"
+    );
+    assert!(
+        body.contains("option_env!(\"LUMIO_PACKAGE_VERSION\")"),
+        "CI must be able to stamp the internal label at compile time:\n{body}"
+    );
+}
+
+#[test]
 fn lumio_install_official_app_accepts_the_destination_argument() {
     // 前端选择目录后传 destination；命令签名一旦漏掉该参数，Tauri 会静默丢弃，
     // 用户选的目录被无视、仍装到默认位置（D-23，同 D-1 的静默丢参坑）。
