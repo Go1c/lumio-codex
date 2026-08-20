@@ -10,17 +10,105 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
-pub fn terminal_output_event(project_id: &str) -> String {
+pub const DEFAULT_SESSION_ID: &str = "default";
+
+pub fn terminal_key(project_id: &str, session_id: &str) -> String {
+    format!("{project_id}::{session_id}")
+}
+
+pub fn effective_session_id(session_id: Option<&str>) -> &str {
+    match session_id.map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => id,
+        None => DEFAULT_SESSION_ID,
+    }
+}
+
+pub fn remote_session_name(project_id: &str, session_id: &str) -> String {
+    format!(
+        "bestcodex-{project}-{session}",
+        project = TerminalManager::sanitize_session_name(project_id),
+        session = TerminalManager::sanitize_session_name(session_id),
+    )
+}
+
+pub fn terminal_output_event(project_id: &str, session_id: &str) -> String {
+    format!("lumio://claude-terminal-output-{project_id}-{session_id}")
+}
+
+pub fn terminal_closed_event(project_id: &str, session_id: &str) -> String {
+    format!("lumio://claude-terminal-closed-{project_id}-{session_id}")
+}
+
+pub fn legacy_terminal_output_event(project_id: &str) -> String {
     format!("lumio://claude-terminal-output-{project_id}")
 }
 
-pub fn terminal_closed_event(project_id: &str) -> String {
+pub fn legacy_terminal_closed_event(project_id: &str) -> String {
     format!("lumio://claude-terminal-closed-{project_id}")
+}
+
+fn with_legacy_events(session_id: &str, primary: String, legacy: String) -> Vec<String> {
+    if session_id == DEFAULT_SESSION_ID {
+        vec![primary, legacy]
+    } else {
+        vec![primary]
+    }
+}
+
+pub fn terminal_output_events(project_id: &str, session_id: &str) -> Vec<String> {
+    with_legacy_events(
+        session_id,
+        terminal_output_event(project_id, session_id),
+        legacy_terminal_output_event(project_id),
+    )
+}
+
+pub fn terminal_closed_events(project_id: &str, session_id: &str) -> Vec<String> {
+    with_legacy_events(
+        session_id,
+        terminal_closed_event(project_id, session_id),
+        legacy_terminal_closed_event(project_id),
+    )
+}
+
+pub fn open_remote_session_command(
+    project_id: &str,
+    session_id: &str,
+    remote_root: &str,
+) -> String {
+    TerminalManager::remote_command(&remote_session_name(project_id, session_id), remote_root)
+}
+
+pub fn close_remote_session_command(project_id: &str, session_id: &str) -> String {
+    let quoted =
+        TerminalManager::posix_shell_single_quote(&remote_session_name(project_id, session_id));
+    format!("tmux kill-session -t {quoted} 2>/dev/null; echo done")
+}
+
+pub fn chat_ids_for_project<V>(sessions: &HashMap<String, V>, project_id: &str) -> Vec<String> {
+    let mut ids: Vec<String> = sessions
+        .keys()
+        .filter_map(|key| {
+            let (proj, session) = key.split_once("::")?;
+            (proj == project_id).then(|| session.to_string())
+        })
+        .collect();
+    ids.sort();
+    ids
+}
+
+pub fn remove_chat<V>(
+    sessions: &mut HashMap<String, V>,
+    project_id: &str,
+    session_id: &str,
+) -> Option<V> {
+    sessions.remove(&terminal_key(project_id, session_id))
 }
 
 pub struct TerminalSession {
     writer: Box<dyn Write + Send>,
     master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
     _askpass: Option<AskpassGuard>,
 }
 
@@ -78,6 +166,7 @@ impl TerminalManager {
     pub fn start(
         &self,
         project_id: &str,
+        session_id: Option<&str>,
         target: &ResolvedSshTarget,
         key_path: Option<&str>,
         password: Option<&str>,
@@ -86,8 +175,10 @@ impl TerminalManager {
         rows: u16,
         app: &AppHandle,
     ) -> Result<(), String> {
+        let session_id = effective_session_id(session_id);
+        let map_key = terminal_key(project_id, session_id);
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.contains_key(project_id) {
+        if sessions.contains_key(&map_key) {
             return Ok(());
         }
 
@@ -119,7 +210,11 @@ impl TerminalManager {
         for arg in ssh_invocation_args(
             target,
             key,
-            Some(&Self::remote_command(project_id, remote_root)),
+            Some(&open_remote_session_command(
+                project_id,
+                session_id,
+                remote_root,
+            )),
         ) {
             cmd.arg(arg);
         }
@@ -131,7 +226,7 @@ impl TerminalManager {
             cmd.env("BESTCODEX_SSH_ASKPASS", password);
         }
 
-        let _child = pty_pair
+        let child = pty_pair
             .slave
             .spawn_command(cmd)
             .map_err(|_| "无法启动远程会话。".to_string())?;
@@ -144,8 +239,8 @@ impl TerminalManager {
             .try_clone_reader()
             .map_err(|_| "无法读取终端输出。".to_string())?;
 
-        let event_name = terminal_output_event(project_id);
-        let closed_event = terminal_closed_event(project_id);
+        let output_events = terminal_output_events(project_id, session_id);
+        let closed_events = terminal_closed_events(project_id, session_id);
         let app_clone = app.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -153,29 +248,40 @@ impl TerminalManager {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = app_clone.emit(&event_name, buf[..n].to_vec());
+                        for name in &output_events {
+                            let _ = app_clone.emit(name, buf[..n].to_vec());
+                        }
                     }
                     Err(_) => break,
                 }
             }
-            let _ = app_clone.emit(&closed_event, ());
+            for name in &closed_events {
+                let _ = app_clone.emit(name, ());
+            }
         });
 
         sessions.insert(
-            project_id.to_string(),
+            map_key,
             TerminalSession {
                 writer,
                 master: Arc::new(Mutex::new(pty_pair.master)),
+                child,
                 _askpass: askpass,
             },
         );
         Ok(())
     }
 
-    pub fn write(&self, project_id: &str, bytes: &[u8]) -> Result<(), String> {
+    pub fn write(
+        &self,
+        project_id: &str,
+        session_id: Option<&str>,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        let map_key = terminal_key(project_id, effective_session_id(session_id));
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions
-            .get_mut(project_id)
+            .get_mut(&map_key)
             .ok_or_else(|| "终端还没打开。".to_string())?;
         session
             .writer
@@ -183,10 +289,17 @@ impl TerminalManager {
             .map_err(|_| "无法写入终端。".to_string())
     }
 
-    pub fn resize(&self, project_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+    pub fn resize(
+        &self,
+        project_id: &str,
+        session_id: Option<&str>,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), String> {
+        let map_key = terminal_key(project_id, effective_session_id(session_id));
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let session = sessions
-            .get(project_id)
+            .get(&map_key)
             .ok_or_else(|| "终端还没打开。".to_string())?;
         let master = session.master.lock().map_err(|e| e.to_string())?;
         master
@@ -197,6 +310,21 @@ impl TerminalManager {
                 pixel_height: 0,
             })
             .map_err(|_| "无法调整终端大小。".to_string())
+    }
+
+    pub fn close(&self, project_id: &str, session_id: &str) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let Some(mut session) = remove_chat(&mut sessions, project_id, session_id) else {
+            return Ok(());
+        };
+        drop(sessions);
+        let _ = session.child.kill();
+        Ok(())
+    }
+
+    pub fn list_chats(&self, project_id: &str) -> Result<Vec<String>, String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        Ok(chat_ids_for_project(&sessions, project_id))
     }
 }
 
@@ -219,5 +347,114 @@ mod tests {
             "tilde path must not add double quotes"
         );
         assert!(command.contains("'my-project'"));
+    }
+
+    #[test]
+    fn terminal_key_distinguishes_sessions_and_projects() {
+        assert_ne!(
+            terminal_key("alpha", "chat-1"),
+            terminal_key("alpha", "chat-2")
+        );
+        assert_ne!(
+            terminal_key("alpha", "chat-1"),
+            terminal_key("beta", "chat-1")
+        );
+        assert_eq!(terminal_key("alpha", "chat-1"), "alpha::chat-1");
+    }
+
+    #[test]
+    fn open_session_command_includes_session_name_and_quoted_root() {
+        let command = open_remote_session_command("my project", "chat 1", "~/bestcodex/my-project");
+        assert_eq!(
+            remote_session_name("my project", "chat 1"),
+            "bestcodex-my-project-chat-1"
+        );
+        assert!(
+            command.contains("'bestcodex-my-project-chat-1'"),
+            "open command must include the quoted session name"
+        );
+        assert!(
+            command.contains("~/'bestcodex/my-project'"),
+            "open command must include the quoted project root"
+        );
+        assert!(
+            !command.contains("sudo"),
+            "open command must not use elevated execution"
+        );
+    }
+
+    #[test]
+    fn close_session_command_includes_the_same_session_name() {
+        let open = open_remote_session_command("my project", "chat 1", "~/bestcodex/my-project");
+        let close = close_remote_session_command("my project", "chat 1");
+        assert!(
+            open.contains("'bestcodex-my-project-chat-1'"),
+            "open command must include the quoted session name"
+        );
+        assert!(
+            close.contains("'bestcodex-my-project-chat-1'"),
+            "close command must target the same session name"
+        );
+        assert!(
+            !close.contains("sudo"),
+            "close command must not use elevated execution"
+        );
+    }
+
+    #[test]
+    fn event_names_include_project_and_session() {
+        assert_eq!(
+            terminal_output_event("proj", "chat-2"),
+            "lumio://claude-terminal-output-proj-chat-2"
+        );
+        assert_eq!(
+            terminal_closed_event("proj", "chat-2"),
+            "lumio://claude-terminal-closed-proj-chat-2"
+        );
+    }
+
+    #[test]
+    fn default_session_also_uses_legacy_event_names() {
+        let output = terminal_output_events("proj", DEFAULT_SESSION_ID);
+        assert!(output.contains(&"lumio://claude-terminal-output-proj-default".to_string()));
+        assert!(output.contains(&legacy_terminal_output_event("proj")));
+        assert_eq!(
+            legacy_terminal_output_event("proj"),
+            "lumio://claude-terminal-output-proj"
+        );
+        let closed = terminal_closed_events("proj", DEFAULT_SESSION_ID);
+        assert!(closed.contains(&"lumio://claude-terminal-closed-proj-default".to_string()));
+        assert!(closed.contains(&legacy_terminal_closed_event("proj")));
+        let other = terminal_output_events("proj", "chat-2");
+        assert!(!other.contains(&legacy_terminal_output_event("proj")));
+        assert!(
+            !terminal_closed_events("proj", "chat-2")
+                .contains(&legacy_terminal_closed_event("proj"))
+        );
+    }
+
+    #[test]
+    fn closing_one_chat_leaves_the_other_keys() {
+        let mut sessions = HashMap::new();
+        sessions.insert(terminal_key("alpha", "a"), ());
+        sessions.insert(terminal_key("alpha", "b"), ());
+        sessions.insert(terminal_key("beta", "a"), ());
+        assert!(remove_chat(&mut sessions, "alpha", "a").is_some());
+        assert_eq!(
+            chat_ids_for_project(&sessions, "alpha"),
+            vec!["b".to_string()]
+        );
+        assert_eq!(
+            chat_ids_for_project(&sessions, "beta"),
+            vec!["a".to_string()]
+        );
+        assert!(remove_chat(&mut sessions, "alpha", "a").is_none());
+    }
+
+    #[test]
+    fn list_and_close_without_a_pty_are_safe() {
+        let manager = TerminalManager::new();
+        assert_eq!(manager.list_chats("alpha").unwrap(), Vec::<String>::new());
+        assert!(manager.close("alpha", "missing").is_ok());
     }
 }
