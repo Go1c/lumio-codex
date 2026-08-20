@@ -2,12 +2,26 @@ import { describe, expect, it } from "vitest";
 
 import { GUIDES_EN } from "@/guides.en";
 import { GUIDES } from "@/guides";
-import { REPO_URL, SEO_ROUTES, pageTitle, seoForPath } from "@/seo";
+import {
+  BAIDU_SITE_VERIFICATION,
+  BING_SITE_VERIFICATION,
+  GOOGLE_SITE_VERIFICATION,
+  REPO_URL,
+  SEO_ROUTES,
+  pageTitle,
+  seoForPath,
+} from "@/seo";
 
 /** canonical 指向自己的路由才是「可索引正本」，重复内容页（/codex）不参与唯一性约束。 */
 const canonicalRoutes = SEO_ROUTES.filter((route) => route.canonicalPath === route.path);
 
 describe("SEO 路由元数据", () => {
+  it("固定使用已登记的搜索引擎站点归属验证 token", () => {
+    expect(BING_SITE_VERIFICATION).toBe("48232FF4A9EAB80D49C7A5AE2D009539");
+    expect(BAIDU_SITE_VERIFICATION).toBe("codeva-501Ruteqzc");
+    expect(GOOGLE_SITE_VERIFICATION).toBe("VDGNHdNPtmr0yRLwE_H6KmtWDI2fPZY8DWbayRHy0I0");
+  });
+
   it("每条路由都有标题与描述，且描述长度可控", () => {
     for (const route of SEO_ROUTES) {
       expect(route.title.length, `${route.path} 缺标题`).toBeGreaterThan(0);

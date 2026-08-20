@@ -22,20 +22,29 @@ const appRoot = join(here, "..");
 const distDir = join(appRoot, "dist");
 const ssrEntry = join(appRoot, "dist-ssr", "prerender.js");
 
-const { SEO_ROUTES, renderRoute, headDataFor, markdownPages, absoluteUrl, siteOrigin } =
-  await import(ssrEntry);
+const {
+  BAIDU_SITE_VERIFICATION,
+  BING_SITE_VERIFICATION,
+  GOOGLE_SITE_VERIFICATION,
+  SEO_ROUTES,
+  renderRoute,
+  headDataFor,
+  markdownPages,
+  absoluteUrl,
+  siteOrigin,
+} = await import(ssrEntry);
 
 const ORIGIN = siteOrigin();
 const OG_IMAGE = absoluteUrl("/bestcodex-icon.jpg");
 
 /**
- * 各搜索引擎的站点归属验证。令牌从环境变量注入，只写进首页——各家后台都只校验首页。
- * 没配的引擎自动跳过，不会产出空 meta（空 content 会被判成无效验证）。
+ * 各搜索引擎的站点归属验证。固定令牌来自 SEO 真值；其他引擎仍从环境变量注入。
+ * 只写进首页——各家后台都只校验首页。没配的引擎自动跳过，不会产出空 meta。
  */
 const VERIFICATIONS = [
-  ["google-site-verification", process.env.SITE_VERIFY_GOOGLE],
-  ["msvalidate.01", process.env.SITE_VERIFY_BING],
-  ["baidu-site-verification", process.env.SITE_VERIFY_BAIDU],
+  ["google-site-verification", GOOGLE_SITE_VERIFICATION],
+  ["msvalidate.01", BING_SITE_VERIFICATION],
+  ["baidu-site-verification", BAIDU_SITE_VERIFICATION],
   ["sogou_site_verification", process.env.SITE_VERIFY_SOGOU],
   ["360-site-verification", process.env.SITE_VERIFY_360],
   ["yandex-verification", process.env.SITE_VERIFY_YANDEX],
