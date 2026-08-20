@@ -189,14 +189,17 @@ test("13 selecting a project only changes the active id", () => {
 
 test("14 files and conflicts tabs render", async () => {
   const views = await readAllClaudeViews();
-  assert.match(views, />文件</);
-  assert.match(views, />冲突</);
+  assert.match(views, /FileExplorer/);
+  assert.match(views, /SessionTabs/);
+  assert.match(views, /StatusDrawer/);
+  assert.match(views, /StatusBar/);
+  assert.match(views, /ConflictsPane/);
+  assert.match(views, /ServerStatusPane/);
+  assert.match(views, /SessionsPane/);
+  assert.doesNotMatch(views, /stageTab === "files"/);
+  assert.doesNotMatch(views, /set-stage-tab/);
   assert.match(views, />服务器状态</);
   assert.match(views, />对话状态</);
-  assert.match(views, /FilesPane|stageTab === "files"/);
-  assert.match(views, /ConflictsPane|stageTab === "conflicts"/);
-  assert.match(views, /stageTab === "server"|ServerStatusPane/);
-  assert.match(views, /stageTab === "sessions"|SessionsPane/);
 });
 
 test("15 secrets do not appear in view source literals or persistable snapshots", async () => {

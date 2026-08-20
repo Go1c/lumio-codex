@@ -123,7 +123,12 @@ test("user-visible Claude copy never says agent or tmux", async () => {
     assert.doesNotMatch(source, /\bagent\b/i, `${name} leaked agent`);
     assert.doesNotMatch(source, /\btmux\b/i, `${name} leaked tmux`);
   }
-  for (const rel of ["../../claude/session.ts", "../../claude/api.ts", "../../claude/machine.ts"]) {
+  for (const rel of [
+    "../../claude/session.ts",
+    "../../claude/api.ts",
+    "../../claude/machine.ts",
+    "../../claude/terminal-status.ts",
+  ]) {
     const source = await readFile(new URL(rel, import.meta.url), "utf8");
     const visible = source
       .split("\n")
@@ -150,13 +155,43 @@ test("the terminal copies locally and opens login links in the system browser", 
 
 test("the workspace shows files and conflicts tabs next to the terminal", async () => {
   const source = await readAllClaudeViews();
-  assert.match(source, />终端</);
-  assert.match(source, />文件</);
-  assert.match(source, />冲突</);
-  assert.match(source, />服务器状态</);
-  assert.match(source, />对话状态</);
+  const css = await readFile(new URL("./claude-workspace.css", import.meta.url), "utf8");
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /ProjectRail/);
+  assert.match(home, /SessionTabs/);
+  assert.match(home, /FileExplorer/);
+  assert.match(home, /StatusBar/);
+  assert.match(home, /StatusDrawer/);
+  assert.match(source, /服务器与项目/);
+  assert.match(source, /新建项目/);
   assert.match(source, /连接新服务器/);
-  assert.match(source, />项目</);
+  assert.match(css, /grid-template-columns:\s*236px minmax\(0,\s*1fr\) 282px/);
+  assert.match(css, /grid-template-rows:\s*minmax\(0,\s*1fr\) 26px/);
+  assert.doesNotMatch(home, /lumio-claude-stage-tabs/);
+  assert.doesNotMatch(home, /set-stage-tab/);
+  assert.doesNotMatch(home, /ClaudeEntitlementLine/);
+  assert.doesNotMatch(home, /ordersSlot/);
+});
+
+test("session title locking and last-tab refill are wired from the workspace", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  const terminal = await readView("TerminalPane.tsx");
+  assert.match(terminal, /lockTitleFromInput/);
+  assert.match(terminal, /session-title-locked/);
+  assert.match(terminal, /sessionId/);
+  assert.match(home, /nextSessionId/);
+  assert.match(home, /close-session/);
+  assert.match(home, /open-session/);
+  assert.match(home, /lumio_claude_close_chat|closeClaudeProjectChat/);
+});
+
+test("terminalBanner and terminal output are mutually exclusive", async () => {
+  const terminal = await readView("TerminalPane.tsx");
+  const status = await readFile(new URL("../../claude/terminal-status.ts", import.meta.url), "utf8");
+  assert.match(terminal, /terminalBanner/);
+  assert.match(terminal, /setHasOutput\(true\)/);
+  assert.match(status, /没能打开终端/);
+  assert.doesNotMatch(terminal, /setStatus\("没能打开终端。"\)/);
 });
 
 test("ClaudeWorkspace keeps session state in the module store, not only in the leaf", async () => {

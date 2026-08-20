@@ -203,7 +203,9 @@ test("finishing first sync closes the sheet and opens the workspace on that proj
   assert.equal(state.page, "workspace");
   assert.equal(state.projects.length, 1);
   assert.equal(state.activeProjectId, created.id);
-  assert.equal(state.stageTab, "terminal");
+  assert.equal(state.statusDrawer, "closed");
+  assert.equal(state.workspacePhaseByProject[created.id], "init");
+  assert.deepEqual(state.sessionsByProject, {});
 });
 
 test("a failed first sync stays on the sheet with an error code", () => {
@@ -482,8 +484,8 @@ test("createProjectFromDraft keeps user-chosen folders", () => {
 
 test("initial Claude state defaults new session fields without changing stageTab", () => {
   const state = initialClaudeState();
-  assert.equal(state.stageTab, "terminal");
   assert.equal(state.statusDrawer, "closed");
+  assert.equal("stageTab" in state, false);
   assert.deepEqual(state.sessionsByProject, {});
   assert.deepEqual(state.activeSessionByProject, {});
   assert.deepEqual(state.collapsedHosts, {});
@@ -543,7 +545,7 @@ test("select-session only changes the active session id", () => {
   });
   assert.equal(state.activeSessionByProject["p-docs"], "s1");
   assert.equal(state.sessionsByProject["p-docs"].length, 2);
-  assert.equal(state.stageTab, "terminal");
+  assert.equal(state.statusDrawer, "closed");
 });
 
 test("session-title-locked writes the title and locks it", () => {

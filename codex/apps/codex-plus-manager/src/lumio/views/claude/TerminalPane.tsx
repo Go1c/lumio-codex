@@ -12,7 +12,9 @@ import {
   terminalOutputEvent,
   writeClaudeTerminal,
 } from "../../claude/api.ts";
-import { projectPassword } from "../../claude/store.ts";
+import { lockTitleFromInput } from "../../claude/session-title.ts";
+import { dispatchClaude, getClaudeState, projectPassword } from "../../claude/store.ts";
+import { terminalBanner } from "../../claude/terminal-status.ts";
 import {
   copyTextForKey,
   firstOpenableHttpsUrl,
@@ -25,17 +27,27 @@ import type { ClaudeProject } from "../../claude/types.ts";
 
 export function TerminalPane({
   project,
+  sessionId,
   hidden,
 }: {
   project: ClaudeProject;
+  sessionId: string;
   hidden: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
-  const [status, setStatus] = useState("正在打开终端…");
+  const [opened, setOpened] = useState(false);
+  const [hasOutput, setHasOutput] = useState(false);
+  const [opening, setOpening] = useState(true);
+  const [disconnected, setDisconnected] = useState(false);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
+  const status = terminalBanner(
+    opened || opening,
+    hasOutput,
+    opening ? "正在打开终端…" : disconnected ? "连接已断开，正在重连…" : null,
+  );
   const [copied, setCopied] = useState(false);
   const [menu, setMenu] = useState<{
     x: number;
@@ -70,8 +82,32 @@ export function TerminalPane({
     fitRef.current = fit;
 
     const encoder = new TextEncoder();
+    let lineBuffer = "";
     term.onData((data) => {
-      void writeClaudeTerminal(project.id, Array.from(encoder.encode(data)));
+      void writeClaudeTerminal(project.id, Array.from(encoder.encode(data)), sessionId);
+      for (const ch of data) {
+        if (ch === "\r" || ch === "\n") {
+          const submitted = lineBuffer;
+          lineBuffer = "";
+          const session = (getClaudeState().sessionsByProject[project.id] ?? []).find(
+            (item) => item.id === sessionId,
+          );
+          if (!session) continue;
+          const locked = lockTitleFromInput(session, submitted);
+          if (locked.titleLocked && locked.title && !session.titleLocked) {
+            dispatchClaude({
+              type: "session-title-locked",
+              projectId: project.id,
+              sessionId,
+              title: locked.title,
+            });
+          }
+        } else if (ch === "\u007f" || ch === "\b") {
+          lineBuffer = lineBuffer.slice(0, -1);
+        } else if (ch >= " " || ch === "\t") {
+          lineBuffer += ch;
+        }
+      }
     });
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
@@ -106,21 +142,27 @@ export function TerminalPane({
       disposers.push(() => host.removeEventListener("copy", onNativeCopy));
     }
     const decoder = new TextDecoder("utf-8", { fatal: false });
-    void subscribeClaudeEvent<number[]>(terminalOutputEvent(project.id), (payload) => {
+    void subscribeClaudeEvent<number[]>(terminalOutputEvent(project.id, sessionId), (payload) => {
+      setHasOutput(true);
       term.write(decoder.decode(new Uint8Array(payload), { stream: true }));
       const visible = readVisibleTerminalText(term);
       const url = firstOpenableHttpsUrl(visible);
       setLoginUrl(url && isClaudeLoginUrl(url) ? url : null);
     }).then((stop) => disposers.push(stop));
-    void subscribeClaudeEvent(terminalClosedEvent(project.id), () => {
-      setStatus("连接已断开，正在重连…");
+    void subscribeClaudeEvent(terminalClosedEvent(project.id, sessionId), () => {
+      setOpened(false);
+      setDisconnected(true);
+      setOpening(true);
+      dispatchClaude({ type: "session-running", projectId: project.id, sessionId, running: false });
       void attach();
     }).then((stop) => disposers.push(stop));
 
     const attach = async () => {
+      setOpening(true);
       try {
         await startClaudeTerminal({
           projectId: project.id,
+          sessionId,
           host: project.host,
           user: project.user,
           port: project.port,
@@ -132,9 +174,13 @@ export function TerminalPane({
           cols: term.cols || 80,
           rows: term.rows || 24,
         });
-        setStatus("");
+        setOpened(true);
+        setOpening(false);
+        setDisconnected(false);
+        dispatchClaude({ type: "session-running", projectId: project.id, sessionId, running: true });
       } catch {
-        setStatus("没能打开终端。");
+        setOpened(false);
+        setOpening(false);
       }
     };
     void attach();
@@ -142,7 +188,7 @@ export function TerminalPane({
     const onResize = () => {
       try {
         fit.fit();
-        void resizeClaudeTerminal(project.id, term.cols || 80, term.rows || 24);
+        void resizeClaudeTerminal(project.id, term.cols || 80, term.rows || 24, sessionId);
       } catch {
         /* ignore */
       }
@@ -156,7 +202,7 @@ export function TerminalPane({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [project.id]);
+  }, [project.id, sessionId]);
 
   useEffect(() => {
     if (hidden) return;

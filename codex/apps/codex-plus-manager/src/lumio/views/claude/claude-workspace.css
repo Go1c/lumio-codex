@@ -468,41 +468,63 @@
 }
 
 .lumio-claude-frame {
+  position: relative;
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 236px minmax(0, 1fr) 282px;
+  grid-template-rows: minmax(0, 1fr) 26px;
   height: 100%;
   min-height: 0;
 }
 
-.lumio-claude-stage {
-  display: grid;
-  grid-template-rows: 40px 1fr 28px;
+.lumio-claude-rail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.lumio-claude-mid {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
   background: #0c0d11;
   color: #e8e8ed;
 }
 
-.lumio-claude-stage-tabs {
+.lumio-claude-mid.is-light {
+  background: var(--cc-grouped);
+  color: var(--cc-ink);
+}
+
+.lumio-claude-mid-body {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  border-bottom: 1px solid rgb(255 255 255 / 7%);
-  background: rgb(16 17 22 / 92%);
-  font-size: 13px;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.lumio-claude-stage-tabs button {
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #8e8e93;
+.lumio-claude-mid-body > .lumio-claude-xterm-wrap,
+.lumio-claude-mid-body > .lumio-claude-init-pane,
+.lumio-claude-mid-body > .lumio-claude-shell-center {
+  flex: 1;
+  min-height: 0;
 }
 
-.lumio-claude-stage-tabs button.is-on {
-  background: rgb(255 255 255 / 8%);
-  color: #fff;
+.lumio-claude-files {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.lumio-claude-status {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.lumio-claude-drawer {
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 
 @keyframes lumio-claude-pulse {
@@ -511,8 +533,21 @@
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .lumio-claude-frame {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto 26px;
   }
+
+  .lumio-claude-rail,
+  .lumio-claude-mid,
+  .lumio-claude-files,
+  .lumio-claude-status {
+    grid-column: 1;
+  }
+
+  .lumio-claude-rail { grid-row: 1; }
+  .lumio-claude-mid { grid-row: 2; }
+  .lumio-claude-files { grid-row: 3; }
+  .lumio-claude-status { grid-row: 4; }
 }

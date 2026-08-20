@@ -4,8 +4,6 @@ export type ClaudePage = "subscribe" | "empty" | "workspace";
 
 export type ClaudeConnectStep = "host" | "probe" | "setup" | "sync";
 
-export type ClaudeStageTab = "terminal" | "files" | "conflicts" | "server" | "sessions";
-
 export type ClaudeEntitlementStatus = "none" | "active" | "trialing" | "expired";
 
 export type ClaudeEntitlementSource = "account" | "control-plane" | "local";
@@ -259,6 +257,7 @@ export type ClaudeLoginPhase =
 export interface ClaudeLoginStatus {
   phase: ClaudeLoginPhase;
   errorCode: string | null;
+  loginUrl?: string | null;
 }
 
 export type ClaudeStatusDrawerPane = "closed" | "server" | "sessions" | "conflicts";
@@ -272,7 +271,6 @@ export interface ClaudeState {
   sheet: ClaudeConnectSheet | null;
   projects: ClaudeProject[];
   activeProjectId: string | null;
-  stageTab: ClaudeStageTab;
   syncByProject: Record<string, ClaudeSyncStatus>;
   terminalByProject: Record<string, ClaudeTerminalLine[]>;
   filesByProject: Record<string, ClaudeFileEntry[]>;
@@ -327,7 +325,6 @@ export type ClaudeEvent =
   | { type: "sync-progress"; filesDone: number; filesTotal: number }
   | { type: "sync-finished"; ok: boolean; project: ClaudeProject; errorCode?: string | null }
   | { type: "select-project"; projectId: string }
-  | { type: "set-stage-tab"; tab: ClaudeStageTab }
   | { type: "append-terminal"; projectId: string; line: ClaudeTerminalLine }
   | { type: "files-loaded"; projectId: string; files: ClaudeFileEntry[] }
   | { type: "conflicts-loaded"; projectId: string; conflicts: ClaudeConflictEntry[] }
@@ -359,6 +356,12 @@ export type ClaudeEvent =
       errorCode?: string | null;
       detail?: string | null;
     }
-  | { type: "login-status"; host: string; phase: ClaudeLoginPhase; errorCode?: string | null }
+  | {
+      type: "login-status";
+      host: string;
+      phase: ClaudeLoginPhase;
+      errorCode?: string | null;
+      loginUrl?: string | null;
+    }
   | { type: "set-status-drawer"; pane: ClaudeStatusDrawerPane }
   | { type: "set-workspace-phase"; projectId: string; phase: ClaudeWorkspacePhase };

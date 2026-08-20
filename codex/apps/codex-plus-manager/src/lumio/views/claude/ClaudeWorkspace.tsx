@@ -76,7 +76,7 @@ export function ClaudeWorkspace({
           planAmountCents={state.planAmountCents}
         />
       ) : state.projects.length > 0 ? (
-        <ClaudeHome onConnect={openConnect} ordersSlot={ordersSlot} state={state} />
+        <ClaudeHome onBackToCodex={onBackToCodex} onConnect={openConnect} state={state} />
       ) : (
         <ClaudeEmpty
           entitlement={state.entitlement}

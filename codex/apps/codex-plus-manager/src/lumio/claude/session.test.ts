@@ -61,3 +61,19 @@ test("plan fallback is 19.9 yuan and order amounts keep two decimals", () => {
   assert.equal(formatClaudeOrderYuan(1990), "19.90");
   assert.notEqual(formatClaudePlanYuan(DEFAULT_CLAUDE_PLAN_CENTS), "68");
 });
+
+test("hydrate and first sync kick CLI install then login for that host", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /CLAUDE_CLI_PROGRESS_EVENT/);
+  assert.match(source, /CLAUDE_LOGIN_PROGRESS_EVENT/);
+  assert.match(source, /continueClaudeInit/);
+  assert.match(source, /ensureHostCli/);
+  assert.match(source, /refreshHostLogin/);
+  assert.match(source, /activateClaudeProject/);
+  assert.match(source, /set-workspace-phase/);
+  assert.match(source, /phase: "resume"/);
+  assert.match(source, /phase: "offline"/);
+  assert.match(source, /phase: "ready"/);
+  assert.match(source, /closeClaudeChat/);
+  assert.match(source, /listClaudeChats/);
+});

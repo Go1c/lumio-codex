@@ -247,7 +247,7 @@ export function SessionsPane({ projectId }: { projectId: string }) {
         </button>
         <button
           className="lumio-button is-secondary"
-          onClick={() => dispatchClaude({ type: "set-stage-tab", tab: "terminal" })}
+          onClick={() => dispatchClaude({ type: "set-status-drawer", pane: "closed" })}
           type="button"
         >
           打开终端

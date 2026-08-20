@@ -94,7 +94,6 @@ export function initialClaudeState(): ClaudeState {
     sheet: null,
     projects: [],
     activeProjectId: null,
-    stageTab: "terminal",
     syncByProject: {},
     terminalByProject: {},
     filesByProject: {},
@@ -368,7 +367,10 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
         sheet: null,
         projects,
         activeProjectId: event.project.id,
-        stageTab: "terminal",
+        workspacePhaseByProject: {
+          ...state.workspacePhaseByProject,
+          [event.project.id]: "init",
+        },
         syncByProject: {
           ...state.syncByProject,
           [event.project.id]: {
@@ -394,8 +396,6 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
     case "select-project":
       if (!state.projects.some((project) => project.id === event.projectId)) return state;
       return { ...state, activeProjectId: event.projectId };
-    case "set-stage-tab":
-      return { ...state, stageTab: event.tab };
     case "append-terminal": {
       const lines = state.terminalByProject[event.projectId] ?? [];
       return {
@@ -540,6 +540,7 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
           [event.host]: {
             phase: event.phase,
             errorCode: event.errorCode !== undefined ? event.errorCode : (current?.errorCode ?? null),
+            loginUrl: event.loginUrl !== undefined ? event.loginUrl : (current?.loginUrl ?? null),
           },
         },
       };

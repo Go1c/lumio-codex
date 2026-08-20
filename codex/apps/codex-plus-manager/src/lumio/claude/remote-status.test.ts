@@ -11,6 +11,10 @@ test("connected workspace exposes 服务器状态 and 对话状态", async () =>
   const session = await readFile(new URL("./session.ts", import.meta.url), "utf8");
   assert.match(views, />服务器状态</);
   assert.match(views, />对话状态</);
+  assert.match(views, /StatusBar/);
+  assert.match(views, /StatusDrawer/);
+  assert.match(views, /set-status-drawer/);
+  assert.doesNotMatch(views, /set-stage-tab/);
   assert.match(views, /fetchClaudeServerStatus/);
   assert.match(views, /fetchClaudeSessions/);
   assert.match(api, /lumio_claude_server_status/);
