@@ -93,6 +93,8 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /主机IP/);
   assert.match(source, /ssh root@/);
   assert.match(source, /密码只留在这台电脑上/);
+  assert.match(source, /sheet\.mode === "project"/);
+  assert.match(source, /在这台服务器上再建一个项目/);
   assert.match(source, /SSH_AUTH_FAILED/);
   assert.match(source, /IP 是否抄对/);
   assert.match(source, /密码是否正确/);
@@ -157,6 +159,7 @@ test("the workspace shows files and conflicts tabs next to the terminal", async 
   const source = await readAllClaudeViews();
   const css = await readFile(new URL("./claude-workspace.css", import.meta.url), "utf8");
   const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /beginNewProjectOnHost/);
   assert.match(home, /ProjectRail/);
   assert.match(home, /SessionTabs/);
   assert.match(home, /FileExplorer/);

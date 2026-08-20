@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import {
   activateClaudeProject,
   beginHostLogin,
+  beginNewProjectOnHost,
   closeClaudeProjectChat,
   completeHostLogin,
   continueClaudeInit,
@@ -115,10 +116,7 @@ export function ClaudeHome({
         loginByHost={state.loginByHost}
         onlineHosts={onlineHostsFromState(state)}
         onSelectProject={selectProject}
-        onNewProject={(host) => {
-          onConnect();
-          dispatchClaude({ type: "draft-updated", draft: { host } });
-        }}
+        onNewProject={(host) => beginNewProjectOnHost(host)}
         onConnectServer={onConnect}
       />
       <div className={`lumio-claude-mid${light ? " is-light" : ""}`}>
