@@ -149,6 +149,58 @@ fn read_children(
     Ok(nodes)
 }
 
+pub fn preview_is_binary(path: &str, bytes: &[u8]) -> bool {
+    if bytes.iter().take(512).any(|b| *b == 0) {
+        return true;
+    }
+    if bytes.starts_with(b"%PDF")
+        || bytes.starts_with(b"\x89PNG")
+        || bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || bytes.starts_with(b"GIF8")
+        || bytes.starts_with(b"PK\x03\x04")
+        || bytes.starts_with(b"\x1f\x8b")
+    {
+        return true;
+    }
+    if let Some(ext) = path.rsplit('/').next().and_then(|name| {
+        name.rfind('.')
+            .map(|dot| name[dot + 1..].to_ascii_lowercase())
+    }) {
+        if matches!(
+            ext.as_str(),
+            "pdf"
+                | "png"
+                | "jpg"
+                | "jpeg"
+                | "gif"
+                | "webp"
+                | "ico"
+                | "bmp"
+                | "zip"
+                | "gz"
+                | "tgz"
+                | "woff"
+                | "woff2"
+                | "ttf"
+                | "otf"
+                | "mp3"
+                | "mp4"
+                | "mov"
+                | "wav"
+                | "wasm"
+                | "bin"
+                | "dmg"
+                | "exe"
+                | "dll"
+                | "so"
+                | "dylib"
+        ) {
+            return true;
+        }
+    }
+    std::str::from_utf8(bytes).is_err()
+}
+
 pub fn read_preview(root: &Path, relative: &str, side: &str) -> Result<FilePreview, String> {
     let path = resolve_for_write(root, relative)?;
     let meta = std::fs::metadata(&path).map_err(|_| "文件不存在。".to_string())?;
@@ -162,14 +214,14 @@ pub fn read_preview(root: &Path, relative: &str, side: &str) -> Result<FilePrevi
         });
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("读不了这个文件：{e}"))?;
-    let binary = bytes.iter().take(512).any(|b| *b == 0);
+    let binary = preview_is_binary(relative, &bytes);
     Ok(FilePreview {
         path: relative.into(),
         side: side.into(),
         content: if binary {
             String::new()
         } else {
-            String::from_utf8_lossy(&bytes).into_owned()
+            String::from_utf8(bytes).unwrap_or_default()
         },
         too_large: false,
         binary,
@@ -526,6 +578,20 @@ mod tests {
         assert!(sanitize_file_name("../x").is_err());
         assert!(sanitize_file_name("a/b").is_err());
         assert!(sanitize_file_name("").is_err());
+    }
+
+    #[test]
+    fn pdf_and_invalid_utf8_previews_are_binary_not_dumped() {
+        let root = tempfile::tempdir().unwrap();
+        let pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n\x80\x81\x82";
+        std::fs::write(root.path().join("doc.pdf"), pdf).unwrap();
+        let preview = read_preview(root.path(), "doc.pdf", "local").unwrap();
+        assert!(preview.binary);
+        assert!(preview.content.is_empty());
+        std::fs::write(root.path().join("note.md"), "hello\n").unwrap();
+        let text = read_preview(root.path(), "note.md", "local").unwrap();
+        assert!(!text.binary);
+        assert_eq!(text.content, "hello\n");
     }
 
     #[test]

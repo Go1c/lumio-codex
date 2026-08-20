@@ -708,11 +708,7 @@ export function FileExplorer({
 
       {preview ? (
         <pre className="lumio-claude-preview">
-          {preview.tooLarge
-            ? "文件太大，没法在这里预览。"
-            : preview.binary
-              ? "这是二进制文件，没法预览。"
-              : preview.content}
+          {previewCopy(preview)}
         </pre>
       ) : null}
 
@@ -830,6 +826,29 @@ function collectDirPaths(nodes: ExplorerNode[]): string[] {
 function readConflictPaths(projectId: string): Set<string> {
   const list = getClaudeState().conflictsByProject[projectId] ?? [];
   return new Set(list.map((item) => item.path));
+}
+
+function previewCopy(preview: ClaudeFilePreview): string {
+  if (preview.tooLarge) return "文件太大，没法在这里预览。";
+  if (preview.binary || looksBinaryPreview(preview.path, preview.content)) {
+    return "这是二进制文件，没法预览。";
+  }
+  return preview.content;
+}
+
+function looksBinaryPreview(path: string, content: string): boolean {
+  if (content.startsWith("%PDF")) return true;
+  if (content.includes("\uFFFD")) return true;
+  const ext = fileExt(path);
+  return (
+    ext === "pdf" ||
+    ext === "png" ||
+    ext === "jpg" ||
+    ext === "jpeg" ||
+    ext === "gif" ||
+    ext === "webp" ||
+    ext === "zip"
+  );
 }
 
 function basename(path: string): string {

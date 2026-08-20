@@ -936,13 +936,20 @@ pub fn lumio_claude_preview_file(
             host_alias.as_deref(),
             &format!("head -c 1048576 {}", remote_shell_join(&remote_root, &path)),
         ) {
-            Ok(output) => ClaudeCommandResult::ok(claude_files::FilePreview {
-                path,
-                side,
-                content: String::from_utf8_lossy(&output.stdout).into_owned(),
-                too_large: false,
-                binary: output.stdout.iter().take(512).any(|b| *b == 0),
-            }),
+            Ok(output) => {
+                let binary = claude_files::preview_is_binary(&path, &output.stdout);
+                ClaudeCommandResult::ok(claude_files::FilePreview {
+                    path,
+                    side,
+                    content: if binary {
+                        String::new()
+                    } else {
+                        String::from_utf8_lossy(&output.stdout).into_owned()
+                    },
+                    too_large: false,
+                    binary,
+                })
+            }
             Err(code) => ClaudeCommandResult::failed(code),
         }
     } else {

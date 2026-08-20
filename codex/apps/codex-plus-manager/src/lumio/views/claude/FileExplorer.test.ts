@@ -130,3 +130,12 @@ test("FileExplorer CSS styles the name overlay", async () => {
   const css = await readExplorerCss();
   assert.match(css, /\.lumio-claude-fx-ask/);
 });
+
+test("FileExplorer does not dump PDF bytes and caps the preview pane", async () => {
+  const source = await readExplorer();
+  const css = await readExplorerCss();
+  assert.match(source, /%PDF/);
+  assert.match(source, /这是二进制文件，没法预览。/);
+  assert.match(css, /\.lumio-claude-preview\s*\{[^}]*max-height:\s*180px/);
+  assert.match(css, /\.lumio-claude-preview\s*\{[^}]*overflow:\s*auto/);
+});
