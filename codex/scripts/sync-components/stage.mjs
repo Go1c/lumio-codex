@@ -2,8 +2,7 @@
 // 同步组件唯一暂存入口。
 // 用法: node stage.mjs [--dev | --build-remote]
 // 环境: BESTCODEX_FNS_PREBUILT_DIR   远端对预制目录（CI artifact 下载处 / 本机缓存）
-//       FNS_SERVER_SOURCE_DIR        本机 fns-server 源 checkout（--build-remote 用）
-//       FNS_SERVER_GIT_URL           无本机源时的 git 地址（配 fns-server.pin.json 的 commit）
+//       FNS_SERVER_SOURCE_DIR        覆盖仓内 fns-server 路径（默认 cchaven/services/fns-server）
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -27,6 +26,10 @@ export function isInvokedDirectly(argv1, moduleUrl) {
 
 export function cargoTargetRoot(env = process.env, root = cchavenRoot) {
   return env.CARGO_TARGET_DIR ?? path.join(root, "target");
+}
+
+export function resolveServerSource(env = process.env, cchaven = cchavenRoot) {
+  return env.FNS_SERVER_SOURCE_DIR || path.join(cchaven, "services", "fns-server");
 }
 
 export function hostTriple(platform = process.platform, arch = process.arch) {
@@ -87,14 +90,9 @@ function buildRemote() {
   } else if (!fs.existsSync(agentOut)) {
     throw new Error(`非 Linux 宿主无法编 Linux fns-agent；请先把产物放进 ${prebuiltDir}（CI 由 ubuntu job 提供）`);
   }
-  const pin = JSON.parse(fs.readFileSync(path.join(here, "fns-server.pin.json"), "utf8"));
-  let serverSource = process.env.FNS_SERVER_SOURCE_DIR;
-  if (!serverSource) {
-    const gitUrl = process.env.FNS_SERVER_GIT_URL || pin.url;
-    if (!gitUrl) throw new Error("缺 FNS_SERVER_SOURCE_DIR 或 FNS_SERVER_GIT_URL：fns-server 无源可编");
-    serverSource = fs.mkdtempSync(path.join(codexRoot, "target", "fns-server-src-"));
-    run("git", ["clone", "--no-checkout", gitUrl, serverSource]);
-    run("git", ["checkout", "--detach", pin.commit], { cwd: serverSource });
+  const serverSource = resolveServerSource();
+  if (!fs.existsSync(path.join(serverSource, "go.mod"))) {
+    throw new Error(`仓内 fns-server 源缺失或不是 Go 模块：${serverSource}`);
   }
   const serverOut = path.join(prebuiltDir, "fns-server");
   run("go", ["build", "-trimpath", "-o", serverOut, "."], {

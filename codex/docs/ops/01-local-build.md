@@ -85,7 +85,7 @@ Claude 四步 sheet 的「装组件」和「首次同步」依赖两套构建产
 
 真文件由 `scripts/sync-components/stage.mjs` 写入；缺失时 `src-tauri/build.rs` 生成占位（运行时会拒绝）。git 里没有真二进制是预期。
 
-`apps/codex-plus-manager` 的 `npm run dev` 会先跑 `stage.mjs --dev`：sidecar 必须到位；远端组件缺了会告警，四步 sheet 第三步会诚实失败。补齐远端组件（需要 Go 与仓外的 fns-server 源；二者都不擅装、不默认可得）：
+`apps/codex-plus-manager` 的 `npm run dev` 会先跑 `stage.mjs --dev`：sidecar 必须到位；远端组件缺了会告警，四步 sheet 第三步会诚实失败。补齐远端组件（需要本机 Go；源在仓内 `cchaven/services/fns-server`，不擅装 Go）：
 
 ```bash
 # 在 codex/ 目录

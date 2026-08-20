@@ -32,8 +32,6 @@ jobs:
         with:
           go-version: stable
       - name: Build remote components
-        env:
-          FNS_SERVER_GIT_URL: ${{ vars.FNS_SERVER_GIT_URL }}
         run: node codex/scripts/sync-components/stage.mjs --build-remote
       - name: Verify remote components
         run: node codex/scripts/sync-components/verify.mjs remote codex/target/sync-components/remote-linux-x86_64

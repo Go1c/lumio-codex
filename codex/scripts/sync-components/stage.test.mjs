@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { hostTriple, buildProvenance, cargoTargetRoot, isInvokedDirectly } from "./stage.mjs";
+import { hostTriple, buildProvenance, cargoTargetRoot, isInvokedDirectly, resolveServerSource } from "./stage.mjs";
 
 test("host triple mapping covers the three shipping hosts", () => {
   assert.equal(hostTriple("darwin", "arm64"), "aarch64-apple-darwin");
@@ -40,4 +40,12 @@ test("isInvokedDirectly compares resolved argv1 to fileURLToPath, not URL.pathna
 test("cargo target root honors CARGO_TARGET_DIR then falls back", () => {
   assert.equal(cargoTargetRoot({ CARGO_TARGET_DIR: "/tmp/cargo-out" }, "/repo/cchaven"), "/tmp/cargo-out");
   assert.equal(cargoTargetRoot({}, "/repo/cchaven"), "/repo/cchaven/target");
+});
+
+test("server source defaults to the in-repo copy, not an external git url", () => {
+  assert.equal(resolveServerSource({}, "/repo/cchaven"), "/repo/cchaven/services/fns-server");
+  assert.equal(
+    resolveServerSource({ FNS_SERVER_SOURCE_DIR: "/tmp/override" }, "/repo/cchaven"),
+    "/tmp/override",
+  );
 });

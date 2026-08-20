@@ -1,0 +1,44 @@
+package config
+
+// ServerConfig server configuration
+// ServerConfig 服务器配置
+type ServerConfig struct {
+	// RunMode run mode
+	// RunMode 运行模式
+	RunMode string `yaml:"run-mode" default:"release"`
+	// HttpPort HTTP port
+	// HttpPort HTTP 端口
+	HttpPort string `yaml:"http-port" default:":9000"`
+	// ReadTimeout read timeout (seconds)
+	// ReadTimeout 读取超时（秒）
+	ReadTimeout int `yaml:"read-timeout" default:"60"`
+	// WriteTimeout write timeout (seconds)
+	// WriteTimeout 写入超时（秒）
+	WriteTimeout int `yaml:"write-timeout" default:"60"`
+	// PrivateHttpListen private HTTP listen address
+	// PrivateHttpListen 私有 HTTP 监听地址
+	PrivateHttpListen string `yaml:"private-http-listen"`
+	// WebGuiPort independent WebGUI port
+	// WebGuiPort 独立 Web 界面端口
+	WebGuiPort string `yaml:"webgui-port"`
+	// SharePort independent share page port
+	// SharePort 独立分享页面端口
+	SharePort string `yaml:"share-port"`
+	// ExtApiUrl external API URL
+	// ExtApiUrl external API URL
+	// ExtApiUrl 外部访问 API 的地址
+	ExtApiUrl string `yaml:"ext-api-url"`
+	CORSAllowedOrigins []string `yaml:"cors-allowed-origins"` // CORSAllowedOrigins allowed origins for CORS / CORSAllowedOrigins 跨域允许源白名单
+	TrustedProxies     []string `yaml:"trusted-proxies"`     // TrustedProxies trusted proxies IP/CIDR list / TrustedProxies 可信代理 IP/CIDR 列表
+
+
+	// ShareBaseUrl external share page base URL
+	// ShareBaseUrl 外部分享页面基础 URL
+	ShareBaseUrl string `yaml:"share-base-url"`
+	// MCPSSEPingInterval MCP SSE ping interval (seconds)
+	// MCPSSEPingInterval MCP SSE 保活心跳间隔（秒）
+	MCPSSEPingInterval int `yaml:"mcp-sse-ping-interval" default:"30"`
+	// CustomResponseHeaders custom response headers for all requests
+	// CustomResponseHeaders 所有请求的自定义响应头
+	CustomResponseHeaders map[string]string `yaml:"custom-response-headers"` // Custom response headers mapped to string
+}
