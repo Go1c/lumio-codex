@@ -107,6 +107,10 @@ a:focus-visible {
   background: var(--window-bg);
 }
 
+.lumio-app.is-claude-workspace {
+  grid-template-rows: 54px minmax(0, 1fr);
+}
+
 .lumio-topbar {
   z-index: 4;
   display: grid;

@@ -383,7 +383,7 @@ export function LumioApp() {
   const macosOverlay = state.bootstrap?.platform === "macos";
 
   return (
-    <div className={`lumio-app${macosOverlay ? " is-macos" : ""}`}>
+    <div className={`lumio-app${macosOverlay ? " is-macos" : ""}${showClaude ? " is-claude-workspace" : ""}`}>
       <header className="lumio-topbar">
         {showProductTabs ? (
           <nav aria-label="主导航" className="lumio-nav">
@@ -569,7 +569,7 @@ export function LumioApp() {
         )}
       </main>
 
-      <footer className="lumio-footer">
+      <footer className="lumio-footer" hidden={showClaude}>
         <span>BestCodex</span>
         <span className="lumio-footer-separator" />
         <span>官方应用需单独安装</span>

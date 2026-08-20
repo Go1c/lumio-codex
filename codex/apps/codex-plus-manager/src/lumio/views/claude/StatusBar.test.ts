@@ -99,3 +99,13 @@ test("StatusBar.css is a 26px one-line bar", async () => {
   assert.doesNotMatch(css, /\bagent\b/i);
   assert.doesNotMatch(css, /\btmux\b/i);
 });
+
+test("StatusBar copy matches the scheme D one-line status, not the launcher disclaimer", async () => {
+  const source = await readOwn("StatusBar.tsx");
+  assert.match(source, /● \{ready\.label\}/);
+  assert.match(source, /claudeVersionLoginCopy/);
+  assert.match(source, /hostResourceCopy/);
+  assert.match(source, /conversationCountCopy/);
+  assert.doesNotMatch(source, /官方应用需单独安装/);
+  assert.doesNotMatch(source, /BestCodex/);
+});
