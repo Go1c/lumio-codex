@@ -3,8 +3,8 @@
 //! Switching Codex / Claude tabs, or selecting another project, must not kill
 //! other projects' sessions. User-visible errors never mention the session tool.
 
-use crate::claude_ssh::{AskpassGuard, ResolvedSshTarget, ssh_invocation_args};
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use crate::claude_ssh::{remote_shell_path, ssh_invocation_args, AskpassGuard, ResolvedSshTarget};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -71,7 +71,7 @@ impl TerminalManager {
         format!(
             "env TERM=xterm-256color tmux new-session -A -s {session} -c {root}",
             session = Self::posix_shell_single_quote(&Self::sanitize_session_name(session)),
-            root = Self::posix_shell_single_quote(remote_root)
+            root = remote_shell_path(remote_root)
         )
     }
 
@@ -212,8 +212,8 @@ mod tests {
 
     #[test]
     fn remote_command_quotes_the_project_root() {
-        let command = TerminalManager::remote_command("my project", "/root/bestcodex/my-project");
-        assert!(command.contains("'/root/bestcodex/my-project'"));
+        let command = TerminalManager::remote_command("my project", "~/bestcodex/my-project");
+        assert!(command.contains("\"$HOME\"/'bestcodex/my-project'"));
         assert!(command.contains("'my-project'"));
     }
 }

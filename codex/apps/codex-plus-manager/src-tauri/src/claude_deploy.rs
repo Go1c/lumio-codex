@@ -1,7 +1,10 @@
 //! Deploy sync components to the remote host (not mkdir-only).
 
 use crate::claude_files::expand_local_root;
-use crate::claude_ssh::{ResolvedSshTarget, resolve_from_user_config, ssh_invocation_args};
+use crate::claude_ssh::{
+    remote_prepare_mkdir, remote_shell_path, resolve_from_user_config, ssh_invocation_args,
+    ResolvedSshTarget,
+};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -73,6 +76,31 @@ pub fn human_prepare_detail(code: &str, host: &str, port: u16) -> String {
     }
 }
 
+pub fn inspect_remote_script(remote_root: &str) -> String {
+    format!(
+        "if [ -d {root} ]; then echo EXISTS:1; else echo EXISTS:0; fi; if [ -d {parent} ]; then ls -1 {parent}; fi",
+        root = crate::claude_ssh::remote_shell_path(remote_root),
+        parent = crate::claude_ssh::remote_shell_path("~/bestcodex"),
+    )
+}
+
+pub fn parse_inspect_output(stdout: &str) -> (bool, Vec<String>) {
+    let mut exists = false;
+    let mut names = Vec::new();
+    for line in stdout.lines() {
+        if let Some(flag) = line.strip_prefix("EXISTS:") {
+            exists = flag.trim() == "1";
+            continue;
+        }
+        let name = line.trim();
+        if name.is_empty() || name.starts_with('.') || name.contains('/') {
+            continue;
+        }
+        names.push(name.to_string());
+    }
+    (exists, names)
+}
+
 pub fn prepare_components(
     host: &str,
     user: &str,
@@ -118,8 +146,7 @@ pub fn deploy_remote(
     artifacts: &ArtifactPaths,
     run_ssh: impl Fn(&str) -> Result<std::process::Output, &'static str>,
 ) -> PrepareOutcome {
-    let quoted = remote_root.replace('\'', "'\\''");
-    let mkdir = format!("mkdir -p '{quoted}' ~/.local/share/bestcodex/bin");
+    let mkdir = remote_prepare_mkdir(remote_root);
     match run_ssh(&mkdir) {
         Ok(output) if output.status.success() => {}
         Ok(_) | Err(_) => {
@@ -156,7 +183,8 @@ pub fn deploy_remote(
     }
 
     let start = format!(
-        "chmod 0755 ~/.local/share/bestcodex/bin/fns-server ~/.local/share/bestcodex/bin/fns-agent && mkdir -p '{quoted}'"
+        "chmod 0755 ~/.local/share/bestcodex/bin/fns-server ~/.local/share/bestcodex/bin/fns-agent && mkdir -p {}",
+        remote_shell_path(remote_root)
     );
     match run_ssh(&start) {
         Ok(output) if output.status.success() => PrepareOutcome {
@@ -224,6 +252,17 @@ mod tests {
         assert!(outcome.detail.as_deref().is_some_and(|d| {
             d.contains("这个版本") && !d.contains("这台电脑") && !d.contains("agent")
         }));
+    }
+
+    #[test]
+    fn inspect_output_reports_existing_project_names() {
+        let (exists, names) = parse_inspect_output("EXISTS:1\nmy-project\nmy-project-2\n");
+        assert!(exists);
+        assert_eq!(names, ["my-project", "my-project-2"]);
+        let (missing, empty) = parse_inspect_output("EXISTS:0\n");
+        assert!(!missing);
+        assert!(empty.is_empty());
+        assert!(inspect_remote_script("~/bestcodex/my-project").contains("EXISTS:"));
     }
 
     #[test]

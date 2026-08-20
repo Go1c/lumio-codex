@@ -261,7 +261,32 @@ export function ClaudeConnect({
           </div>
         ) : null}
 
-        {sheet.step === "setup" && sheet.setupStatus !== "fail" ? (
+        {sheet.step === "setup" && sheet.setupStatus === "choose" && sheet.rootChoice ? (
+          <div className="lumio-claude-choice" role="dialog" aria-modal="true" aria-labelledby="lumio-claude-connect-title">
+            <h2 id="lumio-claude-connect-title">服务器上已有这个项目</h2>
+            <p className="lumio-claude-lede">
+              发现 {sheet.rootChoice.existingRoot}。继续用这里的文件，还是另外建一个新目录？
+            </p>
+            <div className="lumio-claude-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => void runConnectSetup("use")}
+                type="button"
+              >
+                继续使用
+              </button>
+              <button
+                className="lumio-button is-primary"
+                onClick={() => void runConnectSetup("create")}
+                type="button"
+              >
+                新建 {sheet.rootChoice.nextName}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {sheet.step === "setup" && sheet.setupStatus !== "fail" && sheet.setupStatus !== "choose" ? (
           <div>
             <h2 id="lumio-claude-connect-title">安装组件</h2>
             <p className="lumio-claude-lede">在服务器上准备同步环境和项目目录。不用你操作。</p>
@@ -276,7 +301,7 @@ export function ClaudeConnect({
               <CheckRow
                 done={sheet.setupStatus === "ok"}
                 title="创建项目目录"
-                detail={`${remote || `/root/bestcodex/${draft.projectName}`} · 本机 ${local || `~/BestCodex/${draft.projectName}`}`}
+                detail={`${remote || `~/bestcodex/${draft.projectName}`} · 本机 ${local || `~/BestCodex/${draft.projectName}`}`}
               />
             </div>
             <div className="lumio-claude-actions">

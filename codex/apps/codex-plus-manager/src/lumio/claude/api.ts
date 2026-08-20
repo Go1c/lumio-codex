@@ -19,6 +19,7 @@ import type {
 
 export const CLAUDE_COMMANDS = {
   probe: "lumio_claude_probe_connection",
+  inspect: "lumio_claude_inspect_remote",
   prepare: "lumio_claude_prepare_remote",
   sync: "lumio_claude_first_sync",
   openTerminal: "lumio_claude_open_system_terminal",
@@ -200,6 +201,41 @@ export async function probeClaudeConnection(input: ClaudeSshArgs): Promise<Claud
       memory: null,
       errorCode,
       detail: probeErrorCopy(errorCode, host, port),
+    };
+  }
+}
+
+export async function inspectClaudeRemote(input: ClaudeSshArgs & {
+  remoteRoot: string;
+}): Promise<{
+  ok: boolean;
+  exists: boolean;
+  names: string[];
+  errorCode: string | null;
+  detail: string | null;
+}> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      exists: false,
+      names: [],
+      errorCode: "SSH_CLIENT_MISSING",
+      detail: prepareErrorCopy("SSH_CLIENT_MISSING", input.host, input.port),
+    };
+  }
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.inspect, {
+      ...sshPayload(input),
+      remoteRoot: input.remoteRoot,
+    });
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "SSH_PREPARE_FAILED";
+    return {
+      ok: false,
+      exists: false,
+      names: [],
+      errorCode,
+      detail: prepareErrorCopy(errorCode, input.host, input.port),
     };
   }
 }

@@ -3,12 +3,9 @@ import test from "node:test";
 
 import { localProjectRoot, projectSlug, remoteProjectRoot } from "./paths.ts";
 
-test("root projects are preset under /root/bestcodex/{name}", () => {
-  assert.equal(remoteProjectRoot("root", "my-project"), "/root/bestcodex/my-project");
-});
-
-test("non-root users are preset under /home/{user}/bestcodex/{name}", () => {
-  assert.equal(remoteProjectRoot("ubuntu", "api"), "/home/ubuntu/bestcodex/api");
+test("projects are preset under the login home, not a guessed /root or /home path", () => {
+  assert.equal(remoteProjectRoot("root", "my-project"), "~/bestcodex/my-project");
+  assert.equal(remoteProjectRoot("ubuntu", "api"), "~/bestcodex/api");
 });
 
 test("the local preset is ~/BestCodex/{name}", () => {
