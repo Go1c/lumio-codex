@@ -103,12 +103,22 @@ if (Test-Path -LiteralPath $stage) {
 }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-foreach ($name in @('lumio-codex.exe', 'lumio-codex-launcher.exe')) {
+foreach ($name in @('lumio-codex.exe', 'lumio-codex-launcher.exe', 'fns-agent.exe')) {
     $src = Join-Path $AppDir $name
     if (-not (Test-Path -LiteralPath $src)) {
         throw "Missing staged binary: $src"
     }
     Copy-Item -LiteralPath $src -Destination (Join-Path $stage $name)
+}
+
+$remoteSource = Join-Path $AppDir 'resources\remote\linux-x86_64'
+if (-not (Test-Path -LiteralPath $remoteSource)) {
+    throw "Missing staged sync components: $remoteSource"
+}
+$remoteStage = Join-Path $stage 'resources\remote\linux-x86_64'
+New-Item -ItemType Directory -Force $remoteStage | Out-Null
+foreach ($name in @('fns-server', 'fns-agent', 'release-provenance.json')) {
+    Copy-Item -LiteralPath (Join-Path $remoteSource $name) -Destination (Join-Path $remoteStage $name)
 }
 
 $iconRoot = Join-Path $codexRoot 'apps\codex-plus-manager\src-tauri\icons'

@@ -90,7 +90,7 @@ export function probeErrorCopy(code: string | null, host: string, port: number):
     case "SSH_PREPARE_FAILED":
       return "没能在服务器上装好同步组件。";
     case "DEPLOY_ARTIFACT_MISSING":
-      return "这台电脑还没有同步组件，装不上服务器。";
+      return "这个版本的 BestCodex 没有把同步组件打进来，不是服务器的问题。更新或重装 BestCodex 后再试。";
     case "SSH_ALIAS_UNKNOWN":
       return "本机 SSH 配置里没有这个 Host 别名。";
     default:
@@ -103,7 +103,7 @@ export function prepareErrorCopy(code: string | null, host: string, port: number
     case "SSH_PREPARE_FAILED":
       return "没能在服务器上装好同步组件。";
     case "DEPLOY_ARTIFACT_MISSING":
-      return "这台电脑还没有同步组件，装不上服务器。";
+      return "这个版本的 BestCodex 没有把同步组件打进来，不是服务器的问题。更新或重装 BestCodex 后再试。";
     case "SSH_AUTH_FAILED":
     case "SSH_UNREACHABLE":
     case "SSH_NOT_SSH":
@@ -118,7 +118,7 @@ export function prepareErrorCopy(code: string | null, host: string, port: number
 export function syncErrorCopy(code: string | null): string {
   switch (code) {
     case "SYNC_ENGINE_UNAVAILABLE":
-      return "这台电脑还没有同步组件，暂时拉不了文件。";
+      return "这个版本的 BestCodex 没有把同步组件打进来，暂时拉不了文件。更新或重装 BestCodex 后再试。";
     case "SYNC_COPY_UNCONFIRMED":
       return "还没把服务器上的文件拉到这台电脑。";
     case "SSH_ALIAS_UNKNOWN":

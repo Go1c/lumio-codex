@@ -9,6 +9,7 @@
 | 路径 | 说明 |
 | --- | --- |
 | `services/cchaven-control` | 控制面（Go）：账号 / 订阅 / 邀请 / 管理 API |
+| `services/fns-server` | 同步服务（Go）：本仓独立维护的副本，BestCodex 远端组件由此编出 |
 | `apps/web` | 官网（React） |
 | `apps/admin` | 运营后台（React） |
 | `apps/desktop` | macOS 桌面 APP（Tauri 2 + Rust） |

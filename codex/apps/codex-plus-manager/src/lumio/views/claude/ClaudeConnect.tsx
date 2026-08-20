@@ -1,6 +1,8 @@
 import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 
 import { listClaudeSshHosts, prepareErrorCopy, probeErrorCopy, syncErrorCopy } from "../../claude/api.ts";
+import { HELP_URL } from "../../help.ts";
+import { openInBrowser } from "../../invoke.ts";
 import { CONNECT_STEPS } from "../../claude/machine.ts";
 import { localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
 import { cancelClaudeConnect, runConnectProbe, runConnectSetup, runConnectSync } from "../../claude/session.ts";
@@ -70,58 +72,29 @@ export function ClaudeConnect({
         {sheet.step === "host" ? (
           <form onSubmit={onHostSubmit}>
             <h2 id="lumio-claude-connect-title">连接服务器</h2>
-            <p className="lumio-claude-lede">买好云服务器之后，把公网 IP 和密码填进来就行。其余默认即可。</p>
-            <label className="lumio-claude-note" htmlFor="lumio-claude-host">
-              主机
-            </label>
-            <input
-              autoComplete="off"
-              className="lumio-claude-field"
-              id="lumio-claude-host"
-              onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { host: event.target.value } })}
-              onPaste={onHostPaste}
-              value={draft.host}
-            />
-            <label className="lumio-claude-note" htmlFor="lumio-claude-user">
-              用户
-            </label>
-            <input
-              className="lumio-claude-field"
-              id="lumio-claude-user"
-              onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { user: event.target.value } })}
-              value={draft.user}
-            />
-            <label className="lumio-claude-note" htmlFor="lumio-claude-pass">
-              密码
-            </label>
-            <input
-              autoComplete="off"
-              className="lumio-claude-field"
-              id="lumio-claude-pass"
-              onChange={(event) => onPassword(event.target.value)}
-              type="password"
-              value={password}
-            />
-            <p className="lumio-claude-quiet">
-              密码只留在这台电脑上。也可以粘贴整条 <code>ssh root@…</code>。
-            </p>
-            <details className="lumio-claude-adv">
-              <summary>懂 SSH 再用</summary>
-              <div className="lumio-claude-adv-pad">
-                <label className="lumio-claude-note" htmlFor="lumio-claude-port">
-                  端口
-                </label>
-                <input
-                  className="lumio-claude-field"
-                  id="lumio-claude-port"
-                  onChange={(event) =>
-                    dispatchClaude({
-                      type: "draft-updated",
-                      draft: { port: Number(event.target.value) || 22 },
-                    })
-                  }
-                  value={String(draft.port)}
-                />
+            <div className="lumio-claude-mode-tabs" role="tablist" aria-label="连接方式">
+              <button
+                aria-selected={draft.auth !== "config"}
+                className={draft.auth !== "config" ? "is-on" : ""}
+                onClick={() => dispatchClaude({ type: "draft-updated", draft: { auth: "password" } })}
+                role="tab"
+                type="button"
+              >
+                IP 用户密码
+              </button>
+              <button
+                aria-selected={draft.auth === "config"}
+                className={draft.auth === "config" ? "is-on" : ""}
+                onClick={() => dispatchClaude({ type: "draft-updated", draft: { auth: "config" } })}
+                role="tab"
+                type="button"
+              >
+                本机 SSH 方式
+              </button>
+            </div>
+            {draft.auth === "config" ? (
+              <>
+                <p className="lumio-claude-lede">用本机 SSH 配置里的 Host 别名连接。密钥和端口按配置来。</p>
                 <label className="lumio-claude-note" htmlFor="lumio-claude-alias">
                   本机 SSH 配置别名（Host）
                 </label>
@@ -129,15 +102,20 @@ export function ClaudeConnect({
                   className="lumio-claude-field"
                   id="lumio-claude-alias"
                   list="lumio-claude-alias-list"
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const hostAlias = event.target.value;
+                    const known = sshHosts.find((host) => host.alias === hostAlias);
                     dispatchClaude({
                       type: "draft-updated",
                       draft: {
-                        hostAlias: event.target.value,
-                        auth: event.target.value && !draft.keyPath ? "config" : draft.auth,
+                        hostAlias,
+                        auth: "config",
+                        host: known?.hostname ?? draft.host,
+                        user: known?.user ?? draft.user,
+                        port: known?.port ?? draft.port,
                       },
-                    })
-                  }
+                    });
+                  }}
                   placeholder="例如 prod，读 ~/.ssh/config"
                   value={draft.hostAlias}
                 />
@@ -148,23 +126,47 @@ export function ClaudeConnect({
                     </option>
                   ))}
                 </datalist>
-                <label className="lumio-claude-note" htmlFor="lumio-claude-key">
-                  本机密钥（可选）
+                <p className="lumio-claude-quiet">读这台电脑的 SSH 配置，不必再填公网 IP 和密码。</p>
+              </>
+            ) : (
+              <>
+                <p className="lumio-claude-lede">买好云服务器之后，把公网 IP 和密码填进来就行。其余默认即可。</p>
+                <label className="lumio-claude-note" htmlFor="lumio-claude-host">
+                  主机IP
+                </label>
+                <input
+                  autoComplete="off"
+                  className="lumio-claude-field"
+                  id="lumio-claude-host"
+                  onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { host: event.target.value } })}
+                  onPaste={onHostPaste}
+                  value={draft.host}
+                />
+                <label className="lumio-claude-note" htmlFor="lumio-claude-user">
+                  用户
                 </label>
                 <input
                   className="lumio-claude-field"
-                  id="lumio-claude-key"
-                  onChange={(event) =>
-                    dispatchClaude({
-                      type: "draft-updated",
-                      draft: { keyPath: event.target.value, auth: event.target.value ? "key" : "password" },
-                    })
-                  }
-                  placeholder="留空则用密码"
-                  value={draft.keyPath}
+                  id="lumio-claude-user"
+                  onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { user: event.target.value } })}
+                  value={draft.user}
                 />
-              </div>
-            </details>
+                <label className="lumio-claude-note" htmlFor="lumio-claude-pass">
+                  密码
+                </label>
+                <input
+                  autoComplete="off"
+                  className="lumio-claude-field"
+                  id="lumio-claude-pass"
+                  onChange={(event) => onPassword(event.target.value)}
+                  type="password"
+                  value={password}
+                />
+                <p className="lumio-claude-quiet">
+                  密码只留在这台电脑上。也可以粘贴整条 <code>ssh root@…</code>。
+                </p>
+              </>
+            )}
             <div className="lumio-claude-actions">
               <button
                 className="lumio-button is-secondary"
@@ -189,13 +191,13 @@ export function ClaudeConnect({
                 done={sheet.probe?.reachable === true}
                 now={sheet.probeStatus === "running" && sheet.probe === null}
                 title="网络可达"
-                detail={`${draft.host || "—"}:${draft.port}`}
+                detail={`${draft.host || draft.hostAlias || "—"}:${draft.port}`}
               />
               <CheckRow
                 done={sheet.probe?.authenticated === true}
                 now={sheet.probeStatus === "running" && sheet.probe?.reachable === true}
                 title="可以登录"
-                detail={`${draft.user} · ${draft.auth === "key" ? "密钥" : "密码有效"}`}
+                detail={`${draft.user} · ${draft.auth === "config" ? "本机 SSH 配置" : draft.auth === "key" ? "密钥" : "密码有效"}`}
               />
               <CheckRow
                 done={sheet.probeStatus === "ok"}
@@ -264,7 +266,7 @@ export function ClaudeConnect({
             <h2 id="lumio-claude-connect-title">安装组件</h2>
             <p className="lumio-claude-lede">在服务器上准备同步环境和项目目录。不用你操作。</p>
             <div className="lumio-claude-checks">
-              <CheckRow done title="已连上服务器" detail={`${draft.user}@${draft.host}`} />
+              <CheckRow done title="已连上服务器" detail={`${draft.user}@${draft.host || draft.hostAlias}`} />
               <CheckRow
                 done={sheet.setupStatus === "ok"}
                 now={sheet.setupStatus === "running"}
@@ -298,26 +300,45 @@ export function ClaudeConnect({
         ) : null}
 
         {sheet.step === "setup" && sheet.setupStatus === "fail" ? (
-          <div>
-            <h2 id="lumio-claude-connect-title">没能装好同步组件</h2>
-            <p className="lumio-claude-lede">先改连接信息，或再试一次。装不好就不能开始首次同步。</p>
-            <div className="lumio-claude-fail">
-              {sheet.setupDetail ?? prepareErrorCopy("SSH_PREPARE_FAILED", draft.host, draft.port)}
-              <span className="lumio-claude-fail-code">{sheet.setupErrorCode ?? "SSH_PREPARE_FAILED"}</span>
+          sheet.setupErrorCode === "DEPLOY_ARTIFACT_MISSING" ? (
+            <div>
+              <h2 id="lumio-claude-connect-title">这个版本没有打进同步组件</h2>
+              <p className="lumio-claude-lede">不是连接问题，不用改服务器信息。更新或重装 BestCodex 后回到这里重试。</p>
+              <div className="lumio-claude-fail">
+                {sheet.setupDetail ?? prepareErrorCopy("DEPLOY_ARTIFACT_MISSING", draft.host, draft.port)}
+                <span className="lumio-claude-fail-code">DEPLOY_ARTIFACT_MISSING</span>
+              </div>
+              <div className="lumio-claude-actions">
+                <button className="lumio-button is-secondary" onClick={() => void openInBrowser(HELP_URL)} type="button">
+                  打开帮助页
+                </button>
+                <button className="lumio-button is-primary" onClick={() => void runConnectSetup()} type="button">
+                  重试
+                </button>
+              </div>
             </div>
-            <div className="lumio-claude-actions">
-              <button
-                className="lumio-button is-secondary"
-                onClick={() => dispatchClaude({ type: "back-to-host" })}
-                type="button"
-              >
-                返回修改
-              </button>
-              <button className="lumio-button is-primary" onClick={() => void runConnectSetup()} type="button">
-                重试
-              </button>
+          ) : (
+            <div>
+              <h2 id="lumio-claude-connect-title">没能装好同步组件</h2>
+              <p className="lumio-claude-lede">先改连接信息，或再试一次。装不好就不能开始首次同步。</p>
+              <div className="lumio-claude-fail">
+                {sheet.setupDetail ?? prepareErrorCopy("SSH_PREPARE_FAILED", draft.host, draft.port)}
+                <span className="lumio-claude-fail-code">{sheet.setupErrorCode ?? "SSH_PREPARE_FAILED"}</span>
+              </div>
+              <div className="lumio-claude-actions">
+                <button
+                  className="lumio-button is-secondary"
+                  onClick={() => dispatchClaude({ type: "back-to-host" })}
+                  type="button"
+                >
+                  返回修改
+                </button>
+                <button className="lumio-button is-primary" onClick={() => void runConnectSetup()} type="button">
+                  重试
+                </button>
+              </div>
             </div>
-          </div>
+          )
         ) : null}
 
         {sheet.step === "sync" && sheet.sync.state === "fail" ? (

@@ -52,6 +52,17 @@ export function emptyHostDraft(): ClaudeHostDraft {
   };
 }
 
+export function sshFieldsForProbe(draft: ClaudeHostDraft): ClaudeHostDraft {
+  if (draft.auth === "config") {
+    return draft;
+  }
+  return {
+    ...draft,
+    hostAlias: "",
+    keyPath: draft.auth === "key" ? draft.keyPath : "",
+  };
+}
+
 function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
   return {
     step: "host",

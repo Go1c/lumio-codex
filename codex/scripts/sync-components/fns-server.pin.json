@@ -1,0 +1,6 @@
+{
+  "module": "github.com/haierkeys/fast-note-sync-service",
+  "path": "cchaven/services/fns-server",
+  "importedFromCommit": "39fadbfb",
+  "note": "仓内独立维护，不再跟踪上游、不 clone 外部仓"
+}

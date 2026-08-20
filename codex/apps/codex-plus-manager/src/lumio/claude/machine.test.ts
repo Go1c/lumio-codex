@@ -4,11 +4,13 @@ import test from "node:test";
 import {
   CONNECT_STEPS,
   createProjectFromDraft,
+  emptyHostDraft,
   initialClaudeState,
   nextProjectName,
   persistableClaudeState,
   reduceClaudeState,
   resolveClaudeSurface,
+  sshFieldsForProbe,
 } from "./machine.ts";
 
 import type { ClaudeEntitlement, ClaudeEvent, ClaudeProject, ClaudeState } from "./types.ts";
@@ -336,6 +338,29 @@ test("unavailable sync engine does not create a project", () => {
   assert.equal(state.sheet?.sync.state, "fail");
   assert.equal(state.sheet?.sync.errorCode, "SYNC_ENGINE_UNAVAILABLE");
   assert.equal(state.projects.length, 0);
+});
+
+test("password connect mode does not send a leftover host alias", () => {
+  const fields = sshFieldsForProbe({
+    ...emptyHostDraft(),
+    host: "43.156.20.8",
+    hostAlias: "prod",
+    auth: "password",
+  });
+  assert.equal(fields.host, "43.156.20.8");
+  assert.equal(fields.hostAlias, "");
+  assert.equal(fields.keyPath, "");
+});
+
+test("local SSH connect mode keeps the host alias without requiring an IP", () => {
+  const fields = sshFieldsForProbe({
+    ...emptyHostDraft(),
+    host: "",
+    hostAlias: "prod",
+    auth: "config",
+  });
+  assert.equal(fields.hostAlias, "prod");
+  assert.equal(fields.host, "");
 });
 
 test("createProjectFromDraft writes BestCodex directory presets", () => {

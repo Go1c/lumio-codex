@@ -62,7 +62,9 @@ fn is_real_artifact(path: &Path) -> bool {
 
 pub fn human_prepare_detail(code: &str, host: &str, port: u16) -> String {
     match code {
-        "DEPLOY_ARTIFACT_MISSING" => "这台电脑还没有同步组件，装不上服务器。".into(),
+        "DEPLOY_ARTIFACT_MISSING" => {
+            "这个版本的 BestCodex 没有把同步组件打进来，不是服务器的问题。更新或重装 BestCodex 后再试。".into()
+        }
         "SSH_AUTH_FAILED" => format!("无法登录 {host}。"),
         "SSH_UNREACHABLE" => format!("连不上 {host}:{port}。"),
         "SSH_ALIAS_UNKNOWN" => "本机 SSH 配置里没有这个 Host 别名。".into(),
@@ -219,12 +221,9 @@ mod tests {
             outcome.error_code.as_deref(),
             Some("DEPLOY_ARTIFACT_MISSING")
         );
-        assert!(
-            outcome
-                .detail
-                .as_deref()
-                .is_some_and(|d| d.contains("同步组件") && !d.contains("agent"))
-        );
+        assert!(outcome.detail.as_deref().is_some_and(|d| {
+            d.contains("这个版本") && !d.contains("这台电脑") && !d.contains("agent")
+        }));
     }
 
     #[test]

@@ -69,6 +69,11 @@ describe("Pack-Msix.ps1 contracts", () => {
     assert.match(script, /'Wide310x150Logo\.png'/);
     assert.match(script, /'Square310x310Logo\.png'/);
   });
+
+  it("msix stage carries the sync components", () => {
+    assert.match(script, /fns-agent\.exe/);
+    assert.match(script, /resources\\remote\\linux-x86_64/);
+  });
 });
 
 describe("MSIX tile assets", () => {

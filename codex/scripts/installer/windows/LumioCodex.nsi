@@ -48,6 +48,14 @@ Section "Install"
 
   SetOutPath "$INSTDIR"
   File "${ROOT}\dist\windows\app\lumio-codex.exe"
+  File "${ROOT}\dist\windows\app\fns-agent.exe"
+
+  SetOutPath "$INSTDIR\resources\remote\linux-x86_64"
+  File "${ROOT}\dist\windows\app\resources\remote\linux-x86_64\fns-server"
+  File "${ROOT}\dist\windows\app\resources\remote\linux-x86_64\fns-agent"
+  File "${ROOT}\dist\windows\app\resources\remote\linux-x86_64\release-provenance.json"
+  SetOutPath "$INSTDIR"
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   SetOutPath "$INSTDIR\Helpers"
@@ -79,6 +87,13 @@ Section "Uninstall"
 
   Delete "$INSTDIR\Helpers\lumio-codex-launcher.exe"
   RMDir "$INSTDIR\Helpers"
+  Delete "$INSTDIR\fns-agent.exe"
+  Delete "$INSTDIR\resources\remote\linux-x86_64\fns-server"
+  Delete "$INSTDIR\resources\remote\linux-x86_64\fns-agent"
+  Delete "$INSTDIR\resources\remote\linux-x86_64\release-provenance.json"
+  RMDir "$INSTDIR\resources\remote\linux-x86_64"
+  RMDir "$INSTDIR\resources\remote"
+  RMDir "$INSTDIR\resources"
   Delete "$INSTDIR\lumio-codex.exe"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"

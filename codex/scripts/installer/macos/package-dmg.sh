@@ -43,6 +43,16 @@ for required_binary in "$BINARY_DIR/lumio-codex" "$BINARY_DIR/lumio-codex-launch
     exit 1
   fi
 done
+case "$ARCH" in
+  arm64) TRIPLE="aarch64-apple-darwin"; SIDECAR_PLATFORM="darwin-arm64" ;;
+  x64|x86_64) TRIPLE="x86_64-apple-darwin"; SIDECAR_PLATFORM="darwin-x64" ;;
+  *) echo "error: unsupported arch: $ARCH" >&2; exit 1 ;;
+esac
+SIDECAR_SOURCE="$ROOT/apps/codex-plus-manager/src-tauri/binaries/fns-agent-$TRIPLE"
+REMOTE_SOURCE="$ROOT/apps/codex-plus-manager/src-tauri/resources/remote/linux-x86_64"
+# 组件缺失 = 这个版本没打好，宁可构建失败也不打空壳包
+node "$ROOT/scripts/sync-components/verify.mjs" sidecar "$SIDECAR_SOURCE" "$SIDECAR_PLATFORM"
+node "$ROOT/scripts/sync-components/verify.mjs" remote "$REMOTE_SOURCE"
 if [ ! -f "$ICON_SOURCE" ]; then
   echo "error: icon not found: $ICON_SOURCE" >&2
   exit 1
@@ -54,6 +64,14 @@ cp "$BINARY_DIR/lumio-codex" "$APP_DIR/Contents/MacOS/lumio-codex"
 cp "$BINARY_DIR/lumio-codex-launcher" "$APP_DIR/Contents/Helpers/lumio-codex-launcher"
 cp "$ICON_SOURCE" "$APP_DIR/Contents/Resources/$ICON_NAME"
 chmod +x "$APP_DIR/Contents/MacOS/lumio-codex" "$APP_DIR/Contents/Helpers/lumio-codex-launcher"
+cp "$SIDECAR_SOURCE" "$APP_DIR/Contents/MacOS/fns-agent"
+chmod +x "$APP_DIR/Contents/MacOS/fns-agent"
+mkdir -p "$APP_DIR/Contents/Resources/remote/linux-x86_64"
+for component in fns-server fns-agent release-provenance.json; do
+  cp "$REMOTE_SOURCE/$component" "$APP_DIR/Contents/Resources/remote/linux-x86_64/$component"
+done
+chmod 0755 "$APP_DIR/Contents/Resources/remote/linux-x86_64/fns-server" \
+  "$APP_DIR/Contents/Resources/remote/linux-x86_64/fns-agent"
 printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
