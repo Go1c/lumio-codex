@@ -27,6 +27,15 @@ fn main() {
             .join(format!("fns-agent-{triple}{ext}")),
         b"placeholder\n",
     );
+    // CI host triples required by sidecar_placeholders_cover_ci_host_triples
+    // (and by a fresh checkout). TARGET above covers linux CI later.
+    for name in [
+        "fns-agent-aarch64-apple-darwin",
+        "fns-agent-x86_64-apple-darwin",
+        "fns-agent-x86_64-pc-windows-msvc.exe",
+    ] {
+        ensure_placeholder(&manifest.join("binaries").join(name), b"placeholder\n");
+    }
     let remote = manifest.join("resources/remote/linux-x86_64");
     ensure_placeholder(&remote.join("fns-server"), b"placeholder\n");
     ensure_placeholder(&remote.join("fns-agent"), b"placeholder\n");
