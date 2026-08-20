@@ -42,6 +42,7 @@ metadata:
 
 - Claude 真机：组件随包机制已落地（`codex/scripts/sync-components/`，CI ubuntu job 产 Linux 制品，
   安装包内建校验，缺组件即构建失败）；干净机四步 sheet 端到端验收（装组件 + 首次同步）待跑
+- Claude 真机：确认拷贝默认等 60s，超时 fail-closed（`SYNC_COPY_UNCONFIRMED`），重试可能因本机已有文件再次不确认；keepLocal 后按内容重检可能把同一冲突刷回来
 - 干净机真机验收未跑：注册→登录→安装官方 Codex（含取消）→启动；官网主路径浏览器点通。测试服 `vps-108-80-81-15` 可 SSH，同步组件已随包（构建期 `scripts/sync-components/stage.mjs` 暂存），首次同步未在桌面端走完
 - 字段级配置恢复（相对整文件回滚）
 - 系统凭据库替换本地文件（需新依赖，另开 ADR）
