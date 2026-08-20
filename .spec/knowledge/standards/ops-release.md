@@ -43,3 +43,5 @@ metadata:
   （`API_BASE_URL` 未变，`SITE_BASE_URL` 为 `https://bestcodex.app`）。
 - 门户与产品站的域名与接口地址只在 `web/packages/ui/src/config.ts` 一处收敛。
 - 运维步骤变更必须同步对应的 `docs/ops/`；触发场景变了要一并改本索引的 description。
+- 安装包必须内嵌同步组件（本机 sidecar + 远端 linux-x86_64 组件），打包脚本与 CI 由
+  `codex/scripts/sync-components/verify.mjs` 把关，缺组件必须构建失败，不得再出空壳包。

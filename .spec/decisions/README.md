@@ -40,3 +40,4 @@
 | [0010](0010-web-support-qq-group-number.md) | 客服气泡的 QQ 入口是群号（可复制），不是加群 URL | 生效 |
 | [0011](0011-windows-msix-store-scaffold.md) | Windows 商店包另开 unsigned MSIX 轨，不改 NSIS / ZIP / Tauri bundle | 生效 |
 | [0012](0012-claude-balance-subscribe.md) | Claude 包月钱在 Sub2API、订阅权在控制面，不在 Sub2API 做套餐 | 生效 |
+| [0013](0013-bestcodex-sync-components-bundling.md) | 同步组件为构建产物不入库，占位由 build.rs 生成，fns-server 源留仓外 pin | 生效 |
