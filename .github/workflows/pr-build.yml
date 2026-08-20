@@ -327,6 +327,9 @@ jobs:
     name: macOS ${{ matrix.arch }} internal unsigned
     needs: sync-components
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
