@@ -26,7 +26,7 @@ test("the module store keeps an in-flight connect sheet after a consumer unmount
 
   const afterUnmount = getClaudeState();
   assert.equal(afterUnmount.page, "empty");
-  assert.equal(afterUnmount.sheet?.step, "probe");
+  assert.equal(afterUnmount.sheet?.step, "host");
   assert.equal(afterUnmount.sheet?.draft.host, "43.156.20.8");
   assert.equal(afterUnmount.sheet?.probeStatus, "running");
 });
