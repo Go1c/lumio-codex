@@ -27,6 +27,7 @@ const {
   BING_SITE_VERIFICATION,
   GOOGLE_SITE_VERIFICATION,
   SEO_ROUTES,
+  SOGOU_SITE_VERIFICATION,
   renderRoute,
   headDataFor,
   markdownPages,
@@ -45,7 +46,7 @@ const VERIFICATIONS = [
   ["google-site-verification", GOOGLE_SITE_VERIFICATION],
   ["msvalidate.01", BING_SITE_VERIFICATION],
   ["baidu-site-verification", BAIDU_SITE_VERIFICATION],
-  ["sogou_site_verification", process.env.SITE_VERIFY_SOGOU],
+  ["sogou_site_verification", SOGOU_SITE_VERIFICATION],
   ["360-site-verification", process.env.SITE_VERIFY_360],
   ["yandex-verification", process.env.SITE_VERIFY_YANDEX],
 ].filter(([, token]) => Boolean(token));
