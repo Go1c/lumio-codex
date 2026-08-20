@@ -19,6 +19,7 @@ import {
   BING_SITE_VERIFICATION,
   GOOGLE_SITE_VERIFICATION,
   SEO_ROUTES,
+  SOGOU_SITE_VERIFICATION,
   absoluteUrl,
   seoForPath,
   siteOrigin,
@@ -29,6 +30,7 @@ export {
   BING_SITE_VERIFICATION,
   GOOGLE_SITE_VERIFICATION,
   SEO_ROUTES,
+  SOGOU_SITE_VERIFICATION,
   absoluteUrl,
   siteOrigin,
 };
