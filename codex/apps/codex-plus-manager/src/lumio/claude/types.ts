@@ -4,8 +4,6 @@ export type ClaudePage = "subscribe" | "empty" | "workspace";
 
 export type ClaudeConnectStep = "host" | "probe" | "setup" | "sync";
 
-export type ClaudeStageTab = "terminal" | "files" | "conflicts" | "server" | "sessions";
-
 export type ClaudeEntitlementStatus = "none" | "active" | "trialing" | "expired";
 
 export type ClaudeEntitlementSource = "account" | "control-plane" | "local";
@@ -224,6 +222,48 @@ export interface ClaudeSessionsSnapshot {
   error?: ClaudeStatusError | null;
 }
 
+export interface ClaudeChatSession {
+  id: string;
+  projectId: string;
+  title: string | null; // null 表示显示「新对话」
+  titleLocked: boolean;
+  running: boolean;
+}
+
+export type ClaudeCliInstallPhase =
+  | "idle"
+  | "detect"
+  | "install"
+  | "upgrade"
+  | "skip"
+  | "ok"
+  | "fail";
+
+export interface ClaudeCliInstallStatus {
+  phase: ClaudeCliInstallPhase;
+  version: string | null;
+  latest: string | null;
+  errorCode: string | null;
+  detail: string | null;
+}
+
+export type ClaudeLoginPhase =
+  | "unknown"
+  | "logged-out"
+  | "logging-in"
+  | "logged-in"
+  | "expired";
+
+export interface ClaudeLoginStatus {
+  phase: ClaudeLoginPhase;
+  errorCode: string | null;
+  loginUrl?: string | null;
+}
+
+export type ClaudeStatusDrawerPane = "closed" | "server" | "sessions" | "conflicts";
+
+export type ClaudeWorkspacePhase = "init" | "ready" | "resume" | "offline";
+
 export interface ClaudeState {
   entitlement: ClaudeEntitlement;
   controlUnreachable: boolean;
@@ -231,7 +271,6 @@ export interface ClaudeState {
   sheet: ClaudeConnectSheet | null;
   projects: ClaudeProject[];
   activeProjectId: string | null;
-  stageTab: ClaudeStageTab;
   syncByProject: Record<string, ClaudeSyncStatus>;
   terminalByProject: Record<string, ClaudeTerminalLine[]>;
   filesByProject: Record<string, ClaudeFileEntry[]>;
@@ -242,6 +281,13 @@ export interface ClaudeState {
   orders: ClaudeOrder[];
   ordersOpen: boolean;
   planAmountCents: number;
+  sessionsByProject: Record<string, ClaudeChatSession[]>;
+  activeSessionByProject: Record<string, string | null>;
+  collapsedHosts: Record<string, boolean>;
+  cliByHost: Record<string, ClaudeCliInstallStatus>;
+  loginByHost: Record<string, ClaudeLoginStatus>;
+  statusDrawer: ClaudeStatusDrawerPane;
+  workspacePhaseByProject: Record<string, ClaudeWorkspacePhase>;
 }
 
 export interface PersistableClaudeState {
@@ -279,7 +325,6 @@ export type ClaudeEvent =
   | { type: "sync-progress"; filesDone: number; filesTotal: number }
   | { type: "sync-finished"; ok: boolean; project: ClaudeProject; errorCode?: string | null }
   | { type: "select-project"; projectId: string }
-  | { type: "set-stage-tab"; tab: ClaudeStageTab }
   | { type: "append-terminal"; projectId: string; line: ClaudeTerminalLine }
   | { type: "files-loaded"; projectId: string; files: ClaudeFileEntry[] }
   | { type: "conflicts-loaded"; projectId: string; conflicts: ClaudeConflictEntry[] }
@@ -295,4 +340,28 @@ export type ClaudeEvent =
   | { type: "pay-failed"; errorCode: string; forceRecharge?: boolean }
   | { type: "orders-loaded"; orders: ClaudeOrder[] }
   | { type: "orders-toggled"; open?: boolean }
-  | { type: "plan-loaded"; amountCents: number };
+  | { type: "plan-loaded"; amountCents: number }
+  | { type: "open-session"; projectId: string; sessionId: string }
+  | { type: "close-session"; projectId: string; sessionId: string; nextSessionId: string }
+  | { type: "select-session"; projectId: string; sessionId: string }
+  | { type: "session-title-locked"; projectId: string; sessionId: string; title: string }
+  | { type: "session-running"; projectId: string; sessionId: string; running: boolean }
+  | { type: "toggle-server-group"; host: string; collapsed?: boolean }
+  | {
+      type: "cli-install-progress";
+      host: string;
+      phase: ClaudeCliInstallPhase;
+      version?: string | null;
+      latest?: string | null;
+      errorCode?: string | null;
+      detail?: string | null;
+    }
+  | {
+      type: "login-status";
+      host: string;
+      phase: ClaudeLoginPhase;
+      errorCode?: string | null;
+      loginUrl?: string | null;
+    }
+  | { type: "set-status-drawer"; pane: ClaudeStatusDrawerPane }
+  | { type: "set-workspace-phase"; projectId: string; phase: ClaudeWorkspacePhase };

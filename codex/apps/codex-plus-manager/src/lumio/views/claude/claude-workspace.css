@@ -1,3 +1,14 @@
+@import "./ProjectRail.css";
+@import "./TerminalPane.css";
+@import "./FileExplorer.css";
+@import "./ConflictsPane.css";
+@import "./StatusBar.css";
+@import "./StatusDrawer.css";
+@import "./SessionTabs.css";
+@import "./InitChecklist.css";
+@import "./LoginCard.css";
+/* 订阅 / 连接向导 / empty 等本波不碰的样式可留在 barrel 本体 */
+
 .lumio-claude {
   --cc-ink: var(--ink, #1d1d1f);
   --cc-ink-2: var(--ink-2, #6e6e73);
@@ -138,10 +149,6 @@
   font-weight: 600;
 }
 
-.lumio-claude-rail .lumio-claude-entitlement {
-  margin: 0 12px 10px;
-}
-
 .lumio-claude-orders {
   margin-top: 16px;
 }
@@ -160,10 +167,6 @@
   border-top: 1px solid var(--cc-line);
   color: var(--cc-ink-2);
   font-size: 13px;
-}
-
-.lumio-claude-rail .lumio-claude-orders {
-  margin: 8px 8px 12px;
 }
 
 .lumio-claude-quiet {
@@ -465,450 +468,71 @@
 }
 
 .lumio-claude-frame {
+  position: relative;
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 236px minmax(0, 1fr) 282px;
+  grid-template-rows: minmax(0, 1fr) 26px;
   height: 100%;
   min-height: 0;
 }
 
 .lumio-claude-rail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.lumio-claude-mid {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  padding: 14px 10px 12px;
-  border-right: 1px solid var(--cc-line);
-  background: color-mix(in srgb, var(--cc-glass) 70%, transparent);
-  backdrop-filter: blur(20px);
-}
-
-.lumio-claude-rail-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 8px 12px;
-}
-
-.lumio-claude-rail-head h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 610;
-  letter-spacing: -0.02em;
-}
-
-.lumio-claude-rail-head .lumio-button {
-  padding: 4px 10px;
-  font-size: 12px;
-}
-
-.lumio-claude-proj {
-  display: block;
-  width: 100%;
-  padding: 10px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.lumio-claude-proj:hover {
-  background: rgb(120 120 128 / 10%);
-}
-
-.lumio-claude-proj.is-on {
-  background: var(--cc-bg-elev);
-  box-shadow: 0 8px 24px rgb(20 20 40 / 6%);
-}
-
-.lumio-claude-proj .k {
-  font-size: 14px;
-  font-weight: 560;
-}
-
-.lumio-claude-proj .d {
-  display: block;
-  margin-top: 3px;
-  color: var(--cc-ink-3);
-  font-size: 11px;
-}
-
-.lumio-claude-add {
-  width: 100%;
-  margin-top: auto;
-}
-
-.lumio-claude-stage {
-  display: grid;
-  grid-template-rows: 40px 1fr 28px;
+  min-width: 0;
   min-height: 0;
   background: #0c0d11;
   color: #e8e8ed;
 }
 
-.lumio-claude-stage-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px;
-  border-bottom: 1px solid rgb(255 255 255 / 7%);
-  background: rgb(16 17 22 / 92%);
-  font-size: 13px;
+.lumio-claude-mid.is-light {
+  background: var(--cc-grouped);
+  color: var(--cc-ink);
 }
 
-.lumio-claude-stage-tabs button {
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #8e8e93;
-}
-
-.lumio-claude-stage-tabs button.is-on {
-  background: rgb(255 255 255 / 8%);
-  color: #fff;
-}
-
-.lumio-claude-term,
-.lumio-claude-files {
-  min-height: 0;
-  padding: 20px 22px;
-  overflow: auto;
-  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #d7d7de;
-  background:
-    radial-gradient(500px 220px at 90% -20%, rgb(10 132 255 / 16%), transparent 55%),
-    #0c0d11;
-}
-
-.lumio-claude-term .dim,
-.lumio-claude-files .dim {
-  color: #6e6e73;
-}
-
-.lumio-claude-term .ok {
-  color: #32d74b;
-}
-
-.lumio-claude-term .err {
-  color: #ff8a80;
-}
-
-.lumio-claude-term .in {
-  color: #fff;
-}
-
-.lumio-claude-term-form {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-top: 16px;
-}
-
-.lumio-claude-xterm-wrap {
+.lumio-claude-mid-body {
   position: relative;
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
-  background: #0c0d11;
 }
 
-.lumio-claude-term-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 8px 12px 0;
+.lumio-claude-mid-body > .lumio-claude-xterm-wrap {
+  flex: 1;
+  min-height: 0;
 }
 
-.lumio-claude-term-menu {
+.lumio-claude-mid-body > .lumio-claude-init-pane,
+.lumio-claude-mid-body > .lumio-claude-shell-center {
   position: absolute;
-  z-index: 6;
-  min-width: 148px;
-  padding: 4px;
-  border: 1px solid var(--cc-glass-border);
-  border-radius: 10px;
-  background: var(--cc-bg-elev);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 28%);
-}
-
-.lumio-claude-term-menu button {
-  display: block;
-  width: 100%;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.lumio-claude-term-menu button:hover:not(:disabled) {
-  background: var(--cc-field);
-}
-
-.lumio-claude-term-menu button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.lumio-claude-xterm-wrap[hidden] {
-  display: none;
-}
-
-.lumio-claude-xterm {
+  inset: 0;
+  z-index: 1;
   flex: 1;
   min-height: 0;
-  padding: 8px;
+  background: var(--cc-grouped);
 }
 
-.lumio-claude-xterm-status {
-  margin: 8px 12px 0;
-}
-
-.lumio-claude-explorer {
-  min-width: 0;
-}
-
-.lumio-claude-explorer-root {
-  margin: 0 0 8px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.lumio-claude-file-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 18px;
-  gap: 4px;
-  align-items: center;
-  width: 100%;
-  padding: 3px 8px 3px calc(8px + (var(--depth, 0) * 14px));
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.lumio-claude-file-row:hover {
-  background: rgb(255 255 255 / 6%);
-}
-
-.lumio-claude-file-row .chev {
-  color: #8e8e93;
-}
-
-.lumio-claude-file-row.is-directory .name {
-  font-weight: 600;
-  color: #9cdcfe;
-}
-
-.lumio-claude-file-row.is-untracked .name,
-.lumio-claude-file-row.is-untracked .badge {
-  color: #3fb950;
-}
-
-.lumio-claude-file-row.is-modified .name,
-.lumio-claude-file-row.is-modified .badge {
-  color: #d29922;
-}
-
-.lumio-claude-file-row .badge {
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.lumio-claude-files button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.lumio-claude-preview {
-  margin-top: 16px;
-  padding: 12px;
-  border-radius: 10px;
-  background: rgb(255 255 255 / 4%);
-  white-space: pre-wrap;
-}
-
-.lumio-claude-conflicts {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  min-height: 0;
-  height: 100%;
-}
-
-.lumio-claude-conflict-list {
-  margin: 0;
-  padding: 12px;
-  overflow: auto;
-  list-style: none;
-  border-right: 1px solid rgb(255 255 255 / 7%);
-}
-
-.lumio-claude-conflict-list button {
-  display: block;
-  width: 100%;
-  padding: 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-}
-
-.lumio-claude-conflict-list button.is-on {
-  background: rgb(255 255 255 / 8%);
-}
-
-.lumio-claude-conflict-detail {
-  min-height: 0;
-  padding: 12px;
-  overflow: auto;
-}
-
-.lumio-claude-conflict-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.lumio-claude-color-diff {
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  border-radius: 10px;
-  overflow: auto;
-  background: rgb(255 255 255 / 4%);
-}
-
-.lumio-claude-color-diff .ln {
-  padding: 0 10px;
-  white-space: pre-wrap;
-}
-
-.lumio-claude-color-diff .ln.is-add {
-  background: rgb(46 160 67 / 22%);
-  color: #7ee787;
-}
-
-.lumio-claude-color-diff .ln.is-del {
-  background: rgb(248 81 73 / 22%);
-  color: #ffa198;
-}
-
-.lumio-claude-status-pane {
-  min-height: 0;
-  padding: 16px 18px;
-  overflow: auto;
-}
-
-.lumio-claude-status-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.lumio-claude-status-card {
-  margin-bottom: 12px;
-  padding: 12px 14px;
-  border: 1px solid rgb(255 255 255 / 8%);
-  border-radius: 10px;
-  background: rgb(255 255 255 / 4%);
-}
-
-.lumio-claude-status-card h3 {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #8e8e93;
-}
-
-.lumio-claude-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 12px;
-}
-
-.lumio-claude-metrics strong {
-  display: block;
-  font-size: 20px;
-}
-
-.lumio-claude-metrics span {
-  color: #8e8e93;
-  font-size: 12px;
-}
-
-.lumio-claude-meter {
-  overflow: hidden;
-  height: 8px;
-  margin-top: 10px;
-  border-radius: 99px;
-  background: rgb(255 255 255 / 8%);
-}
-
-.lumio-claude-meter > i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #0a84ff;
-}
-
-.lumio-claude-status-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.lumio-claude-status-table th,
-.lumio-claude-status-table td {
-  padding: 6px 8px 6px 0;
-  text-align: left;
-}
-
-.lumio-claude-status-table th {
-  color: #8e8e93;
-  font-weight: 560;
-}
-
-.lumio-claude-term-form input {
-  flex: 1;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: rgb(255 255 255 / 8%);
-  color: inherit;
-  font: inherit;
-}
-
-.lumio-claude-files ul {
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
+.lumio-claude-files {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .lumio-claude-status {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 14px;
-  border-top: 1px solid rgb(255 255 255 / 7%);
-  background: #101117;
-  color: #8e8e93;
-  font-size: 11px;
-  line-height: 28px;
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.lumio-claude-drawer {
+  grid-column: 1 / -1;
+  grid-row: 1;
 }
 
 @keyframes lumio-claude-pulse {
@@ -917,8 +541,21 @@
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .lumio-claude-frame {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr) auto 26px;
   }
+
+  .lumio-claude-rail,
+  .lumio-claude-mid,
+  .lumio-claude-files,
+  .lumio-claude-status {
+    grid-column: 1;
+  }
+
+  .lumio-claude-rail { grid-row: 1; }
+  .lumio-claude-mid { grid-row: 2; }
+  .lumio-claude-files { grid-row: 3; }
+  .lumio-claude-status { grid-row: 4; }
 }

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>方案 C · 概览 Tab · Claude 工作台</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio" data-cc>
+      <div class="toolbar">
+        <div>
+          <h1>方案 C · 保留 Tab，加一个「概览」并设为默认</h1>
+          <p>改动最小：终端 / 文件 / 冲突三个 Tab 都留着，只是不再默认落在终端</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-lab.html">← 三套方案对比</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom: 14px">
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-cc-go="installing">装 Claude</button>
+          <button type="button" data-cc-go="login">需登录</button>
+          <button type="button" data-cc-go="ready">已就绪</button>
+          <button type="button" data-cc-go="conflicts">有冲突</button>
+          <button type="button" data-cc-go="offline">离线</button>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-home-c.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="cc-frame">
+            <aside class="cc-rail">
+              <div class="cc-rail-head">
+                <h2>项目</h2>
+                <a class="btn is-sm is-ghost" href="cc-connect.html">新建</a>
+              </div>
+              <p class="quiet" style="margin: 0 8px 10px">已订阅 · 有效期至 2026 年 9 月 19 日（剩余 30 天）</p>
+              <a class="cc-proj is-on" href="cc-home-c.html">
+                <span class="k">my-project</span>
+                <span class="d" data-when="installing">正在安装 Claude · 108.80.81.15</span>
+                <span class="d" data-when="login">需要登录 · 108.80.81.15</span>
+                <span class="d" data-when="ready">已同步 · 108.80.81.15</span>
+                <span class="d" data-when="conflicts">2 个冲突 · 108.80.81.15</span>
+                <span class="d" data-when="offline">离线 · 108.80.81.15</span>
+              </a>
+              <a class="cc-proj" href="cc-home-c.html">
+                <span class="k">docs-site</span>
+                <span class="d">已同步 · gpu-box</span>
+              </a>
+              <p class="quiet" style="margin: 12px 8px 0"><a href="../site/help.html">开通记录</a></p>
+              <a class="btn is-sm add" href="cc-connect.html">连接新服务器</a>
+            </aside>
+
+            <section class="ws is-tabbed">
+              <header class="ws-head">
+                <h2>my-project</h2>
+                <span class="host">root@108.80.81.15 · ~/bestcodex/my-project</span>
+              </header>
+
+              <nav class="ws-tabs" aria-label="项目视图">
+                <a class="is-on" href="#overview">概览</a>
+                <a href="#term">终端</a>
+                <a href="#files">文件</a>
+                <a href="#conflicts">冲突<span class="badge" data-when="conflicts">2</span></a>
+              </nav>
+
+              <div class="ws-body" style="grid-template-rows: auto">
+                <div class="ws-card" data-view="installing">
+                  <header>
+                    <h3>正在安装 Claude</h3>
+                    <span class="note">第 2 / 4 步</span>
+                  </header>
+                  <p class="meta">从官方渠道装最新版 2.1.228。装完直接能用，不用自己敲安装命令。</p>
+                  <div class="progress"><i style="width: 42%"></i></div>
+                  <div class="check-list">
+                    <div class="check-row is-done"><i></i><div>取到官方最新版本<span>2.1.228（服务器上原来是 2.1.180，会升级）</span></div></div>
+                    <div class="check-row is-now"><i></i><div>下载官方安装包<span>38.2 MB / 96.4 MB · 已用 12 秒</span></div></div>
+                    <div class="check-row"><i></i><div>校验安装包<span>比对官方校验值</span></div></div>
+                    <div class="check-row"><i></i><div>装到服务器上<span>~/.local/bin</span></div></div>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" disabled>正在安装…</button>
+                    <a class="btn is-ghost" href="#term">看安装日志</a>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="login">
+                  <header>
+                    <h3>还需要登录 Anthropic</h3>
+                    <span class="pill-warn">差最后一步</span>
+                  </header>
+                  <p class="meta">Claude 2.1.228 已经装好在这台服务器上。授权一次，之后不用再登。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">在浏览器中登录</button>
+                    <button class="btn is-ghost" type="button">复制登录链接</button>
+                  </div>
+                  <label class="paste-label" for="c-code">浏览器给了授权码？贴在这里</label>
+                  <div class="paste-row">
+                    <input class="field" id="c-code" placeholder="粘贴授权码" />
+                    <button class="btn is-sm" type="button" data-cc-go="ready">完成登录</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="ready">
+                  <header>
+                    <h3>Claude 已就绪</h3>
+                    <span class="pill-ok">已登录 · 2.1.228</span>
+                  </header>
+                  <p class="meta">my-project 已同步，本机和服务器文件一致。开始对话会切到「终端」。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button">开始对话</button>
+                    <a class="btn is-ghost" href="#files">打开文件</a>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="conflicts">
+                  <header>
+                    <h3>有 2 个文件需要你决定</h3>
+                    <span class="pill-warn">不会静默覆盖</span>
+                  </header>
+                  <p class="meta">本机和服务器改了同一个文件。处理入口在「冲突」Tab，角标会一直提示。</p>
+                  <div class="card-actions">
+                    <a class="btn is-blue" href="#conflicts">去处理冲突</a>
+                    <button class="btn is-ghost" type="button" data-cc-go="ready">先开始对话</button>
+                  </div>
+                </div>
+
+                <div class="ws-card" data-view="offline">
+                  <header>
+                    <h3>离线 · 本机目录仍可用</h3>
+                    <span class="note">连不上服务器</span>
+                  </header>
+                  <p class="meta">现在连不上 108.80.81.15。本机 ~/BestCodex/my-project 里的文件照常能改，恢复连接后自动对齐。</p>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" data-cc-go="ready">重试连接</button>
+                  </div>
+                </div>
+              </div>
+
+              <footer class="ws-foot">
+                <span data-when="installing">正在安装 Claude（第 2 / 4 步）</span>
+                <span class="is-warn" data-when="login">等你登录 Anthropic · 其余都已就绪</span>
+                <span class="is-ok" data-when="ready">已就绪 · 文件与远端一致</span>
+                <span class="is-warn" data-when="conflicts">2 个冲突待处理 · 其余文件已同步</span>
+                <span data-when="offline">离线 · 本机目录可用</span>
+                <span>root@108.80.81.15</span>
+              </footer>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-note">
+        <b>取舍。</b>工程量最小，现有 stageTab 只多一个默认值，终端 / 文件 / 冲突三个页面几乎不动。
+        代价：状态和终端被 Tab 切开——正在安装时你看不到日志滚动，开始对话后又看不到状态卡，
+        每次想确认「Claude 到底好了没」都要切回概览。四个 Tab 也让「主线是什么」变模糊。
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

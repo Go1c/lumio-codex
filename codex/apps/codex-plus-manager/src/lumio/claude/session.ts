@@ -16,12 +16,18 @@ import {
 import { createProjectFromDraft, nextProjectName, sshFieldsForProbe } from "./machine.ts";
 import { folderNameFromPath, remoteProjectRoot, replaceLastSegment } from "./paths.ts";
 import {
+  CLAUDE_CLI_PROGRESS_EVENT,
+  CLAUDE_LOGIN_PROGRESS_EVENT,
   CLAUDE_PREPARE_PROGRESS_EVENT,
   CLAUDE_SYNC_PROGRESS_EVENT,
+  closeClaudeChat,
   firstClaudeSync,
   inspectClaudeRemote,
+  installClaudeCli,
+  listClaudeChats,
   listClaudeConflicts,
   listClaudeFiles,
+  loadClaudeLoginStatus,
   loadClaudeServerStatus,
   loadClaudeSessions,
   openClaudeSystemTerminal,
@@ -30,14 +36,18 @@ import {
   resolveClaudeConflict,
   resumeOfficialSync,
   runClaudeRemote,
+  startClaudeLogin,
+  submitClaudeLogin,
   subscribeClaudeEvent,
   type ClaudeSshArgs,
 } from "./api.ts";
 import { resumeSavedProjects } from "./sync-status.ts";
 import type {
+  ClaudeCliInstallPhase,
   ClaudeConflictResolution,
   ClaudeEntitlement,
   ClaudeEntitlementStatus,
+  ClaudeLoginPhase,
   ClaudeProject,
   ClaudeServerStatus,
   ClaudeSessionsSnapshot,
@@ -132,6 +142,38 @@ export function ensureClaudeEngineBridge(): void {
       });
     }
   });
+  void subscribeClaudeEvent<{
+    host: string;
+    phase: string;
+    version?: string | null;
+    latest?: string | null;
+    errorCode?: string | null;
+    detail?: string | null;
+  }>(CLAUDE_CLI_PROGRESS_EVENT, (payload) => {
+    dispatchClaude({
+      type: "cli-install-progress",
+      host: payload.host,
+      phase: asCliPhase(payload.phase),
+      version: payload.version,
+      latest: payload.latest,
+      errorCode: payload.errorCode,
+      detail: payload.detail,
+    });
+  });
+  void subscribeClaudeEvent<{
+    host: string;
+    phase: string;
+    loginUrl?: string | null;
+    errorCode?: string | null;
+  }>(CLAUDE_LOGIN_PROGRESS_EVENT, (payload) => {
+    dispatchClaude({
+      type: "login-status",
+      host: payload.host,
+      phase: asLoginPhase(payload.phase),
+      errorCode: payload.errorCode,
+      loginUrl: payload.loginUrl,
+    });
+  });
 }
 
 export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null): Promise<void> {
@@ -175,7 +217,7 @@ export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null
   await loadClaudeOrders().catch(() => undefined);
   const after = getClaudeState();
   await resumeSavedProjects(after.projects, after.activeProjectId, (projectId) =>
-    resumeClaudeSync(projectId),
+    activateClaudeProject(projectId),
   );
 }
 
@@ -354,6 +396,7 @@ export async function runConnectSync(): Promise<void> {
         conflicts: 0,
       },
     });
+    void continueClaudeInit(project.id);
   }
 }
 
@@ -533,5 +576,180 @@ export async function runProjectCommand(projectId: string, command: string): Pro
       projectId,
       line: { kind: "err", text: result.stderr.trimEnd() },
     });
+  }
+}
+
+const activating = new Set<string>();
+
+function asCliPhase(value: string): ClaudeCliInstallPhase {
+  if (
+    value === "idle" ||
+    value === "detect" ||
+    value === "install" ||
+    value === "upgrade" ||
+    value === "skip" ||
+    value === "ok" ||
+    value === "fail"
+  ) {
+    return value;
+  }
+  return "idle";
+}
+
+function asLoginPhase(value: string): ClaudeLoginPhase {
+  if (
+    value === "unknown" ||
+    value === "logged-out" ||
+    value === "logging-in" ||
+    value === "logged-in" ||
+    value === "expired"
+  ) {
+    return value;
+  }
+  return "unknown";
+}
+
+async function restoreClaudeChats(project: ClaudeProject): Promise<void> {
+  const ids = await listClaudeChats(project.id);
+  for (const sessionId of ids) {
+    dispatchClaude({ type: "open-session", projectId: project.id, sessionId });
+  }
+}
+
+export async function ensureHostCli(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  dispatchClaude({
+    type: "cli-install-progress",
+    host: project.host,
+    phase: "detect",
+  });
+  const result = await installClaudeCli(sshFromProject(project));
+  dispatchClaude({
+    type: "cli-install-progress",
+    host: project.host,
+    phase: asCliPhase(result.phase),
+    version: result.version,
+    latest: result.latest,
+    errorCode: result.errorCode,
+    detail: result.detail,
+  });
+}
+
+export async function refreshHostLogin(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const result = await loadClaudeLoginStatus(sshFromProject(project));
+  dispatchClaude({
+    type: "login-status",
+    host: project.host,
+    phase: asLoginPhase(result.phase),
+    errorCode: result.errorCode,
+  });
+}
+
+export async function beginHostLogin(projectId: string): Promise<string | null> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return null;
+  dispatchClaude({
+    type: "login-status",
+    host: project.host,
+    phase: "logging-in",
+    errorCode: null,
+  });
+  const result = await startClaudeLogin(sshFromProject(project));
+  const phase: ClaudeLoginPhase = result.ok
+    ? "logging-in"
+    : result.errorCode === "CLAUDE_LOGIN_EXPIRED"
+      ? "expired"
+      : "logged-out";
+  dispatchClaude({
+    type: "login-status",
+    host: project.host,
+    phase,
+    errorCode: result.errorCode,
+    loginUrl: result.loginUrl,
+  });
+  return result.loginUrl;
+}
+
+export async function completeHostLogin(projectId: string, code: string): Promise<boolean> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return false;
+  const result = await submitClaudeLogin({ ...sshFromProject(project), code });
+  dispatchClaude({
+    type: "login-status",
+    host: project.host,
+    phase: result.ok ? "logged-in" : "logged-out",
+    errorCode: result.errorCode,
+  });
+  return result.ok;
+}
+
+export async function continueClaudeInit(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const gate = `init:${projectId}`;
+  if (activating.has(gate)) return;
+  activating.add(gate);
+  try {
+    dispatchClaude({ type: "set-workspace-phase", projectId, phase: "init" });
+    await ensureHostCli(projectId);
+    const cli = getClaudeState().cliByHost[project.host];
+    if (cli?.phase === "fail") return;
+    await refreshHostLogin(projectId);
+    const login = getClaudeState().loginByHost[project.host];
+    if (login?.phase === "logged-in") return;
+    await beginHostLogin(projectId);
+  } finally {
+    activating.delete(gate);
+  }
+}
+
+export async function closeClaudeProjectChat(projectId: string, sessionId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  await closeClaudeChat({ ...sshFromProject(project), projectId, sessionId });
+  dispatchClaude({ type: "session-running", projectId, sessionId, running: false });
+}
+
+export async function activateClaudeProject(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  if (activating.has(projectId)) return;
+  activating.add(projectId);
+  try {
+    const currentPhase = getClaudeState().workspacePhaseByProject[projectId];
+    if (currentPhase === "init") {
+      await continueClaudeInit(projectId);
+      return;
+    }
+    if (currentPhase === "ready") {
+      await resumeClaudeSync(projectId);
+      await refreshClaudeFiles(projectId);
+      return;
+    }
+    dispatchClaude({ type: "set-workspace-phase", projectId, phase: "resume" });
+    await resumeClaudeSync(projectId);
+    const sync = getClaudeState().syncByProject[projectId];
+    if (sync?.state === "fail") {
+      dispatchClaude({ type: "set-workspace-phase", projectId, phase: "offline" });
+      await refreshClaudeFiles(projectId);
+      return;
+    }
+    await restoreClaudeChats(project);
+    await refreshClaudeFiles(projectId);
+    await refreshClaudeConflicts(projectId);
+    void ensureHostCli(projectId).then(() => refreshHostLogin(projectId));
+    const sessions = getClaudeState().sessionsByProject[projectId] ?? [];
+    if (sessions.length === 0) {
+      dispatchClaude({ type: "open-session", projectId, sessionId: crypto.randomUUID() });
+    }
+    dispatchClaude({ type: "set-workspace-phase", projectId, phase: "ready" });
+  } catch {
+    dispatchClaude({ type: "set-workspace-phase", projectId, phase: "offline" });
+    await refreshClaudeFiles(projectId).catch(() => undefined);
+  } finally {
+    activating.delete(projectId);
   }
 }

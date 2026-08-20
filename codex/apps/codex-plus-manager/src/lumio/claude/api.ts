@@ -40,10 +40,20 @@ export const CLAUDE_COMMANDS = {
   resume: "lumio_claude_resume_sync",
   serverStatus: "lumio_claude_server_status",
   listSessions: "lumio_claude_list_sessions",
+  installCli: "lumio_claude_install_cli",
+  loginStart: "lumio_claude_login_start",
+  loginSubmit: "lumio_claude_login_submit",
+  loginStatus: "lumio_claude_login_status",
+  openChat: "lumio_claude_open_chat",
+  closeChat: "lumio_claude_close_chat",
+  listChats: "lumio_claude_list_chats",
 } as const;
 
 export const CLAUDE_SYNC_PROGRESS_EVENT = "lumio://claude-sync-progress";
 export const CLAUDE_PREPARE_PROGRESS_EVENT = "lumio://claude-prepare-progress";
+export const CLAUDE_CLI_PROGRESS_EVENT = "lumio://claude-cli-progress";
+export const CLAUDE_LOGIN_PROGRESS_EVENT = "lumio://claude-login-progress";
+export const DEFAULT_TERMINAL_SESSION_ID = "default";
 
 export function setupPhaseCopy(phase: string, uploadIndex = 1): string {
   switch (phase) {
@@ -155,6 +165,80 @@ export function syncErrorCopy(code: string | null): string {
     default:
       return "没能把服务器上的文件拉到这台电脑。";
   }
+}
+
+export function cliErrorCopy(code: string | null): string {
+  switch (code) {
+    case "CLAUDE_CLI_NO_NETWORK":
+      return "这台服务器现在连不上外网。检查网络后再试。";
+    case "CLAUDE_CLI_DNS":
+      return "这台服务器解析不了官方下载地址。检查 DNS 后再试。";
+    case "CLAUDE_CLI_NO_CURL":
+      return "这台服务器没有 curl，装不上官方 Claude。";
+    case "CLAUDE_CLI_BIN_UNWRITABLE":
+      return "写不进 ~/.local/bin，没法安装 Claude。";
+    case "CLAUDE_CLI_DOWNLOAD_FAILED":
+      return "服务器连不上官方下载地址。确认这台服务器能访问外网，或稍后再试。";
+    case "CLAUDE_CLI_VERIFY_FAILED":
+      return "装完之后没能读到 Claude 版本，安装可能没有成功。";
+    case "CLAUDE_CLI_INSTALL_FAILED":
+      return "没能在这台服务器上装好 Claude。";
+    case "SSH_CLIENT_MISSING":
+      return "这台电脑还没有 ssh 命令。";
+    case "SSH_ALIAS_UNKNOWN":
+      return "本机 SSH 配置里没有这个 Host 别名。";
+    default:
+      return "没能在这台服务器上装好 Claude。";
+  }
+}
+
+export function loginErrorCopy(code: string | null): string {
+  switch (code) {
+    case "CLAUDE_LOGIN_NO_CLI":
+      return "服务器上还没有官方 Claude 命令。";
+    case "CLAUDE_LOGIN_NO_URL":
+      return "没能拿到登录链接。";
+    case "CLAUDE_LOGIN_CODE_REJECTED":
+      return "授权码未被接受。";
+    case "CLAUDE_LOGIN_EXPIRED":
+      return "登录已过期。";
+    case "CLAUDE_LOGIN_FAILED":
+      return "没能完成 Anthropic 登录。";
+    case "SSH_AUTH_FAILED":
+      return "无法登录这台服务器。";
+    case "SSH_UNREACHABLE":
+      return "连不上这台服务器。";
+    default:
+      return "没能完成 Anthropic 登录。";
+  }
+}
+
+export interface ClaudeCliEnsureResult {
+  ok: boolean;
+  phase: string;
+  version: string | null;
+  latest: string | null;
+  errorCode: string | null;
+  detail: string | null;
+}
+
+export interface ClaudeLoginStartResult {
+  ok: boolean;
+  loginUrl: string | null;
+  errorCode: string | null;
+  detail: string | null;
+}
+
+export interface ClaudeLoginSubmitResult {
+  ok: boolean;
+  phase: string;
+  errorCode: string | null;
+  detail: string | null;
+}
+
+export interface ClaudeLoginStatusResult {
+  phase: string;
+  errorCode: string | null;
 }
 
 export async function probeClaudeConnection(input: ClaudeSshArgs): Promise<ClaudeProbeResult> {
@@ -521,6 +605,7 @@ export async function startClaudeTerminal(input: ClaudeSshArgs & {
   remoteRoot: string;
   cols: number;
   rows: number;
+  sessionId?: string;
 }): Promise<void> {
   if (!isTauri()) {
     missingBackend("SSH_CLIENT_MISSING");
@@ -531,25 +616,198 @@ export async function startClaudeTerminal(input: ClaudeSshArgs & {
     remoteRoot: input.remoteRoot,
     cols: input.cols,
     rows: input.rows,
+    sessionId: input.sessionId ?? DEFAULT_TERMINAL_SESSION_ID,
   });
 }
 
-export async function writeClaudeTerminal(projectId: string, bytes: number[]): Promise<void> {
+export async function writeClaudeTerminal(
+  projectId: string,
+  bytes: number[],
+  sessionId = DEFAULT_TERMINAL_SESSION_ID,
+): Promise<void> {
   if (!isTauri()) return;
-  await runClaudeCommand(CLAUDE_COMMANDS.writeTerminal, { projectId, bytes });
+  await runClaudeCommand(CLAUDE_COMMANDS.writeTerminal, { projectId, bytes, sessionId });
 }
 
-export async function resizeClaudeTerminal(projectId: string, cols: number, rows: number): Promise<void> {
+export async function resizeClaudeTerminal(
+  projectId: string,
+  cols: number,
+  rows: number,
+  sessionId = DEFAULT_TERMINAL_SESSION_ID,
+): Promise<void> {
   if (!isTauri()) return;
-  await runClaudeCommand(CLAUDE_COMMANDS.resizeTerminal, { projectId, cols, rows });
+  await runClaudeCommand(CLAUDE_COMMANDS.resizeTerminal, { projectId, cols, rows, sessionId });
 }
 
-export function terminalOutputEvent(projectId: string): string {
-  return `lumio://claude-terminal-output-${projectId}`;
+export async function openClaudeChat(input: ClaudeSshArgs & {
+  projectId: string;
+  sessionId: string;
+  remoteRoot: string;
+  cols: number;
+  rows: number;
+}): Promise<void> {
+  if (!isTauri()) {
+    missingBackend("SSH_CLIENT_MISSING");
+  }
+  await runClaudeCommand(CLAUDE_COMMANDS.openChat, {
+    ...sshPayload(input),
+    projectId: input.projectId,
+    sessionId: input.sessionId,
+    remoteRoot: input.remoteRoot,
+    cols: input.cols,
+    rows: input.rows,
+  });
 }
 
-export function terminalClosedEvent(projectId: string): string {
-  return `lumio://claude-terminal-closed-${projectId}`;
+export async function closeClaudeChat(input: ClaudeSshArgs & {
+  projectId: string;
+  sessionId: string;
+}): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await runClaudeCommand(CLAUDE_COMMANDS.closeChat, {
+      ...sshPayload(input),
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+    });
+  } catch {
+    /* closing a missing session is not a user-facing failure */
+  }
+}
+
+export async function listClaudeChats(projectId: string): Promise<string[]> {
+  if (!isTauri()) return [];
+  try {
+    return await runClaudeCommand<string[]>(CLAUDE_COMMANDS.listChats, { projectId });
+  } catch {
+    return [];
+  }
+}
+
+export async function installClaudeCli(input: ClaudeSshArgs): Promise<ClaudeCliEnsureResult> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      phase: "fail",
+      version: null,
+      latest: null,
+      errorCode: "SSH_CLIENT_MISSING",
+      detail: cliErrorCopy("SSH_CLIENT_MISSING"),
+    };
+  }
+  try {
+    const payload = await runClaudeCommand<ClaudeCliEnsureResult>(CLAUDE_COMMANDS.installCli, {
+      ...sshPayload(input),
+      channel: "latest",
+    });
+    const errorCode = payload.ok ? payload.errorCode : (payload.errorCode ?? "CLAUDE_CLI_INSTALL_FAILED");
+    return {
+      ok: payload.ok,
+      phase: payload.phase,
+      version: payload.version ?? null,
+      latest: payload.latest ?? null,
+      errorCode,
+      detail: payload.detail ?? (errorCode ? cliErrorCopy(errorCode) : null),
+    };
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "CLAUDE_CLI_INSTALL_FAILED";
+    return {
+      ok: false,
+      phase: "fail",
+      version: null,
+      latest: null,
+      errorCode,
+      detail: cliErrorCopy(errorCode),
+    };
+  }
+}
+
+function unwrapLoginResult<T>(raw: T | LumioCommandResult<T>): T {
+  if (raw && typeof raw === "object" && "payload" in raw && "ok" in raw) {
+    return readRequiredCommandResult(raw as LumioCommandResult<T>);
+  }
+  return raw;
+}
+
+async function runLoginCommand<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) {
+    missingBackend("SSH_CLIENT_MISSING");
+  }
+  const raw = await invoke<T | LumioCommandResult<T>>(command, args);
+  return unwrapLoginResult(raw);
+}
+
+export async function startClaudeLogin(input: ClaudeSshArgs): Promise<ClaudeLoginStartResult> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      loginUrl: null,
+      errorCode: "SSH_CLIENT_MISSING",
+      detail: loginErrorCopy("CLAUDE_LOGIN_FAILED"),
+    };
+  }
+  try {
+    const payload = await runLoginCommand<ClaudeLoginStartResult>(CLAUDE_COMMANDS.loginStart, sshPayload(input));
+    const errorCode = payload.ok ? payload.errorCode : (payload.errorCode ?? "CLAUDE_LOGIN_FAILED");
+    return {
+      ok: payload.ok,
+      loginUrl: payload.loginUrl ?? null,
+      errorCode,
+      detail: payload.detail ?? (errorCode ? loginErrorCopy(errorCode) : null),
+    };
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "CLAUDE_LOGIN_FAILED";
+    return { ok: false, loginUrl: null, errorCode, detail: loginErrorCopy(errorCode) };
+  }
+}
+
+export async function submitClaudeLogin(
+  input: ClaudeSshArgs & { code: string },
+): Promise<ClaudeLoginSubmitResult> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      phase: "fail",
+      errorCode: "SSH_CLIENT_MISSING",
+      detail: loginErrorCopy("CLAUDE_LOGIN_FAILED"),
+    };
+  }
+  try {
+    const payload = await runLoginCommand<ClaudeLoginSubmitResult>(CLAUDE_COMMANDS.loginSubmit, {
+      ...sshPayload(input),
+      code: input.code,
+    });
+    const errorCode = payload.ok ? payload.errorCode : (payload.errorCode ?? "CLAUDE_LOGIN_CODE_REJECTED");
+    return {
+      ok: payload.ok,
+      phase: payload.phase,
+      errorCode,
+      detail: payload.detail ?? (errorCode ? loginErrorCopy(errorCode) : null),
+    };
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "CLAUDE_LOGIN_FAILED";
+    return { ok: false, phase: "fail", errorCode, detail: loginErrorCopy(errorCode) };
+  }
+}
+
+export async function loadClaudeLoginStatus(input: ClaudeSshArgs): Promise<ClaudeLoginStatusResult> {
+  if (!isTauri()) {
+    return { phase: "unknown", errorCode: "SSH_CLIENT_MISSING" };
+  }
+  try {
+    return await runLoginCommand<ClaudeLoginStatusResult>(CLAUDE_COMMANDS.loginStatus, sshPayload(input));
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "CLAUDE_LOGIN_FAILED";
+    return { phase: "unknown", errorCode };
+  }
+}
+
+export function terminalOutputEvent(projectId: string, sessionId = DEFAULT_TERMINAL_SESSION_ID): string {
+  return `lumio://claude-terminal-output-${projectId}-${sessionId}`;
+}
+
+export function terminalClosedEvent(projectId: string, sessionId = DEFAULT_TERMINAL_SESSION_ID): string {
+  return `lumio://claude-terminal-closed-${projectId}-${sessionId}`;
 }
 
 export async function subscribeClaudeEvent<T>(

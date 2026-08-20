@@ -1,0 +1,167 @@
+.lumio-claude-tabs {
+  flex: 0 0 auto;
+  background: #16171c;
+  border-bottom: 1px solid rgb(255 255 255 / 7%);
+}
+
+.lumio-claude-tabs-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-height: 34px;
+  padding: 4px 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.lumio-claude-tabs-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.lumio-claude-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 190px;
+  min-width: 96px;
+  min-height: 30px;
+  padding: 0 6px 0 9px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: #9a9aa2;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lumio-claude-tab:hover {
+  background: rgb(255 255 255 / 5%);
+  color: #d7d7de;
+  text-decoration: none;
+}
+
+.lumio-claude-tab.is-on {
+  border-color: rgb(255 255 255 / 14%);
+  background: #0c0d11;
+  color: #f2f2f7;
+}
+
+/* 裸 viewBox SVG 塞进按钮会被拉满，钉死尺寸。 */
+.lumio-claude-tab .glyph {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: #6e6e73;
+}
+
+.lumio-claude-tab.is-on .glyph {
+  color: var(--cc-accent, #0a84ff);
+}
+
+.lumio-claude-tab.is-run .glyph {
+  color: #32d74b;
+}
+
+.lumio-claude-tab .glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+.lumio-claude-tab .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lumio-claude-tab .x {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  color: #6e6e73;
+  opacity: 0;
+}
+
+.lumio-claude-tab:hover .x,
+.lumio-claude-tab.is-on .x {
+  opacity: 1;
+}
+
+.lumio-claude-tab .x:hover {
+  background: rgb(255 255 255 / 14%);
+  color: #f2f2f7;
+}
+
+.lumio-claude-tab .x svg {
+  width: 11px;
+  height: 11px;
+}
+
+.lumio-claude-tab-new {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  margin-bottom: 1px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #9a9aa2;
+  cursor: pointer;
+}
+
+.lumio-claude-tab-new:hover {
+  background: rgb(255 255 255 / 9%);
+  color: #f2f2f7;
+}
+
+.lumio-claude-tab-new svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lumio-claude-tab-ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid rgb(255 255 255 / 7%);
+  background: #1c1d23;
+  color: #d7d7de;
+  font-size: 12px;
+}
+
+.lumio-claude-tab-ask span {
+  flex: 1;
+}
+
+.lumio-claude-tab-ask button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lumio-claude-tab-ask .is-yes {
+  background: var(--cc-accent, #0a84ff);
+  color: #fff;
+}
+
+.lumio-claude-tab-ask .is-no {
+  background: transparent;
+  color: var(--cc-accent, #0a84ff);
+}

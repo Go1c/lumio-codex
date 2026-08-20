@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>方案 D · 日常使用 · Claude 工作台</title>
+    <link rel="icon" href="../assets/icons/app-icon.jpg" />
+    <link rel="stylesheet" href="../assets/prototype.css" />
+  </head>
+  <body>
+    <div class="studio" data-cc>
+      <div class="toolbar">
+        <div>
+          <h1>方案 D · 期二：日常使用</h1>
+          <p>左服务器与项目 · 中会话标签加终端 · 右文件 · 底栏细状态。点底栏升起抽屉</p>
+        </div>
+        <div class="toolbar-actions">
+          <a class="note" href="cc-lab.html">← 方案对比</a>
+          <div class="seg">
+            <button type="button" data-theme-set="light">浅色</button>
+            <button type="button" data-theme-set="dark">深色</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="toolbar" style="margin-bottom: 14px">
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-cc-go="ready">已就绪</button>
+          <button type="button" data-cc-go="conflicts">有冲突</button>
+          <button type="button" data-cc-go="update">有新版</button>
+          <button type="button" data-cc-go="term-fail">终端真失败</button>
+        </div>
+        <div class="seg" style="flex-wrap: wrap">
+          <button type="button" data-drawer-open="server">抽屉 · 服务器</button>
+          <button type="button" data-drawer-open="sessions">抽屉 · 对话</button>
+          <button type="button" data-drawer-open="conflicts">抽屉 · 冲突差异</button>
+        </div>
+      </div>
+
+      <div class="window">
+        <header class="titlebar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <nav class="app-tabs" aria-label="工作区">
+            <a href="home.html">Codex</a>
+            <a class="is-on" href="cc-home-d.html">Claude</a>
+          </nav>
+          <div class="titlebar-tools">
+            <a class="icon-btn" href="../site/help.html" aria-label="帮助">?</a>
+            <a class="icon-btn" href="settings.html" aria-label="设置">⚙</a>
+          </div>
+        </header>
+        <div class="win-main">
+          <div class="d-frame">
+            <!-- 左：服务器分组 → 项目。会话不在这里，在中栏顶部标签条。 -->
+            <aside class="d-rail" data-rail></aside>
+
+            <!-- 中：顶部是会话标签条，下面整格都是终端。 -->
+            <div class="d-mid-wrap">
+              <div class="d-tabs" data-tabs></div>
+
+            <section class="d-mid" data-view="ready update">
+              <div class="d-term">
+                <div>&gt; 帮我把 sync.ts 里的重试逻辑抽成一个函数</div>
+                <div>&nbsp;</div>
+                <div>我看了 <span class="ok">src/lib/sync.ts</span>，重试那段在 3 个地方重复。</div>
+                <div>抽成 withRetry(fn, times) 之后这样：</div>
+                <div>&nbsp;</div>
+                <div class="dim">  export async function withRetry&lt;T&gt;(</div>
+                <div class="dim">    fn: () =&gt; Promise&lt;T&gt;,</div>
+                <div class="dim">    times = 3,</div>
+                <div class="dim">  ): Promise&lt;T&gt; {</div>
+                <div class="dim">    let last: unknown;</div>
+                <div class="dim">    for (let i = 0; i &lt; times; i += 1) {</div>
+                <div class="dim">      try { return await fn(); } catch (e) { last = e; }</div>
+                <div class="dim">    }</div>
+                <div class="dim">    throw last;</div>
+                <div class="dim">  }</div>
+                <div>&nbsp;</div>
+                <div>要我直接改进去吗？</div>
+                <div>&nbsp;</div>
+                <div>&gt; <span class="dim">_</span></div>
+              </div>
+            </section>
+
+            <!-- 有冲突时终端照旧跑，冲突只在底栏出角标，不打断 -->
+            <section class="d-mid" data-view="conflicts">
+              <div class="d-term">
+                <div>&gt; 继续刚才那个重构</div>
+                <div>&nbsp;</div>
+                <div>好，我把 3 处调用都换成 withRetry。</div>
+                <div class="ok">已改 src/lib/sync.ts</div>
+                <div>&nbsp;</div>
+                <div>&gt; <span class="dim">_</span></div>
+                <div>&nbsp;</div>
+                <div class="dim">（底栏那个红角标是文件冲突，跟这段对话无关，你什么时候处理都行）</div>
+              </div>
+            </section>
+
+            <!-- 唯一允许出现「没能打开终端」的地方：真的没打开，而且给重试 -->
+            <section class="d-mid is-light" data-view="term-fail">
+              <div class="d-pane is-center">
+                <div class="ws-card" style="width: min(420px, 100%)">
+                  <header>
+                    <h3>没能打开终端</h3>
+                    <span class="pill-warn">需要处理</span>
+                  </header>
+                  <p class="meta">连上了这台服务器，但开不了终端会话。文件同步不受影响。</p>
+                  <div class="fail-box">
+                    服务器拒绝了这次会话请求。稍后重试，或换一种连接方式。
+                    <span class="code">CLAUDE_TERMINAL_OPEN_FAILED</span>
+                  </div>
+                  <div class="card-actions">
+                    <button class="btn is-blue" type="button" data-cc-go="ready">重试</button>
+                    <a class="btn is-ghost" href="../site/help.html">打开帮助页</a>
+                  </div>
+                  <p class="quiet">这行字只在终端真的没打开时出现。一旦终端有输出，它必须消失。</p>
+                </div>
+              </div>
+            </section>
+            </div>
+
+            <!-- 右：文件浏览器。内容由 prototype.js 统一渲染，三个页面共用一份实现。 -->
+            <aside
+              class="d-files"
+              data-fx
+              data-fx-root="my-project"
+              data-fx-conflict="src/app.ts README.md"
+              data-fx-conflict-states="conflicts"
+            ></aside>
+
+            <!-- 底：唯一的状态出口，全是小字。 -->
+            <footer class="d-bar">
+              <button data-drawer-open="server" type="button">
+                <span class="is-ok" data-when="ready update conflicts">● 已就绪</span>
+                <span class="is-bad" data-when="term-fail">● 终端未打开</span>
+              </button>
+              <span class="sep">·</span>
+              <button data-drawer-open="server" type="button">Claude 2.1.228 · 已登录</button>
+              <span class="sep">·</span>
+              <button data-drawer-open="conflicts" type="button">
+                <span class="is-ok" data-when="ready update term-fail">已同步</span>
+                <span class="is-warn" data-when="conflicts">2 个文件冲突</span>
+              </button>
+              <span class="sep">·</span>
+              <button data-drawer-open="server" type="button">CPU 12% · 内存 48%</button>
+              <span class="grow"></span>
+              <span class="nudge" data-when="update">有新版 2.1.230 · 升级</span>
+              <button class="flag" data-drawer-open="conflicts" data-when="conflicts" type="button">冲突 2</button>
+              <button data-drawer-open="sessions" data-tabs-count type="button">对话 1</button>
+              <span class="host">root@108.80.81.15</span>
+            </footer>
+          </div>
+
+          <!-- 抽屉：塞不进小字的表格和差异对比都在这里 -->
+          <div class="d-drawer" data-drawer hidden>
+            <div class="d-drawer-tabs">
+              <button data-drawer-tab="server" type="button">服务器状态</button>
+              <button data-drawer-tab="sessions" type="button">对话状态</button>
+              <button data-drawer-tab="conflicts" type="button">冲突</button>
+              <button class="close" data-drawer-close type="button">收起 ✕</button>
+            </div>
+
+            <div class="d-drawer-body" data-drawer-view="server">
+              <div class="d-metrics">
+                <div><strong>12.4%</strong><span>CPU · 8 核</span></div>
+                <div><strong>0.42</strong><span>1 分钟负载</span></div>
+                <div><strong>7.6 GB</strong><span>内存 16 GB · 48%</span></div>
+                <div><strong>2.1.228</strong><span>Claude · 已是最新</span></div>
+              </div>
+              <table class="d-table">
+                <thead><tr><th>挂载点</th><th>已用</th><th>总量</th><th>%</th></tr></thead>
+                <tbody>
+                  <tr><td><code>/</code></td><td>38 GB</td><td>100 GB</td><td>38%</td></tr>
+                  <tr><td><code>/data</code></td><td>210 GB</td><td>500 GB</td><td>42%</td></tr>
+                </tbody>
+              </table>
+              <p class="quiet" style="margin-top: 12px">采集于 20:41 · 每 30 秒刷新一次</p>
+            </div>
+
+            <div class="d-drawer-body" data-drawer-view="sessions" hidden>
+              <table class="d-table">
+                <thead><tr><th>项目</th><th>标题</th><th>状态</th></tr></thead>
+                <tbody>
+                  <tr><td>my-project</td><td>帮我把 sync.ts 里的重试逻辑…</td><td>当前</td></tr>
+                  <tr><td>my-project</td><td>新对话</td><td>正在跑</td></tr>
+                  <tr><td>docs-site</td><td>改一下部署说明的措辞</td><td>后台</td></tr>
+                </tbody>
+              </table>
+              <p class="quiet" style="margin-top: 12px">
+                前两条是当前项目的，跟顶部标签一一对应。第三条在 docs-site，切过去就在那边的标签条里。
+                切走的对话不会停，所以左栏那个项目名后面带一个小点。
+              </p>
+            </div>
+
+            <div class="d-drawer-body" data-drawer-view="conflicts" hidden>
+              <div class="conflict-rows">
+                <div class="conflict-row">
+                  <div><b>src/app.ts</b><span>本机和服务器都改过 · 12 分钟前</span></div>
+                  <div class="picks">
+                    <button class="btn is-sm is-ghost" type="button">保留本机</button>
+                    <button class="btn is-sm is-ghost" type="button">保留服务器</button>
+                    <button class="btn is-sm is-ghost" type="button">两者都留</button>
+                  </div>
+                </div>
+              </div>
+              <div class="d-diff">
+                <section>
+                  <h5>本机 ~/BestCodex/my-project/src/app.ts</h5>
+                  <div class="ln">import { withRetry } from "./lib/retry";</div>
+                  <div class="ln is-add">const TIMEOUT = 8000;</div>
+                  <div class="ln">export function boot() {</div>
+                  <div class="ln is-add">  return withRetry(start, 3);</div>
+                  <div class="ln">}</div>
+                </section>
+                <section>
+                  <h5>服务器 ~/bestcodex/my-project/src/app.ts</h5>
+                  <div class="ln">import { withRetry } from "./lib/retry";</div>
+                  <div class="ln is-del">const TIMEOUT = 5000;</div>
+                  <div class="ln">export function boot() {</div>
+                  <div class="ln is-del">  return start();</div>
+                  <div class="ln">}</div>
+                </section>
+              </div>
+              <p class="quiet" style="margin-top: 12px">
+                选了才写。没选之前两边都留着，不会静默覆盖。还有 1 个：README.md
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="lab-note">
+        <b>为什么这样分。</b>左栏按服务器分组，服务器行抬着连接、Claude 版本和登录（这三件事是服务器级的，不是项目级的），
+        项目行只留同步和活跃。中栏顶部那条只放会话标签——同一个项目里可以开多个对话，点一下切换，<code>+</code> 新建，
+        <code>×</code> 关闭（正在跑的会先问一句）。标签标题一开始是「新对话」，你发出第一句话之后就换成那句话的前几个字。
+        标签条下面整格都是终端，没有状态卡挤它。
+        所有「知道就好」的信息压到底栏一行小字：就绪状态、Claude 版本与登录、同步、CPU 与内存、对话数、`user@host`。
+        塞不进小字的（服务器表格、对话列表、冲突的左右差异）点一下从底栏升起来，用完收走。
+        冲突只在底栏出红角标加右栏文件角标，不弹窗、不打断你正在进行的对话。
+      </div>
+    </div>
+    <script src="../assets/prototype.js"></script>
+  </body>
+</html>

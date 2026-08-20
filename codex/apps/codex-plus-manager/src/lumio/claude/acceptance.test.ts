@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { persistableClaudeState } from "./machine.ts";
 import { initialClaudeState, reduceClaudeState, resolveClaudeSurface } from "./machine.ts";
+import { readAllClaudeViews } from "./read-claude-views.ts";
 import { parseSshTarget } from "./ssh-target.ts";
 import { dispatchClaude, getClaudeState, resetClaudeStore } from "./store.ts";
 import { DEFAULT_WORKSPACE, workspaceTabsVisible } from "../workspace.ts";
@@ -187,27 +188,25 @@ test("13 selecting a project only changes the active id", () => {
 });
 
 test("14 files and conflicts tabs render", async () => {
-  const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
-  assert.match(home, />文件</);
-  assert.match(home, />冲突</);
-  assert.match(home, />服务器状态</);
-  assert.match(home, />对话状态</);
-  assert.match(home, /FilesPane|stageTab === "files"/);
-  assert.match(home, /ConflictsPane|stageTab === "conflicts"/);
-  assert.match(home, /stageTab === "server"|ServerStatusPane/);
-  assert.match(home, /stageTab === "sessions"|SessionsPane/);
+  const views = await readAllClaudeViews();
+  assert.match(views, /FileExplorer/);
+  assert.match(views, /SessionTabs/);
+  assert.match(views, /StatusDrawer/);
+  assert.match(views, /StatusBar/);
+  assert.match(views, /ConflictsPane/);
+  assert.match(views, /ServerStatusPane/);
+  assert.match(views, /SessionsPane/);
+  assert.doesNotMatch(views, /stageTab === "files"/);
+  assert.doesNotMatch(views, /set-stage-tab/);
+  assert.match(views, />服务器状态</);
+  assert.match(views, />对话状态</);
 });
 
 test("15 secrets do not appear in view source literals or persistable snapshots", async () => {
-  const files = [
-    "../views/claude/ClaudeConnect.tsx",
-    "../views/claude/ClaudeHome.tsx",
-    "../views/claude/ClaudeWorkspace.tsx",
-    "../views/claude/ClaudeSubscribe.tsx",
-    "./session.ts",
-    "./store.ts",
-  ];
-  for (const rel of files) {
+  const views = await readAllClaudeViews();
+  assert.doesNotMatch(views, /sk-|ghp_|eyJhbGci|BEGIN OPENSSH PRIVATE KEY/);
+  assert.doesNotMatch(views, /password:\s*["'][^"']+["']/);
+  for (const rel of ["./session.ts", "./store.ts"]) {
     const source = await readFile(new URL(rel, import.meta.url), "utf8");
     assert.doesNotMatch(source, /sk-|ghp_|eyJhbGci|BEGIN OPENSSH PRIVATE KEY/);
     assert.doesNotMatch(source, /password:\s*["'][^"']+["']/);
