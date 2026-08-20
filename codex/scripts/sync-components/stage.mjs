@@ -21,6 +21,10 @@ const prebuiltDir =
   process.env.BESTCODEX_FNS_PREBUILT_DIR ??
   path.join(codexRoot, "target", "sync-components", "remote-linux-x86_64");
 
+export function isInvokedDirectly(argv1, moduleUrl) {
+  return Boolean(argv1) && path.resolve(argv1) === fileURLToPath(moduleUrl);
+}
+
 export function cargoTargetRoot(env = process.env, root = cchavenRoot) {
   return env.CARGO_TARGET_DIR ?? path.join(root, "target");
 }
@@ -128,7 +132,7 @@ function stageRemote({ dev }) {
   console.log(`staged remote components: ${remoteStage}`);
 }
 
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname;
+const invokedDirectly = isInvokedDirectly(process.argv[1], import.meta.url);
 if (invokedDirectly) {
   const mode = process.argv.includes("--build-remote") ? "build-remote"
     : process.argv.includes("--dev") ? "dev" : "strict";

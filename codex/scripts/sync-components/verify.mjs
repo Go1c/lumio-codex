@@ -3,6 +3,11 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export function isInvokedDirectly(argv1, moduleUrl) {
+  return Boolean(argv1) && path.resolve(argv1) === fileURLToPath(moduleUrl);
+}
 
 const MIN_BYTES = 1024; // 与运行时 is_real_artifact / is_real_sidecar 同阈值
 
@@ -64,7 +69,7 @@ export function verifySidecar(file, platform) {
   return true;
 }
 
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === new URL(import.meta.url).pathname;
+const invokedDirectly = isInvokedDirectly(process.argv[1], import.meta.url);
 if (invokedDirectly) {
   const [mode, target, platform] = process.argv.slice(2);
   try {

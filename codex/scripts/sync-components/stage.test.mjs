@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostTriple, buildProvenance, cargoTargetRoot } from "./stage.mjs";
+import { fileURLToPath } from "node:url";
+import { hostTriple, buildProvenance, cargoTargetRoot, isInvokedDirectly } from "./stage.mjs";
 
 test("host triple mapping covers the three shipping hosts", () => {
   assert.equal(hostTriple("darwin", "arm64"), "aarch64-apple-darwin");
@@ -20,6 +21,20 @@ test("provenance carries schema, commits and both sha256 entries", () => {
   assert.equal(provenance.schemaVersion, "fns-release-provenance/1");
   assert.equal(provenance.artifacts["fns-server"].architecture, "x86_64");
   assert.equal(provenance.artifacts["fns-agent"].os, "linux");
+});
+
+test("isInvokedDirectly compares resolved argv1 to fileURLToPath, not URL.pathname", () => {
+  const moduleUrl = import.meta.url;
+  assert.equal(isInvokedDirectly(fileURLToPath(moduleUrl), moduleUrl), true);
+  assert.equal(isInvokedDirectly(undefined, moduleUrl), false);
+  assert.equal(isInvokedDirectly("/other/file.mjs", moduleUrl), false);
+
+  const winUrl = "file:///C:/scripts/stage.mjs";
+  const winPathname = new URL(winUrl).pathname;
+  assert.equal(winPathname, "/C:/scripts/stage.mjs");
+  // Windows path.resolve is "C:\\scripts\\stage.mjs"; URL.pathname is "/C:/..."
+  assert.notEqual("C:\\scripts\\stage.mjs", winPathname);
+  assert.equal(isInvokedDirectly(fileURLToPath(winUrl), winUrl), true);
 });
 
 test("cargo target root honors CARGO_TARGET_DIR then falls back", () => {
