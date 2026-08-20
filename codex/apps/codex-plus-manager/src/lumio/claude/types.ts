@@ -349,7 +349,7 @@ export type ClaudeEvent =
   | { type: "select-session"; projectId: string; sessionId: string }
   | { type: "session-title-locked"; projectId: string; sessionId: string; title: string }
   | { type: "session-running"; projectId: string; sessionId: string; running: boolean }
-  | { type: "toggle-server-group"; host: string }
+  | { type: "toggle-server-group"; host: string; collapsed?: boolean }
   | {
       type: "cli-install-progress";
       host: string;

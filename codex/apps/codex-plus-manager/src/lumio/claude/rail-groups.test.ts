@@ -63,9 +63,21 @@ test("offline servers default to collapsed", () => {
       serverCount: 2,
       online: false,
       holdsActiveProject: false,
-      collapsed: false,
     }),
     false,
+  );
+});
+
+test("an offline group opens when the user expands it", () => {
+  assert.equal(
+    isServerGroupOpen({
+      host: "192.168.1.40",
+      serverCount: 2,
+      online: false,
+      holdsActiveProject: false,
+      collapsed: false,
+    }),
+    true,
   );
 });
 

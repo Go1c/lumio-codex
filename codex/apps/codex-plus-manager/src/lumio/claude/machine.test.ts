@@ -573,6 +573,15 @@ test("toggle-server-group flips collapsedHosts for that host", () => {
   assert.equal(opened.collapsedHosts["108.80.81.15"], false);
 });
 
+test("toggle-server-group can set an explicit override so offline groups expand", () => {
+  const opened = reduceClaudeState(initialClaudeState(), {
+    type: "toggle-server-group",
+    host: "192.168.1.40",
+    collapsed: false,
+  });
+  assert.equal(opened.collapsedHosts["192.168.1.40"], false);
+});
+
 test("cli-install-progress merges status by host", () => {
   const detecting = reduceClaudeState(initialClaudeState(), {
     type: "cli-install-progress",

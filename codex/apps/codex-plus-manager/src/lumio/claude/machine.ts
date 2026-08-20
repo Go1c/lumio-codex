@@ -512,7 +512,7 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
         ...state,
         collapsedHosts: {
           ...state.collapsedHosts,
-          [event.host]: !state.collapsedHosts[event.host],
+          [event.host]: event.collapsed ?? !state.collapsedHosts[event.host],
         },
       };
     case "cli-install-progress": {

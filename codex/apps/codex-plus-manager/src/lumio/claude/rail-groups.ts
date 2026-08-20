@@ -22,10 +22,13 @@ export function isServerGroupOpen(input: {
   serverCount: number;
   online: boolean;
   holdsActiveProject: boolean;
-  collapsed: boolean;
+  /** User override: `undefined` = default, `true` = force closed, `false` = force open. */
+  collapsed?: boolean;
 }): boolean {
   if (input.serverCount === 1 || input.holdsActiveProject) return true;
-  return input.online && !input.collapsed;
+  if (input.collapsed === true) return false;
+  if (input.collapsed === false) return true;
+  return input.online;
 }
 
 export function shouldShowServerShell(serverCount: number): boolean {
