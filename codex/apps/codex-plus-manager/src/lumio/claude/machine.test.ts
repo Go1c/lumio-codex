@@ -99,7 +99,7 @@ test("the connect sheet walks host, probe, setup, then first sync", () => {
   assert.equal(opened.sheet?.draft.port, 22);
 
   const probing = reduceClaudeState(opened, { type: "probe-started" });
-  assert.equal(probing.sheet?.step, "probe");
+  assert.equal(probing.sheet?.step, "host");
   assert.equal(probing.sheet?.probeStatus, "running");
 
   const probed = reduceClaudeState(probing, {

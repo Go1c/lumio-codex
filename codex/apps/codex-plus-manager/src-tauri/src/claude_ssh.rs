@@ -303,13 +303,16 @@ pub fn posix_single_quote(value: &str) -> String {
 }
 
 /// Quote a stored remote project path for the login user's shell.
-/// `~/…` follows `$HOME` so we never guess `/root` or `/home/{user}`.
+///
+/// Use `~/…` — not `"$HOME"`. sshd often runs `shell -c "command"`, and the
+/// extra double quotes close that wrapper, so inspect/mkdir look like a
+/// connection failure after probe already succeeded.
 /// Absolute paths stay absolute so older projects keep working.
 pub fn remote_shell_path(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
-        format!("\"$HOME\"/{}", posix_single_quote(rest))
+        format!("~/{}", posix_single_quote(rest))
     } else if path == "~" {
-        "\"$HOME\"".into()
+        "~".into()
     } else {
         posix_single_quote(path)
     }
@@ -321,7 +324,7 @@ pub fn remote_shell_join(root: &str, rel: &str) -> String {
 
 pub fn remote_prepare_mkdir(remote_root: &str) -> String {
     format!(
-        "mkdir -p {} \"$HOME/.local/share/bestcodex/bin\"",
+        "mkdir -p {} ~/.local/share/bestcodex/bin",
         remote_shell_path(remote_root)
     )
 }
@@ -458,11 +461,19 @@ mod tests {
     fn remote_shell_path_follows_login_home_instead_of_guessing_absolute() {
         assert_eq!(
             remote_shell_path("~/bestcodex/my-project"),
-            "\"$HOME\"/'bestcodex/my-project'"
+            "~/'bestcodex/my-project'"
         );
         assert_eq!(
             remote_prepare_mkdir("~/bestcodex/my-project"),
-            "mkdir -p \"$HOME\"/'bestcodex/my-project' \"$HOME/.local/share/bestcodex/bin\""
+            "mkdir -p ~/'bestcodex/my-project' ~/.local/share/bestcodex/bin"
+        );
+        assert!(
+            !remote_shell_path("~/bestcodex/my-project").contains('"'),
+            "double quotes around $HOME break sshd's shell -c wrapper"
+        );
+        assert!(
+            !remote_prepare_mkdir("~/bestcodex/my-project").contains('"'),
+            "mkdir must not introduce double quotes either"
         );
         assert_eq!(
             remote_shell_path("/root/bestcodex/legacy"),

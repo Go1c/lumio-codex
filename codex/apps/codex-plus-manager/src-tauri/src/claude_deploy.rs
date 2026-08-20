@@ -262,7 +262,12 @@ mod tests {
         let (missing, empty) = parse_inspect_output("EXISTS:0\n");
         assert!(!missing);
         assert!(empty.is_empty());
-        assert!(inspect_remote_script("~/bestcodex/my-project").contains("EXISTS:"));
+        let script = inspect_remote_script("~/bestcodex/my-project");
+        assert!(script.contains("EXISTS:"));
+        assert!(
+            !script.contains('"'),
+            "inspect must not emit double quotes that break sshd -c wrapping: {script}"
+        );
     }
 
     #[test]

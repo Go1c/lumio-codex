@@ -172,6 +172,25 @@ fn run_ssh(
     run_ssh_target(&target, password, key_path, remote)
 }
 
+fn ssh_command_args(
+    target: &ResolvedSshTarget,
+    password: Option<&str>,
+    key_path: Option<&str>,
+    remote: &str,
+) -> Vec<String> {
+    let key = crate::claude_ssh::effective_key_path(key_path, target);
+    let plan = crate::claude_ssh::password_auth_plan(password, key, target.use_config);
+    let mut args = ssh_invocation_args(target, key, None);
+    if plan.batch_mode && !args.iter().any(|arg| arg == "BatchMode=yes") {
+        let dest = args.pop().expect("ssh destination");
+        args.push("-o".into());
+        args.push("BatchMode=yes".into());
+        args.push(dest);
+    }
+    args.push(remote.to_string());
+    args
+}
+
 fn run_ssh_target(
     target: &ResolvedSshTarget,
     password: Option<&str>,
@@ -179,16 +198,12 @@ fn run_ssh_target(
     remote: &str,
 ) -> Result<std::process::Output, &'static str> {
     let key = crate::claude_ssh::effective_key_path(key_path, target);
-    let args = ssh_invocation_args(target, key, Some(remote));
+    let args = ssh_command_args(target, password, key_path, remote);
     let mut command = Command::new("ssh");
     command.args(&args);
     command.env("LC_ALL", "C");
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
-    let plan = crate::claude_ssh::password_auth_plan(password, key, target.use_config);
-    if plan.batch_mode {
-        command.arg("-o").arg("BatchMode=yes");
-    }
     let askpass =
         crate::claude_ssh::attach_askpass(&mut command, password, key, target.use_config)?;
     let output = command.output().map_err(|_| "SSH_CLIENT_MISSING")?;
@@ -1052,6 +1067,13 @@ mod tests {
             classify_ssh_error("ssh: connect to host 1.1.1.1 port 22: Connection timed out"),
             "SSH_UNREACHABLE"
         );
+        assert_eq!(
+            classify_ssh_error(
+                "bash: -c: line 1: syntax error near unexpected token `-o'"
+            ),
+            "SSH_PROBE_FAILED",
+            "leftover ssh flags after inspect must not be misread as auth or a missing client"
+        );
     }
 
     #[test]
@@ -1067,5 +1089,50 @@ mod tests {
         assert_eq!(distro.as_deref(), Some("Ubuntu 22.04.1 LTS"));
         assert_eq!(cpu.as_deref(), Some("4"));
         assert_eq!(memory.as_deref(), Some("8 GB"));
+    }
+
+    fn sample_target() -> ResolvedSshTarget {
+        ResolvedSshTarget {
+            host: "43.156.20.8".into(),
+            user: "root".into(),
+            port: 22,
+            alias: None,
+            use_config: false,
+            identity_file: None,
+        }
+    }
+
+    fn assert_options_before_destination(args: &[String], dest: &str, remote: &str) {
+        let dest_at = args.iter().position(|arg| arg == dest).expect("destination");
+        assert_eq!(args.last().map(String::as_str), Some(remote));
+        assert!(
+            args[dest_at + 1..].iter().all(|arg| arg == remote),
+            "ssh options after the destination become the remote command: {args:?}"
+        );
+        assert!(
+            args[..dest_at].windows(2).any(|pair| {
+                pair[0] == "-o" && (pair[1] == "BatchMode=yes" || pair[1].starts_with("ConnectTimeout="))
+            }),
+            "options must stay before {dest}: {args:?}"
+        );
+    }
+
+    #[test]
+    fn inspect_and_key_auth_do_not_append_ssh_flags_after_the_remote_command() {
+        let target = sample_target();
+        let inspect = claude_deploy::inspect_remote_script("~/bestcodex/my-project");
+        assert!(
+            !inspect.contains('"'),
+            "inspect must not emit double quotes that break sshd -c wrapping: {inspect}"
+        );
+        let key = ssh_command_args(&target, None, Some("/tmp/id_ed25519"), &inspect);
+        assert_options_before_destination(&key, "root@43.156.20.8", &inspect);
+        assert!(key.iter().any(|arg| arg == "BatchMode=yes"));
+        let agent = ssh_command_args(&target, None, None, &inspect);
+        assert_options_before_destination(&agent, "root@43.156.20.8", &inspect);
+        assert!(agent.iter().any(|arg| arg == "BatchMode=yes"));
+        let password = ssh_command_args(&target, Some("hunter2"), None, &inspect);
+        assert_options_before_destination(&password, "root@43.156.20.8", &inspect);
+        assert!(!password.iter().any(|arg| arg == "BatchMode=yes"));
     }
 }

@@ -69,6 +69,12 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, />装组件</);
   assert.match(source, />首次同步</);
   assert.match(source, /探测连接/);
+  assert.match(source, /正在探测…/);
+  assert.match(source, /lumio-button-spinner/);
+  assert.match(source, /aria-busy=\{probing\}/);
+  const css = await readFile(new URL("../../../lumio-shell.css", import.meta.url), "utf8");
+  assert.match(css, /\.lumio-button-spinner/);
+  assert.match(css, /\.lumio-button\.is-busy/);
   assert.match(source, /本机 SSH 方式/);
   assert.match(source, /IP 用户密码/);
   assert.match(source, /主机IP/);

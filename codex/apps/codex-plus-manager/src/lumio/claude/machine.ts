@@ -213,7 +213,7 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
       if (state.sheet === null) return state;
       return {
         ...state,
-        sheet: { ...state.sheet, step: "probe", probeStatus: "running" },
+        sheet: { ...state.sheet, probeStatus: "running" },
       };
     case "probe-finished":
       if (state.sheet === null) return state;
