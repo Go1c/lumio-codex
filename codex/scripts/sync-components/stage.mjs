@@ -21,6 +21,10 @@ const prebuiltDir =
   process.env.BESTCODEX_FNS_PREBUILT_DIR ??
   path.join(codexRoot, "target", "sync-components", "remote-linux-x86_64");
 
+export function cargoTargetRoot(env = process.env, root = cchavenRoot) {
+  return env.CARGO_TARGET_DIR ?? path.join(root, "target");
+}
+
 export function hostTriple(platform = process.platform, arch = process.arch) {
   const map = {
     "darwin-arm64": "aarch64-apple-darwin",
@@ -60,7 +64,7 @@ function stageHostSidecar() {
   const triple = hostTriple();
   run("cargo", ["build", "--locked", "--release", "--target", triple, "-p", "fns-agent", "--bin", "fns-agent"], { cwd: cchavenRoot });
   const ext = process.platform === "win32" ? ".exe" : "";
-  const built = path.join(cchavenRoot, "target", triple, "release", `fns-agent${ext}`);
+  const built = path.join(cargoTargetRoot(), triple, "release", `fns-agent${ext}`);
   const dest = path.join(srcTauri, "binaries", `fns-agent-${triple}${ext}`);
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(built, dest);
@@ -74,7 +78,7 @@ function buildRemote() {
   const agentOut = path.join(prebuiltDir, "fns-agent");
   if (process.platform === "linux") {
     run("cargo", ["build", "--locked", "--release", "--target", "x86_64-unknown-linux-gnu", "-p", "fns-agent", "--bin", "fns-agent"], { cwd: cchavenRoot });
-    fs.copyFileSync(path.join(cchavenRoot, "target", "x86_64-unknown-linux-gnu", "release", "fns-agent"), agentOut);
+    fs.copyFileSync(path.join(cargoTargetRoot(), "x86_64-unknown-linux-gnu", "release", "fns-agent"), agentOut);
     fs.chmodSync(agentOut, 0o755);
   } else if (!fs.existsSync(agentOut)) {
     throw new Error(`非 Linux 宿主无法编 Linux fns-agent；请先把产物放进 ${prebuiltDir}（CI 由 ubuntu job 提供）`);

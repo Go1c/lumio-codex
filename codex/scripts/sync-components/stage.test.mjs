@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostTriple, buildProvenance } from "./stage.mjs";
+import { hostTriple, buildProvenance, cargoTargetRoot } from "./stage.mjs";
 
 test("host triple mapping covers the three shipping hosts", () => {
   assert.equal(hostTriple("darwin", "arm64"), "aarch64-apple-darwin");
@@ -20,4 +20,9 @@ test("provenance carries schema, commits and both sha256 entries", () => {
   assert.equal(provenance.schemaVersion, "fns-release-provenance/1");
   assert.equal(provenance.artifacts["fns-server"].architecture, "x86_64");
   assert.equal(provenance.artifacts["fns-agent"].os, "linux");
+});
+
+test("cargo target root honors CARGO_TARGET_DIR then falls back", () => {
+  assert.equal(cargoTargetRoot({ CARGO_TARGET_DIR: "/tmp/cargo-out" }, "/repo/cchaven"), "/tmp/cargo-out");
+  assert.equal(cargoTargetRoot({}, "/repo/cchaven"), "/repo/cchaven/target");
 });
