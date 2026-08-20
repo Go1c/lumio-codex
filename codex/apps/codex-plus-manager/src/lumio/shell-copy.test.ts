@@ -373,6 +373,16 @@ test("the shell footer names BestCodex and the version, not Lumio or an internal
   assert.doesNotMatch(shell, />Lumio</);
 });
 
+test("the footer version stays on one line inside the footer, not clipped by the window corner", async () => {
+  const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+  const footer = css.match(/\.lumio-footer\s*\{[^}]+\}/)?.[0] ?? "";
+  const version = css.match(/\.lumio-footer-version\s*\{[^}]+\}/)?.[0] ?? "";
+
+  assert.match(footer, /position:\s*relative/);
+  assert.match(version, /white-space:\s*nowrap/);
+  assert.match(version, /right:\s*2\dpx/);
+});
+
 test("the shell chrome uses Codex and Claude tabs and keeps HomeView mounted", async () => {
   const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
 

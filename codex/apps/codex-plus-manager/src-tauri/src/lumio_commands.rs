@@ -375,7 +375,11 @@ pub fn lumio_bootstrap(
         });
 
     result(Ok(LumioBootstrapPayload {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: codex_plus_core::version::resolve_display_version(
+            option_env!("LUMIO_PACKAGE_VERSION"),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .to_string(),
         platform: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         codex_app,

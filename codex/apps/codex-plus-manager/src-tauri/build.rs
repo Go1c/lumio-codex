@@ -14,6 +14,7 @@ fn ensure_placeholder(path: &Path, contents: &[u8]) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=LUMIO_PACKAGE_VERSION");
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let triple = std::env::var("TARGET").expect("cargo sets TARGET for build scripts");
     let ext = if triple.contains("windows") {
