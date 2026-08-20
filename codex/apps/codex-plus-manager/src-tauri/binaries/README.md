@@ -1,1 +1,4 @@
-Stage real sidecar/remote artifacts with cchaven/scripts/stage-macos-arm64-sidecar.sh and copy into binaries/ and resources/remote/linux-x86_64/. These placeholders exist so Tauri can resolve externalBin/resources during cargo test. CI host triples need a file each: aarch64-apple-darwin, x86_64-apple-darwin, and x86_64-pc-windows-msvc.exe.
+本目录与 resources/remote/ 的真二进制是构建产物，不入库（对齐 cchaven spec-gaps §B2）。
+占位文件由 src-tauri/build.rs 在缺失时自动生成（<1024 字节，运行时必被拒绝），
+真产物由 node codex/scripts/sync-components/stage.mjs 覆盖。
+不要再用 cchaven/scripts/stage-*.sh 往这里手工拷文件。

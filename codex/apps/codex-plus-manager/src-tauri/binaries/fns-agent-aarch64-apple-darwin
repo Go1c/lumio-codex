@@ -1,3 +1,0 @@
-#!/bin/sh
-echo "fns-agent placeholder; stage with cchaven/scripts/stage-macos-arm64-sidecar.sh"
-exit 1
