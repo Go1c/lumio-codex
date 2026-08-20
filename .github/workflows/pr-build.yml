@@ -106,9 +106,15 @@ jobs:
       - name: Stage Windows app files
         run: |
           set -euo pipefail
-          mkdir -p dist/windows/app
+          mkdir -p dist/windows/app/resources/remote/linux-x86_64
           cp target/release/lumio-codex.exe dist/windows/app/
           cp target/release/lumio-codex-launcher.exe dist/windows/app/
+          cp apps/codex-plus-manager/src-tauri/binaries/fns-agent-x86_64-pc-windows-msvc.exe dist/windows/app/fns-agent.exe
+          for component in fns-server fns-agent release-provenance.json; do
+            cp "apps/codex-plus-manager/src-tauri/resources/remote/linux-x86_64/$component" "dist/windows/app/resources/remote/linux-x86_64/$component"
+          done
+          node scripts/sync-components/verify.mjs sidecar dist/windows/app/fns-agent.exe win32-x64
+          node scripts/sync-components/verify.mjs remote dist/windows/app/resources/remote/linux-x86_64
 
       - name: Build Windows MSIX (unsigned store scaffold)
         run: |
