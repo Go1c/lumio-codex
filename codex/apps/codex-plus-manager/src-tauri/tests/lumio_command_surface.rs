@@ -65,6 +65,9 @@ fn lumio_builder_registers_only_the_lumio_allowlist() {
             "claude_commands::lumio_claude_start_terminal",
             "claude_commands::lumio_claude_write_terminal",
             "claude_commands::lumio_claude_resize_terminal",
+            "claude_commands::lumio_claude_resume_sync",
+            "claude_commands::lumio_claude_server_status",
+            "claude_commands::lumio_claude_list_sessions",
             "lumio_hide_to_tray",
             "lumio_exit_app",
         ]

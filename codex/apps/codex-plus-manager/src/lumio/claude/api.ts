@@ -14,6 +14,9 @@ import type {
   ClaudeFileEntry,
   ClaudeFilePreview,
   ClaudeProbeResult,
+  ClaudeResumeResult,
+  ClaudeServerStatus,
+  ClaudeSessionsSnapshot,
   ClaudeSshHost,
 } from "./types.ts";
 
@@ -34,6 +37,9 @@ export const CLAUDE_COMMANDS = {
   startTerminal: "lumio_claude_start_terminal",
   writeTerminal: "lumio_claude_write_terminal",
   resizeTerminal: "lumio_claude_resize_terminal",
+  resume: "lumio_claude_resume_sync",
+  serverStatus: "lumio_claude_server_status",
+  listSessions: "lumio_claude_list_sessions",
 } as const;
 
 export const CLAUDE_SYNC_PROGRESS_EVENT = "lumio://claude-sync-progress";
@@ -302,6 +308,33 @@ export async function firstClaudeSync(input: ClaudeSshArgs & {
   }
 }
 
+export async function resumeOfficialSync(input: ClaudeSshArgs & {
+  remoteRoot: string;
+  localRoot: string;
+  projectId: string;
+}): Promise<ClaudeResumeResult> {
+  if (!isTauri()) {
+    return {
+      ok: false,
+      running: false,
+      filesDone: 0,
+      filesTotal: 0,
+      errorCode: "SYNC_ENGINE_UNAVAILABLE",
+    };
+  }
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.resume, {
+      ...sshPayload(input),
+      remoteRoot: input.remoteRoot,
+      localRoot: input.localRoot,
+      projectId: input.projectId,
+    });
+  } catch (error: unknown) {
+    const errorCode = error instanceof LumioCommandError ? error.errorCode : "SYNC_FAILED";
+    return { ok: false, running: false, filesDone: 0, filesTotal: 0, errorCode };
+  }
+}
+
 export async function openClaudeSystemTerminal(input: {
   host: string;
   user: string;
@@ -420,6 +453,66 @@ export async function listClaudeSshHosts(): Promise<ClaudeSshHost[]> {
     return await runClaudeCommand(CLAUDE_COMMANDS.listSshHosts, {});
   } catch {
     return [];
+  }
+}
+
+export async function loadClaudeServerStatus(input: ClaudeSshArgs & {
+  projectId: string;
+  remoteRoot: string;
+}): Promise<ClaudeServerStatus> {
+  if (!isTauri()) {
+    return {
+      projectId: input.projectId,
+      capturedAt: String(Date.now()),
+      ok: false,
+      error: { code: "SSH_CLIENT_MISSING", message: "需要启动器才能读取服务器状态。" },
+    };
+  }
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.serverStatus, {
+      ...sshPayload(input),
+      projectId: input.projectId,
+      remoteRoot: input.remoteRoot,
+    });
+  } catch (error: unknown) {
+    const code = error instanceof LumioCommandError ? error.errorCode : "SSH_PROBE_FAILED";
+    return {
+      projectId: input.projectId,
+      capturedAt: String(Date.now()),
+      ok: false,
+      error: { code, message: "没能读取服务器状态。" },
+    };
+  }
+}
+
+export async function loadClaudeSessions(input: ClaudeSshArgs & {
+  projectId: string;
+}): Promise<ClaudeSessionsSnapshot> {
+  if (!isTauri()) {
+    return {
+      projectId: input.projectId,
+      capturedAt: String(Date.now()),
+      ok: false,
+      sessionExists: false,
+      windows: [],
+      error: { code: "SSH_CLIENT_MISSING", message: "需要启动器才能读取对话状态。" },
+    };
+  }
+  try {
+    return await runClaudeCommand(CLAUDE_COMMANDS.listSessions, {
+      ...sshPayload(input),
+      projectId: input.projectId,
+    });
+  } catch (error: unknown) {
+    const code = error instanceof LumioCommandError ? error.errorCode : "SSH_PROBE_FAILED";
+    return {
+      projectId: input.projectId,
+      capturedAt: String(Date.now()),
+      ok: false,
+      sessionExists: false,
+      windows: [],
+      error: { code, message: "没能读取对话状态。" },
+    };
   }
 }
 

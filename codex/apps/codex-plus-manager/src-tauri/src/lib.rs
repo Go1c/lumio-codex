@@ -2,6 +2,7 @@ mod claude_commands;
 mod claude_conflicts;
 mod claude_deploy;
 mod claude_files;
+mod claude_remote;
 mod claude_ssh;
 mod claude_sync;
 mod claude_terminal;
@@ -104,6 +105,9 @@ pub fn run() {
             claude_commands::lumio_claude_start_terminal,
             claude_commands::lumio_claude_write_terminal,
             claude_commands::lumio_claude_resize_terminal,
+            claude_commands::lumio_claude_resume_sync,
+            claude_commands::lumio_claude_server_status,
+            claude_commands::lumio_claude_list_sessions,
             lumio_hide_to_tray,
             lumio_exit_app,
         ])

@@ -4,7 +4,7 @@ export type ClaudePage = "subscribe" | "empty" | "workspace";
 
 export type ClaudeConnectStep = "host" | "probe" | "setup" | "sync";
 
-export type ClaudeStageTab = "terminal" | "files" | "conflicts";
+export type ClaudeStageTab = "terminal" | "files" | "conflicts" | "server" | "sessions";
 
 export type ClaudeEntitlementStatus = "none" | "active" | "trialing" | "expired";
 
@@ -126,6 +126,7 @@ export interface ClaudeFileEntry {
   kind: "file" | "directory";
   side?: "local" | "remote";
   size?: number | null;
+  fingerprint?: string | null;
   children?: ClaudeFileEntry[];
 }
 
@@ -159,6 +160,68 @@ export interface ClaudeSshHost {
   hostname: string | null;
   port: number | null;
   user: string | null;
+}
+
+export interface ClaudeResumeResult {
+  ok: boolean;
+  running: boolean;
+  filesDone: number;
+  filesTotal: number;
+  errorCode: string | null;
+}
+
+export interface ClaudeStatusError {
+  code: string;
+  message: string;
+}
+
+export interface ClaudeServerDisk {
+  mount: string;
+  totalBytes: number;
+  usedBytes: number;
+  usedPercent: number;
+}
+
+export interface ClaudeServerService {
+  key: string;
+  displayName: string;
+  running: boolean;
+  processCount: number;
+  cpuPercent: number;
+  memoryRssBytes: number;
+}
+
+export interface ClaudeServerStatus {
+  projectId: string;
+  capturedAt: string;
+  ok: boolean;
+  error?: ClaudeStatusError | null;
+  host?: {
+    hostname?: string | null;
+    uptimeSeconds?: number | null;
+    cpu: { usagePercent: number; load1?: number | null; cores?: number | null };
+    memory: { totalBytes: number; usedBytes: number; usedPercent: number };
+    disks: ClaudeServerDisk[];
+  } | null;
+  services?: {
+    items: ClaudeServerService[];
+  } | null;
+}
+
+export interface ClaudeSessionWindow {
+  index: number;
+  id: string;
+  title: string;
+  active: boolean;
+}
+
+export interface ClaudeSessionsSnapshot {
+  projectId: string;
+  capturedAt: string;
+  ok: boolean;
+  sessionExists: boolean;
+  windows: ClaudeSessionWindow[];
+  error?: ClaudeStatusError | null;
 }
 
 export interface ClaudeState {

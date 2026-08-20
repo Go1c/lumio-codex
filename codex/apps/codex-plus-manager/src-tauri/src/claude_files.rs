@@ -15,6 +15,8 @@ pub struct FileNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<FileNode>>,
 }
 
@@ -135,6 +137,7 @@ fn read_children(
             },
             side: side.into(),
             size,
+            fingerprint: None,
             children,
         });
     }
@@ -227,6 +230,7 @@ pub fn parse_remote_listing(stdout: &str, side: &str) -> Vec<FileNode> {
                     },
                     side: side.into(),
                     size: None,
+                    fingerprint: None,
                     children: if node.is_dir {
                         Some(flatten(&node.children, &path, side))
                     } else {
@@ -238,6 +242,28 @@ pub fn parse_remote_listing(stdout: &str, side: &str) -> Vec<FileNode> {
     }
 
     flatten(&root.children, "", side)
+}
+
+pub fn content_fingerprint(bytes: &[u8]) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:x}:{}", hasher.finish(), bytes.len())
+}
+
+pub fn apply_fingerprints(
+    nodes: &mut [FileNode],
+    fingerprints: &std::collections::HashMap<String, String>,
+) {
+    for node in nodes {
+        if let Some(fingerprint) = fingerprints.get(&node.path) {
+            node.fingerprint = Some(fingerprint.clone());
+        }
+        if let Some(children) = node.children.as_mut() {
+            apply_fingerprints(children, fingerprints);
+        }
+    }
 }
 
 pub fn flatten_file_paths(nodes: &[FileNode]) -> Vec<String> {
@@ -303,5 +329,57 @@ mod tests {
                 .iter()
                 .any(|node| node.path == "src/main.rs" && node.kind == "file")
         );
+        let remote_file = src
+            .children
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|node| node.path == "src/main.rs")
+            .expect("src/main.rs");
+        assert_eq!(remote_file.size, None);
+        assert_eq!(remote_file.fingerprint, None);
+    }
+
+    #[test]
+    fn content_pairs_stamp_comparable_fingerprints_when_remote_size_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("src")).unwrap();
+        std::fs::write(root.path().join("src/lib.rs"), "fn a() {}\n").unwrap();
+        let mut local = read_tree(root.path(), "local", 4).unwrap();
+        let mut remote = parse_remote_listing("src/\nsrc/lib.rs\n", "remote");
+        let remote_file = remote
+            .iter()
+            .find(|node| node.name == "src")
+            .and_then(|node| node.children.as_ref())
+            .and_then(|children| children.iter().find(|node| node.path == "src/lib.rs"))
+            .expect("remote src/lib.rs");
+        assert_eq!(remote_file.size, None);
+
+        let local_bytes = std::fs::read(root.path().join("src/lib.rs")).unwrap();
+        let mut fingerprints_local = std::collections::HashMap::new();
+        let mut fingerprints_remote = std::collections::HashMap::new();
+        fingerprints_local.insert("src/lib.rs".to_string(), content_fingerprint(&local_bytes));
+        fingerprints_remote.insert(
+            "src/lib.rs".to_string(),
+            content_fingerprint(b"fn b() {}\n"),
+        );
+        apply_fingerprints(&mut local, &fingerprints_local);
+        apply_fingerprints(&mut remote, &fingerprints_remote);
+
+        let local_fp = local
+            .iter()
+            .find(|node| node.name == "src")
+            .and_then(|node| node.children.as_ref())
+            .and_then(|children| children.iter().find(|node| node.path == "src/lib.rs"))
+            .and_then(|node| node.fingerprint.clone());
+        let remote_fp = remote
+            .iter()
+            .find(|node| node.name == "src")
+            .and_then(|node| node.children.as_ref())
+            .and_then(|children| children.iter().find(|node| node.path == "src/lib.rs"))
+            .and_then(|node| node.fingerprint.clone());
+        assert!(local_fp.is_some());
+        assert!(remote_fp.is_some());
+        assert_ne!(local_fp, remote_fp);
     }
 }

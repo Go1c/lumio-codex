@@ -190,8 +190,12 @@ test("14 files and conflicts tabs render", async () => {
   const home = await readFile(new URL("../views/claude/ClaudeHome.tsx", import.meta.url), "utf8");
   assert.match(home, />文件</);
   assert.match(home, />冲突</);
+  assert.match(home, />服务器状态</);
+  assert.match(home, />对话状态</);
   assert.match(home, /FilesPane|stageTab === "files"/);
   assert.match(home, /ConflictsPane|stageTab === "conflicts"/);
+  assert.match(home, /stageTab === "server"|ServerStatusPane/);
+  assert.match(home, /stageTab === "sessions"|SessionsPane/);
 });
 
 test("15 secrets do not appear in view source literals or persistable snapshots", async () => {

@@ -22,15 +22,26 @@ import {
   inspectClaudeRemote,
   listClaudeConflicts,
   listClaudeFiles,
+  loadClaudeServerStatus,
+  loadClaudeSessions,
   openClaudeSystemTerminal,
   prepareClaudeRemote,
   probeClaudeConnection,
   resolveClaudeConflict,
+  resumeOfficialSync,
   runClaudeRemote,
   subscribeClaudeEvent,
   type ClaudeSshArgs,
 } from "./api.ts";
-import type { ClaudeConflictResolution, ClaudeEntitlement, ClaudeEntitlementStatus } from "./types.ts";
+import { resumeSavedProjects } from "./sync-status.ts";
+import type {
+  ClaudeConflictResolution,
+  ClaudeEntitlement,
+  ClaudeEntitlementStatus,
+  ClaudeProject,
+  ClaudeServerStatus,
+  ClaudeSessionsSnapshot,
+} from "./types.ts";
 import { DEFAULT_CLAUDE_PLAN_CENTS } from "./types.ts";
 
 export { DEFAULT_CLAUDE_PLAN_CENTS };
@@ -162,6 +173,10 @@ export async function hydrateClaudeWorkspace(account: LumioAccountSummary | null
     amountCents: typeof amountCents === "number" && amountCents > 0 ? amountCents : DEFAULT_CLAUDE_PLAN_CENTS,
   });
   await loadClaudeOrders().catch(() => undefined);
+  const after = getClaudeState();
+  await resumeSavedProjects(after.projects, after.activeProjectId, (projectId) =>
+    resumeClaudeSync(projectId),
+  );
 }
 
 export async function payClaudeSubscribe(account: LumioAccountSummary | null): Promise<void> {
@@ -340,6 +355,86 @@ export async function runConnectSync(): Promise<void> {
       },
     });
   }
+}
+
+function sshFromProject(project: ClaudeProject): ClaudeSshArgs {
+  return {
+    host: project.host,
+    user: project.user,
+    port: project.port,
+    password: projectPassword(project.id),
+    keyPath: project.keyPath,
+    hostAlias: project.hostAlias,
+    auth: project.auth,
+  };
+}
+
+export async function resumeClaudeSync(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const current = getClaudeState().syncByProject[projectId];
+  dispatchClaude({
+    type: "project-sync-updated",
+    projectId,
+    sync: {
+      state: current?.state === "conflicts" ? "conflicts" : "running",
+      filesDone: current?.filesDone ?? 0,
+      filesTotal: current?.filesTotal ?? 0,
+      errorCode: null,
+      conflicts: current?.conflicts ?? 0,
+    },
+  });
+  const result = await resumeOfficialSync({
+    ...sshFromProject(project),
+    remoteRoot: project.remoteRoot,
+    localRoot: project.localRoot,
+    projectId: project.id,
+  });
+  const after = getClaudeState().syncByProject[projectId];
+  if (!result.ok || !result.running) {
+    dispatchClaude({
+      type: "project-sync-updated",
+      projectId,
+      sync: {
+        state: "fail",
+        filesDone: result.filesDone,
+        filesTotal: result.filesTotal,
+        errorCode: result.errorCode ?? "SYNC_FAILED",
+        conflicts: after?.conflicts ?? 0,
+      },
+    });
+    return;
+  }
+  dispatchClaude({
+    type: "project-sync-updated",
+    projectId,
+    sync: {
+      state: after?.conflicts ? "conflicts" : "running",
+      filesDone: result.filesDone || (after?.filesDone ?? 0),
+      filesTotal: result.filesTotal || (after?.filesTotal ?? 0),
+      errorCode: null,
+      conflicts: after?.conflicts ?? 0,
+    },
+  });
+}
+
+export async function fetchClaudeServerStatus(projectId: string): Promise<ClaudeServerStatus | null> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return null;
+  return loadClaudeServerStatus({
+    ...sshFromProject(project),
+    projectId: project.id,
+    remoteRoot: project.remoteRoot,
+  });
+}
+
+export async function fetchClaudeSessions(projectId: string): Promise<ClaudeSessionsSnapshot | null> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return null;
+  return loadClaudeSessions({
+    ...sshFromProject(project),
+    projectId: project.id,
+  });
 }
 
 export async function refreshClaudeFiles(projectId: string): Promise<void> {
