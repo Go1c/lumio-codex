@@ -16,8 +16,36 @@ permissions:
   contents: read
 
 jobs:
+  sync-components:
+    name: Linux x86_64 sync components
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build remote components
+        run: node codex/scripts/sync-components/stage.mjs --build-remote
+      - name: Verify remote components
+        run: node codex/scripts/sync-components/verify.mjs remote codex/target/sync-components/remote-linux-x86_64
+      - name: Upload sync components
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64/
+          if-no-files-found: error
+          retention-days: 1
+
   windows-artifacts:
     name: Windows x64
+    needs: sync-components
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -87,6 +115,14 @@ jobs:
       - name: Build release binaries
         run: cargo build --release
 
+      - name: Download sync components
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64
+      - name: Stage sync components
+        run: node scripts/sync-components/stage.mjs
+
       - name: Decide Windows signing mode
         id: sign
         env:
@@ -106,9 +142,15 @@ jobs:
       - name: Stage Windows app files
         run: |
           set -euo pipefail
-          mkdir -p dist/windows/app
+          mkdir -p dist/windows/app/resources/remote/linux-x86_64
           cp target/release/lumio-codex.exe dist/windows/app/
           cp target/release/lumio-codex-launcher.exe dist/windows/app/
+          cp apps/codex-plus-manager/src-tauri/binaries/fns-agent-x86_64-pc-windows-msvc.exe dist/windows/app/fns-agent.exe
+          for component in fns-server fns-agent release-provenance.json; do
+            cp "apps/codex-plus-manager/src-tauri/resources/remote/linux-x86_64/$component" "dist/windows/app/resources/remote/linux-x86_64/$component"
+          done
+          node scripts/sync-components/verify.mjs sidecar dist/windows/app/fns-agent.exe win32-x64
+          node scripts/sync-components/verify.mjs remote dist/windows/app/resources/remote/linux-x86_64
 
       - name: Build Windows MSIX (unsigned store scaffold)
         run: |
@@ -281,7 +323,11 @@ jobs:
 
   macos-dmg:
     name: macOS ${{ matrix.arch }} internal unsigned
+    needs: sync-components
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -322,6 +368,14 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Download sync components
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64
+      - name: Stage sync components
+        run: node scripts/sync-components/stage.mjs
+
       - name: Build macOS DMG
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -357,6 +411,9 @@ jobs:
           test -f "$APP/Contents/Info.plist"
           test -f "$APP/Contents/PkgInfo"
           test -x "$APP/Contents/MacOS/lumio-codex"
+          test -x "$APP/Contents/MacOS/fns-agent"
+          node scripts/sync-components/verify.mjs sidecar "$APP/Contents/MacOS/fns-agent" "darwin-${{ matrix.arch }}"
+          node scripts/sync-components/verify.mjs remote "$APP/Contents/Resources/remote/linux-x86_64"
           test -x "$APP/Contents/Helpers/lumio-codex-launcher"
           test "$(find "$MOUNT_POINT" -maxdepth 1 -type d -name '*.app' | wc -l | tr -d ' ')" = "1"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")" = "games.lumio.codex"

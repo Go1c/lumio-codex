@@ -74,9 +74,43 @@ npm run build
 等价于：先 `cargo build -p codex-plus-launcher --release`，再 `tauri build`。  
 产物位置依平台落在 `apps/codex-plus-manager/src-tauri/target/release/`（及 bundle 子目录）。用于开发者自测，**不等于** CI 的四平台 `internal-unsigned` 命名制品。
 
+## 同步组件
+
+Claude 四步 sheet 的「装组件」和「首次同步」依赖两套构建产物，**不入库**：
+
+| 套件 | 用途 | 构建期暂存位置 |
+|------|------|----------------|
+| 本机 sidecar | 首次同步 | `apps/codex-plus-manager/src-tauri/binaries/` |
+| 远端 linux-x86_64 组件 | 上传到服务器 | `apps/codex-plus-manager/src-tauri/resources/remote/linux-x86_64/` |
+
+真文件由 `scripts/sync-components/stage.mjs` 写入；缺失时 `src-tauri/build.rs` 生成占位（运行时会拒绝）。git 里没有真二进制是预期。
+
+`apps/codex-plus-manager` 的 `npm run dev` 会先跑 `stage.mjs --dev`：sidecar 必须到位；远端组件缺了会告警，四步 sheet 第三步会诚实失败。补齐远端组件（需要本机 Go；源在仓内 `cchaven/services/fns-server`，不擅装 Go）：
+
+```bash
+# 在 codex/ 目录
+node scripts/sync-components/stage.mjs --build-remote
+```
+
+打内部包（§5）之前先严格暂存（两边都必须到位，缺了失败）：
+
+```bash
+# 在 codex/ 目录
+node scripts/sync-components/stage.mjs
+```
+
+`BESTCODEX_CLAUDE_REMOTE_DIR` / `BESTCODEX_CLAUDE_SIDECAR` **仅排障，不是安装步骤**。
+
 ## 5. 打与 CI 同形的内部未签名包
 
 版本号建议用 semver，例如 `1.2.46`。先改齐版本（见 [03-release.md](./03-release.md) §1），再构建。
+
+先严格暂存同步组件（本机 sidecar + 远端 linux-x86_64 都必须到位）：
+
+```bash
+# 在 codex/ 目录
+node scripts/sync-components/stage.mjs
+```
 
 ### 5.1 通用：先编前端 + release 二进制
 
@@ -185,3 +219,4 @@ Pop-Location
 | macOS「已损坏」/ 无法打开 | 未签名内测包：图标上 **右键 → 打开** |
 | Windows SmartScreen | 未签名预期行为；内测核对哈希后继续 |
 | `cargo test` 全量挂在 launcher | 用 §3 的过滤命令，勿据此阻断 BestCodex 发版 |
+| DMG 打包报「不是 Linux x86_64 ELF」 | 远端组件没暂存。先跑 `node scripts/sync-components/stage.mjs --build-remote` |

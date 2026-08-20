@@ -4,8 +4,8 @@
   "version": "1.2.46",
   "identifier": "games.lumio.codex",
   "build": {
-    "beforeDevCommand": "npm run vite:dev",
-    "beforeBuildCommand": "npm run vite:build",
+    "beforeDevCommand": "node ../../scripts/sync-components/stage.mjs --dev && npm run vite:dev",
+    "beforeBuildCommand": "node ../../scripts/sync-components/stage.mjs --dev && npm run vite:build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },

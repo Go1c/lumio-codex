@@ -1,0 +1,14 @@
+{
+  "name": "Fast Note Sync",
+  "short_name": "FastNoteSync",
+  "icons": [
+    {
+      "src": "/static/images/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "theme_color": "#ffffff",
+  "background_color": "#ffffff",
+  "display": "standalone"
+}

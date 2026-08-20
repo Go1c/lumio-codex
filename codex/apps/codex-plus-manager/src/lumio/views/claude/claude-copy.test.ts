@@ -69,7 +69,9 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, />装组件</);
   assert.match(source, />首次同步</);
   assert.match(source, /探测连接/);
-  assert.match(source, /懂 SSH 再用/);
+  assert.match(source, /本机 SSH 方式/);
+  assert.match(source, /IP 用户密码/);
+  assert.match(source, /主机IP/);
   assert.match(source, /ssh root@/);
   assert.match(source, /密码只留在这台电脑上/);
   assert.match(source, /SSH_AUTH_FAILED/);
@@ -82,6 +84,7 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /setupStatus === "fail"/);
   assert.match(source, /sync\.state === "fail"/);
   assert.doesNotMatch(source, /当作完成/);
+  assert.doesNotMatch(source, /懂 SSH 再用/);
 });
 
 test("user-visible Claude copy never says agent or tmux", async () => {
@@ -145,4 +148,15 @@ test("empty and home surfaces show remaining subscription days from the server",
   assert.match(copy, /剩余/);
   assert.match(`${empty}\n${home}`, /ClaudeEntitlementLine/);
   assert.match(line, /即将到期/);
+});
+
+test("artifact-missing blames the build, not the machine or the connection", async () => {
+  const connect = await readView("ClaudeConnect.tsx");
+  const api = await readFile(new URL("../../claude/api.ts", import.meta.url), "utf8");
+  assert.match(api, /这个版本的 BestCodex 没有把同步组件打进来/);
+  assert.doesNotMatch(api, /这台电脑还没有同步组件/);
+  // DEPLOY_ARTIFACT_MISSING 有专属失败面：不引导改连接，给帮助页 + 重试
+  assert.match(connect, /setupErrorCode === "DEPLOY_ARTIFACT_MISSING"/);
+  assert.match(connect, /打开帮助页/);
+  assert.match(connect, /HELP_URL/);
 });

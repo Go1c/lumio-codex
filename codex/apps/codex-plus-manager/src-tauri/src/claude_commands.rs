@@ -208,7 +208,9 @@ fn human_detail(code: &str, host: &str, port: u16) -> String {
         "SSH_NOT_SSH" => format!("{host}:{port} 不是 SSH 服务。"),
         "SSH_CLIENT_MISSING" => "这台电脑还没有 ssh 命令。".into(),
         "SSH_ALIAS_UNKNOWN" => "本机 SSH 配置里没有这个 Host 别名。".into(),
-        "DEPLOY_ARTIFACT_MISSING" => "这台电脑还没有同步组件，装不上服务器。".into(),
+        "DEPLOY_ARTIFACT_MISSING" => {
+            return claude_deploy::human_prepare_detail(code, host, port);
+        }
         "SSH_PREPARE_FAILED" => "没能在服务器上装好同步组件。".into(),
         "SYNC_COPY_UNCONFIRMED" => "还没把服务器上的文件拉到这台电脑。".into(),
         _ => "连不上这台服务器。".into(),
