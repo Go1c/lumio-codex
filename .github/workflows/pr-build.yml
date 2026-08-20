@@ -104,9 +104,11 @@ jobs:
           quad="$(node -e "const v=process.argv[1]; const n=[...String(v).matchAll(/\d+/g)].map(m=>Number(m[0])); while(n.length<4) n.push(0); process.stdout.write(n.slice(0,4).join('.'))" "$version")"
           {
             echo "PACKAGE_VERSION=${version}"
+            echo "LUMIO_PACKAGE_VERSION=${version}"
             echo "PRODUCT_VERSION_QUAD=${quad}"
           } >> "$GITHUB_ENV"
           echo "PACKAGE_VERSION=${version}"
+          echo "LUMIO_PACKAGE_VERSION=${version}"
           echo "PRODUCT_VERSION_QUAD=${quad}"
 
       - name: Rust tests
@@ -364,6 +366,19 @@ jobs:
       - name: Build frontend
         working-directory: codex/apps/codex-plus-manager
         run: npm run vite:build
+
+      - name: Resolve internal version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          version="${version#V}"
+          version="$(printf '%s' "$version" | tr -c '0-9A-Za-z._-' '-')"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ] || [ -z "$version" ] || [ "$version" = "publish" ]; then
+            desktop="$(node -e "const fs=require('fs'); process.stdout.write(JSON.parse(fs.readFileSync('apps/codex-plus-manager/src-tauri/tauri.conf.json','utf8')).version)")"
+            version="${desktop}-internal-${GITHUB_RUN_NUMBER}"
+          fi
+          echo "LUMIO_PACKAGE_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "LUMIO_PACKAGE_VERSION=${version}"
 
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
