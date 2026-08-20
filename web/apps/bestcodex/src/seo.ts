@@ -22,6 +22,7 @@ export const REPO_URL = "https://github.com/LumioGames/lumio-codex";
 export const BING_SITE_VERIFICATION = "48232FF4A9EAB80D49C7A5AE2D009539";
 export const BAIDU_SITE_VERIFICATION = "codeva-501Ruteqzc";
 export const GOOGLE_SITE_VERIFICATION = "VDGNHdNPtmr0yRLwE_H6KmtWDI2fPZY8DWbayRHy0I0";
+export const SOGOU_SITE_VERIFICATION = "WtQC1GRdP7";
 const UPSTREAM_URL = "https://github.com/BigPizzaV3/CodexPlusPlus";
 const LAST_REVIEWED = "2026-08-17";
 

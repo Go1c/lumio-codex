@@ -8,6 +8,7 @@ import {
   GOOGLE_SITE_VERIFICATION,
   REPO_URL,
   SEO_ROUTES,
+  SOGOU_SITE_VERIFICATION,
   pageTitle,
   seoForPath,
 } from "@/seo";
@@ -20,6 +21,7 @@ describe("SEO 路由元数据", () => {
     expect(BING_SITE_VERIFICATION).toBe("48232FF4A9EAB80D49C7A5AE2D009539");
     expect(BAIDU_SITE_VERIFICATION).toBe("codeva-501Ruteqzc");
     expect(GOOGLE_SITE_VERIFICATION).toBe("VDGNHdNPtmr0yRLwE_H6KmtWDI2fPZY8DWbayRHy0I0");
+    expect(SOGOU_SITE_VERIFICATION).toBe("WtQC1GRdP7");
   });
 
   it("每条路由都有标题与描述，且描述长度可控", () => {
