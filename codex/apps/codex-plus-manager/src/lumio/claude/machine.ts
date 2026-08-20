@@ -1,5 +1,5 @@
 import { hasClaudeEntitlement } from "./entitlement.ts";
-import { localProjectRoot, remoteProjectRoot } from "./paths.ts";
+import { localProjectRoot, projectSlug, remoteProjectRoot } from "./paths.ts";
 import { parseSshTarget } from "./ssh-target.ts";
 import {
   DEFAULT_CLAUDE_PLAN_CENTS,
@@ -72,6 +72,7 @@ function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
     setupStatus: "idle",
     setupDetail: null,
     setupErrorCode: null,
+    rootChoice: null,
     sync: idleSync(),
   };
 }
@@ -122,6 +123,23 @@ export function nextProjectName(existing: string[], base = "my-project"): string
   let n = 2;
   while (existing.includes(`${base}-${n}`)) n += 1;
   return `${base}-${n}`;
+}
+
+export function decideRemoteProjectRoot(
+  desiredName: string,
+  existingNames: string[],
+):
+  | { action: "create"; name: string }
+  | { action: "choose"; existingName: string; nextName: string } {
+  const name = projectSlug(desiredName);
+  if (!existingNames.includes(name)) {
+    return { action: "create", name };
+  }
+  return {
+    action: "choose",
+    existingName: name,
+    nextName: nextProjectName(existingNames, name),
+  };
 }
 
 export function createProjectFromDraft(
@@ -215,7 +233,30 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
       if (state.sheet === null) return state;
       return {
         ...state,
-        sheet: { ...state.sheet, step: "setup", setupStatus: "running" },
+        sheet: {
+          ...state.sheet,
+          step: "setup",
+          setupStatus: "running",
+          rootChoice: null,
+        },
+      };
+    case "setup-choose-root":
+      if (state.sheet === null) return state;
+      return {
+        ...state,
+        sheet: {
+          ...state.sheet,
+          step: "setup",
+          setupStatus: "choose",
+          setupDetail: null,
+          setupErrorCode: null,
+          rootChoice: {
+            existingName: event.existingName,
+            existingRoot: event.existingRoot,
+            nextName: event.nextName,
+            nextRoot: event.nextRoot,
+          },
+        },
       };
     case "setup-finished":
       if (state.sheet === null) return state;
@@ -226,11 +267,12 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
           setupStatus: event.ok ? "ok" : "fail",
           setupDetail: event.detail ?? event.errorCode ?? null,
           setupErrorCode: event.ok ? null : (event.errorCode ?? "SSH_PREPARE_FAILED"),
+          rootChoice: event.ok ? null : state.sheet.rootChoice,
         },
       };
     case "start-sync":
       if (state.sheet === null) return state;
-      if (state.sheet.setupStatus === "fail") return state;
+      if (state.sheet.setupStatus === "fail" || state.sheet.setupStatus === "choose") return state;
       return {
         ...state,
         sheet: {

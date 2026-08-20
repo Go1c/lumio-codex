@@ -22,10 +22,8 @@ export function projectSlug(name: string): string {
   return slug === "" ? "my-project" : slug;
 }
 
-export function remoteProjectRoot(user: string, name: string): string {
-  const trimmed = user.trim() || "root";
-  const base = trimmed === "root" ? "/root" : `/home/${trimmed}`;
-  return `${base}/bestcodex/${projectSlug(name)}`;
+export function remoteProjectRoot(_user: string, name: string): string {
+  return `~/bestcodex/${projectSlug(name)}`;
 }
 
 export function localProjectRoot(name: string): string {

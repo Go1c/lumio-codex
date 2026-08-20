@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   CONNECT_STEPS,
   createProjectFromDraft,
+  decideRemoteProjectRoot,
   emptyHostDraft,
   initialClaudeState,
   nextProjectName,
@@ -283,6 +284,43 @@ test("the next project name increments when my-project is taken", () => {
   assert.equal(nextProjectName(["my-project", "my-project-2"]), "my-project-3");
 });
 
+test("a missing remote folder is created; an existing one asks reuse or a new name", () => {
+  assert.deepEqual(decideRemoteProjectRoot("my-project", []), {
+    action: "create",
+    name: "my-project",
+  });
+  assert.deepEqual(decideRemoteProjectRoot("my-project", ["my-project"]), {
+    action: "choose",
+    existingName: "my-project",
+    nextName: "my-project-2",
+  });
+  assert.deepEqual(decideRemoteProjectRoot("my-project", ["my-project", "my-project-2"]), {
+    action: "choose",
+    existingName: "my-project",
+    nextName: "my-project-3",
+  });
+});
+
+test("an existing remote folder pauses setup so the user can choose", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "continue-setup" },
+    {
+      type: "setup-choose-root",
+      existingName: "my-project",
+      existingRoot: "~/bestcodex/my-project",
+      nextName: "my-project-2",
+      nextRoot: "~/bestcodex/my-project-2",
+    },
+    { type: "start-sync" },
+  ]);
+  assert.equal(state.sheet?.step, "setup");
+  assert.equal(state.sheet?.setupStatus, "choose");
+  assert.equal(state.sheet?.rootChoice?.nextName, "my-project-2");
+  assert.equal(state.projects.length, 0);
+});
+
 test("prepare failure does not advance the sheet to sync", () => {
   const state = apply([
     { type: "entitlement-resolved", entitlement: entitled },
@@ -377,6 +415,6 @@ test("createProjectFromDraft writes BestCodex directory presets", () => {
     "proj-1",
     "2026-08-16T00:00:00.000Z",
   );
-  assert.equal(created.remoteRoot, "/root/bestcodex/my-project");
+  assert.equal(created.remoteRoot, "~/bestcodex/my-project");
   assert.equal(created.localRoot, "~/BestCodex/my-project");
 });

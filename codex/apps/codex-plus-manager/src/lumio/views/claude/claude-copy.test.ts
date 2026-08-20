@@ -78,10 +78,13 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /IP 是否抄对/);
   assert.match(source, /密码是否正确/);
   assert.match(source, /安全组是否放行 22/);
-  assert.match(source, /\/root\/bestcodex\//);
+  assert.match(source, /~\/bestcodex\//);
   assert.match(source, /~\/BestCodex\//);
   assert.match(source, /SSH 配置|Host 别名|配置别名/);
   assert.match(source, /setupStatus === "fail"/);
+  assert.match(source, /服务器上已有这个项目/);
+  assert.match(source, /继续使用/);
+  assert.match(source, /新建 /);
   assert.match(source, /sync\.state === "fail"/);
   assert.doesNotMatch(source, /当作完成/);
   assert.doesNotMatch(source, /懂 SSH 再用/);

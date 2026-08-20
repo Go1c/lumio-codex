@@ -15,9 +15,10 @@ use crate::claude_conflicts::{self, ConflictStore, Resolution};
 use crate::claude_deploy;
 use crate::claude_files::{self, expand_local_root};
 use crate::claude_ssh::{
-    ResolvedSshTarget, SshHost, parse_ssh_config, resolve_from_user_config, ssh_invocation_args,
+    parse_ssh_config, remote_shell_join, remote_shell_path, resolve_from_user_config,
+    ssh_invocation_args, ResolvedSshTarget, SshHost,
 };
-use crate::claude_sync::{self, SYNC_PROGRESS_EVENT, SyncEngine, SyncProgress};
+use crate::claude_sync::{self, SyncEngine, SyncProgress, SYNC_PROGRESS_EVENT};
 use crate::claude_terminal::TerminalManager;
 use crate::claude_tunnel::TunnelManager;
 
@@ -67,6 +68,16 @@ pub struct ClaudeProbePayload {
 #[serde(rename_all = "camelCase")]
 pub struct ClaudePreparePayload {
     pub ok: bool,
+    pub error_code: Option<String>,
+    pub detail: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeInspectPayload {
+    pub ok: bool,
+    pub exists: bool,
+    pub names: Vec<String>,
     pub error_code: Option<String>,
     pub detail: Option<String>,
 }
@@ -231,12 +242,14 @@ fn count_remote_project_files(
     key_path: Option<&str>,
     remote_root: &str,
 ) -> Option<u32> {
-    let quoted = remote_root.replace('\'', "'\\''");
     let output = run_ssh_target(
         target,
         password,
         key_path,
-        &format!("find '{quoted}' -type f ! -path '*/.bestcodex-sync/*' 2>/dev/null | wc -l"),
+        &format!(
+            "find {} -type f ! -path '*/.bestcodex-sync/*' 2>/dev/null | wc -l",
+            remote_shell_path(remote_root)
+        ),
     )
     .ok()?;
     if !output.status.success() {
@@ -261,13 +274,13 @@ fn ingest_detected_conflicts(
     };
     let state_dir = local.join(".bestcodex-sync");
     let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &state_dir);
-    let quoted = remote_root.replace('\'', "'\\''");
     let Ok(output) = run_ssh_target(
         target,
         password,
         key_path,
         &format!(
-            "find '{quoted}' -type f ! -path '*/.bestcodex-sync/*' -printf '%P\\n' 2>/dev/null"
+            "find {} -type f ! -path '*/.bestcodex-sync/*' -printf '%P\\n' 2>/dev/null",
+            remote_shell_path(remote_root)
         ),
     ) else {
         return;
@@ -288,12 +301,11 @@ fn ingest_detected_conflicts(
         if !local_file.is_file() {
             continue;
         }
-        let quoted_path = path.replace('\'', "'\\''");
         let Ok(preview) = run_ssh_target(
             target,
             password,
             key_path,
-            &format!("head -c 1048576 '{quoted}/{quoted_path}'"),
+            &format!("head -c 1048576 {}", remote_shell_join(remote_root, &path)),
         ) else {
             continue;
         };
@@ -394,6 +406,67 @@ pub fn lumio_claude_probe_connection(
             distro: None,
             cpu: None,
             memory: None,
+            error_code: Some(code.into()),
+            detail: Some(human_detail(code, &target.host, target.port)),
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn lumio_claude_inspect_remote(
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    remote_root: String,
+) -> ClaudeCommandResult<ClaudeInspectPayload> {
+    let alias = host_alias.as_deref().filter(|v| !v.is_empty());
+    let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
+        Ok(target) => target,
+        Err(code) => {
+            return ClaudeCommandResult::ok(ClaudeInspectPayload {
+                ok: false,
+                exists: false,
+                names: Vec::new(),
+                error_code: Some(code.into()),
+                detail: Some(human_detail(code, host.trim(), port)),
+            });
+        }
+    };
+    match run_ssh_target(
+        &target,
+        password.as_deref(),
+        key_path.as_deref(),
+        &claude_deploy::inspect_remote_script(&remote_root),
+    ) {
+        Ok(output) if output.status.success() => {
+            let (exists, names) =
+                claude_deploy::parse_inspect_output(&String::from_utf8_lossy(&output.stdout));
+            ClaudeCommandResult::ok(ClaudeInspectPayload {
+                ok: true,
+                exists,
+                names,
+                error_code: None,
+                detail: None,
+            })
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let code = classify_ssh_error(&stderr);
+            ClaudeCommandResult::ok(ClaudeInspectPayload {
+                ok: false,
+                exists: false,
+                names: Vec::new(),
+                error_code: Some(code.into()),
+                detail: Some(human_detail(code, &target.host, target.port)),
+            })
+        }
+        Err(code) => ClaudeCommandResult::ok(ClaudeInspectPayload {
+            ok: false,
+            exists: false,
+            names: Vec::new(),
             error_code: Some(code.into()),
             detail: Some(human_detail(code, &target.host, target.port)),
         }),
@@ -716,7 +789,6 @@ pub fn lumio_claude_list_files(
 ) -> ClaudeCommandResult<ClaudeFileTrees> {
     let local =
         claude_files::read_tree(&expand_local_root(&local_root), "local", 8).unwrap_or_default();
-    let quoted = remote_root.replace('\'', "'\\''");
     let remote = match run_ssh(
         host.trim(),
         user.trim(),
@@ -725,7 +797,8 @@ pub fn lumio_claude_list_files(
         key_path.as_deref(),
         host_alias.as_deref(),
         &format!(
-            "find '{quoted}' -mindepth 1 \\( -type d -printf '%P/\\n' -o -printf '%P\\n' \\) 2>/dev/null"
+            "find {} -mindepth 1 \\( -type d -printf '%P/\\n' -o -printf '%P\\n' \\) 2>/dev/null",
+            remote_shell_path(&remote_root)
         ),
     ) {
         Ok(output) if output.status.success() => {
@@ -742,10 +815,8 @@ pub fn lumio_claude_list_files(
         .take(40)
         .collect();
     if !overlap.is_empty() {
-        let quoted = remote_root.replace('\'', "'\\''");
         let mut pairs = Vec::new();
         for path in overlap {
-            let quoted_path = path.replace('\'', "'\\''");
             if let Ok(preview) = run_ssh(
                 host.trim(),
                 user.trim(),
@@ -753,7 +824,7 @@ pub fn lumio_claude_list_files(
                 password.as_deref(),
                 key_path.as_deref(),
                 host_alias.as_deref(),
-                &format!("head -c 1048576 '{quoted}/{quoted_path}'"),
+                &format!("head -c 1048576 {}", remote_shell_join(&remote_root, &path)),
             ) {
                 if preview.status.success() && !preview.stdout.iter().take(512).any(|b| *b == 0) {
                     pairs.push((path, String::from_utf8_lossy(&preview.stdout).into_owned()));
@@ -783,8 +854,6 @@ pub fn lumio_claude_preview_file(
     side: String,
 ) -> ClaudeCommandResult<claude_files::FilePreview> {
     if side == "remote" {
-        let quoted_root = remote_root.replace('\'', "'\\''");
-        let quoted_path = path.replace('\'', "'\\''");
         match run_ssh(
             host.trim(),
             user.trim(),
@@ -792,7 +861,7 @@ pub fn lumio_claude_preview_file(
             password.as_deref(),
             key_path.as_deref(),
             host_alias.as_deref(),
-            &format!("head -c 1048576 '{quoted_root}/{quoted_path}'"),
+            &format!("head -c 1048576 {}", remote_shell_join(&remote_root, &path)),
         ) {
             Ok(output) => ClaudeCommandResult::ok(claude_files::FilePreview {
                 path,
