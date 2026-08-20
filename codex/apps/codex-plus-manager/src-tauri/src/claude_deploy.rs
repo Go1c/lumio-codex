@@ -2,12 +2,14 @@
 
 use crate::claude_files::expand_local_root;
 use crate::claude_ssh::{
-    remote_prepare_mkdir, remote_shell_path, resolve_from_user_config, ssh_invocation_args,
-    ResolvedSshTarget,
+    ResolvedSshTarget, remote_prepare_mkdir, remote_shell_path, resolve_from_user_config,
+    ssh_invocation_args,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub const PREPARE_PROGRESS_EVENT: &str = "lumio://claude-prepare-progress";
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +17,44 @@ pub struct PrepareOutcome {
     pub ok: bool,
     pub error_code: Option<String>,
     pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareProgress {
+    pub phase: String,
+    pub step: u32,
+    pub total: u32,
+    pub detail: String,
+}
+
+impl PrepareProgress {
+    pub fn mkdir() -> Self {
+        Self {
+            phase: "mkdir".into(),
+            step: 2,
+            total: 4,
+            detail: "正在服务器上创建项目目录…".into(),
+        }
+    }
+
+    pub fn upload(index: u32) -> Self {
+        Self {
+            phase: "upload".into(),
+            step: 3,
+            total: 4,
+            detail: format!("正在把同步组件传到服务器（{index} / 2）…"),
+        }
+    }
+
+    pub fn finish() -> Self {
+        Self {
+            phase: "finish".into(),
+            step: 4,
+            total: 4,
+            detail: "正在完成安装…".into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -145,7 +185,9 @@ pub fn deploy_remote(
     remote_root: &str,
     artifacts: &ArtifactPaths,
     run_ssh: impl Fn(&str) -> Result<std::process::Output, &'static str>,
+    mut on_progress: impl FnMut(PrepareProgress),
 ) -> PrepareOutcome {
+    on_progress(PrepareProgress::mkdir());
     let mkdir = remote_prepare_mkdir(remote_root);
     match run_ssh(&mkdir) {
         Ok(output) if output.status.success() => {}
@@ -158,6 +200,7 @@ pub fn deploy_remote(
         }
     }
 
+    on_progress(PrepareProgress::upload(1));
     if scp_file(
         target,
         password,
@@ -166,14 +209,22 @@ pub fn deploy_remote(
         "~/.local/share/bestcodex/bin/fns-server",
     )
     .is_err()
-        || scp_file(
-            target,
-            password,
-            key_path,
-            &artifacts.agent,
-            "~/.local/share/bestcodex/bin/fns-agent",
-        )
-        .is_err()
+    {
+        return PrepareOutcome {
+            ok: false,
+            error_code: Some("SSH_PREPARE_FAILED".into()),
+            detail: Some("没能把同步组件传到服务器。".into()),
+        };
+    }
+    on_progress(PrepareProgress::upload(2));
+    if scp_file(
+        target,
+        password,
+        key_path,
+        &artifacts.agent,
+        "~/.local/share/bestcodex/bin/fns-agent",
+    )
+    .is_err()
     {
         return PrepareOutcome {
             ok: false,
@@ -182,6 +233,7 @@ pub fn deploy_remote(
         };
     }
 
+    on_progress(PrepareProgress::finish());
     let start = format!(
         "chmod 0755 ~/.local/share/bestcodex/bin/fns-server ~/.local/share/bestcodex/bin/fns-agent && mkdir -p {}",
         remote_shell_path(remote_root)
@@ -268,6 +320,54 @@ mod tests {
             !script.contains('"'),
             "inspect must not emit double quotes that break sshd -c wrapping: {script}"
         );
+    }
+
+    #[test]
+    fn prepare_progress_copy_never_says_agent() {
+        for progress in [
+            PrepareProgress::mkdir(),
+            PrepareProgress::upload(1),
+            PrepareProgress::upload(2),
+            PrepareProgress::finish(),
+        ] {
+            assert!(!progress.detail.contains("agent"));
+            assert!(!progress.detail.contains("tmux"));
+        }
+    }
+
+    #[test]
+    fn deploy_emits_progress_before_remote_work() {
+        let local = tempfile::tempdir().unwrap();
+        let server = local.path().join("fns-server");
+        let agent = local.path().join("fns-agent");
+        std::fs::write(&server, vec![0u8; 2048]).unwrap();
+        std::fs::write(&agent, vec![0u8; 2048]).unwrap();
+        let artifacts = ArtifactPaths { server, agent };
+        let target = ResolvedSshTarget {
+            host: "127.0.0.1".into(),
+            user: "root".into(),
+            port: 22,
+            alias: None,
+            use_config: false,
+            identity_file: None,
+        };
+        let mut seen = Vec::new();
+        let outcome = deploy_remote(
+            &target,
+            None,
+            None,
+            "~/bestcodex/my-project",
+            &artifacts,
+            |_| Err("SSH_UNREACHABLE"),
+            |progress| {
+                seen.push((progress.phase.clone(), progress.detail.clone()));
+            },
+        );
+        assert!(!outcome.ok);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "mkdir");
+        assert!(seen[0].1.contains("项目目录"));
+        assert!(seen.iter().all(|(_, detail)| !detail.contains("agent")));
     }
 
     #[test]

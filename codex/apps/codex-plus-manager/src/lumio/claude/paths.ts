@@ -29,3 +29,19 @@ export function remoteProjectRoot(_user: string, name: string): string {
 export function localProjectRoot(name: string): string {
   return `~/BestCodex/${projectSlug(name)}`;
 }
+
+export function folderNameFromPath(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "").trim();
+  const parts = trimmed.split(/[/\\]/).filter((part) => part !== "" && part !== "~");
+  const last = parts[parts.length - 1] ?? "";
+  return projectSlug(last || "my-project");
+}
+
+export function replaceLastSegment(path: string, next: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const sep = trimmed.includes("\\") && !trimmed.includes("/") ? "\\" : "/";
+  const parts = trimmed.split(/[/\\]/);
+  if (parts.length === 0) return next;
+  parts[parts.length - 1] = next;
+  return parts.join(sep);
+}

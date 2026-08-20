@@ -37,6 +37,28 @@ export const CLAUDE_COMMANDS = {
 } as const;
 
 export const CLAUDE_SYNC_PROGRESS_EVENT = "lumio://claude-sync-progress";
+export const CLAUDE_PREPARE_PROGRESS_EVENT = "lumio://claude-prepare-progress";
+
+export function setupPhaseCopy(phase: string, uploadIndex = 1): string {
+  switch (phase) {
+    case "inspect":
+      return "正在检查服务器…";
+    case "mkdir":
+      return "正在服务器上创建项目目录…";
+    case "upload":
+      return uploadIndex === 2
+        ? "正在把同步组件传到服务器（2 / 2）…"
+        : "正在把同步组件传到服务器（1 / 2）…";
+    case "finish":
+      return "正在完成安装…";
+    default:
+      return "正在准备…";
+  }
+}
+
+export function formatSetupElapsed(seconds: number): string {
+  return `已用 ${seconds} 秒`;
+}
 
 export interface ClaudeSshArgs {
   host: string;
