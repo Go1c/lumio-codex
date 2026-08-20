@@ -16,8 +16,38 @@ permissions:
   contents: read
 
 jobs:
+  sync-components:
+    name: Linux x86_64 sync components
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build remote components
+        env:
+          FNS_SERVER_GIT_URL: ${{ vars.FNS_SERVER_GIT_URL }}
+        run: node codex/scripts/sync-components/stage.mjs --build-remote
+      - name: Verify remote components
+        run: node codex/scripts/sync-components/verify.mjs remote codex/target/sync-components/remote-linux-x86_64
+      - name: Upload sync components
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64/
+          if-no-files-found: error
+          retention-days: 1
+
   windows-artifacts:
     name: Windows x64
+    needs: sync-components
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
@@ -86,6 +116,14 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release
+
+      - name: Download sync components
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64
+      - name: Stage sync components
+        run: node scripts/sync-components/stage.mjs
 
       - name: Decide Windows signing mode
         id: sign
@@ -287,6 +325,7 @@ jobs:
 
   macos-dmg:
     name: macOS ${{ matrix.arch }} internal unsigned
+    needs: sync-components
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -327,6 +366,14 @@ jobs:
 
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Download sync components
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-components-linux-x86_64-${{ github.run_number }}
+          path: codex/target/sync-components/remote-linux-x86_64
+      - name: Stage sync components
+        run: node scripts/sync-components/stage.mjs
 
       - name: Build macOS DMG
         run: |
