@@ -41,6 +41,8 @@ export interface ClaudeHostDraft {
   keyPath: string;
   hostAlias: string;
   projectName: string;
+  localRoot: string;
+  remoteRoot: string;
 }
 
 export type ClaudeProbeStatus = "idle" | "running" | "ok" | "fail";
@@ -59,6 +61,15 @@ export interface ClaudeProbeResult {
 }
 
 export type ClaudeSetupStatus = "idle" | "running" | "ok" | "fail" | "choose";
+
+export type ClaudeSetupPhase = "inspect" | "mkdir" | "upload" | "finish";
+
+export interface ClaudeSetupProgress {
+  phase: ClaudeSetupPhase;
+  step: number;
+  total: number;
+  detail: string;
+}
 
 export interface ClaudeRootChoice {
   existingName: string;
@@ -97,6 +108,7 @@ export interface ClaudeConnectSheet {
   probeStatus: ClaudeProbeStatus;
   probe: ClaudeProbeResult | null;
   setupStatus: ClaudeSetupStatus;
+  setupProgress: ClaudeSetupProgress | null;
   setupDetail: string | null;
   setupErrorCode: string | null;
   rootChoice: ClaudeRootChoice | null;
@@ -185,6 +197,13 @@ export type ClaudeEvent =
   | { type: "probe-finished"; result: ClaudeProbeResult }
   | { type: "back-to-host" }
   | { type: "continue-setup" }
+  | {
+      type: "setup-progress";
+      phase: ClaudeSetupPhase;
+      step: number;
+      total: number;
+      detail: string;
+    }
   | {
       type: "setup-choose-root";
       existingName: string;

@@ -1,10 +1,18 @@
+import { open } from "@tauri-apps/plugin-dialog";
 import { type ClipboardEvent, type FormEvent, useEffect, useState } from "react";
 
-import { listClaudeSshHosts, prepareErrorCopy, probeErrorCopy, syncErrorCopy } from "../../claude/api.ts";
+import {
+  formatSetupElapsed,
+  listClaudeSshHosts,
+  prepareErrorCopy,
+  probeErrorCopy,
+  setupPhaseCopy,
+  syncErrorCopy,
+} from "../../claude/api.ts";
 import { HELP_URL } from "../../help.ts";
 import { openInBrowser } from "../../invoke.ts";
 import { CONNECT_STEPS } from "../../claude/machine.ts";
-import { localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
+import { folderNameFromPath, localProjectRoot, remoteProjectRoot } from "../../claude/paths.ts";
 import { cancelClaudeConnect, runConnectProbe, runConnectSetup, runConnectSync } from "../../claude/session.ts";
 import { dispatchClaude, setDraftPassword } from "../../claude/store.ts";
 import type { ClaudeConnectSheet, ClaudeConnectStep, ClaudeSshHost } from "../../claude/types.ts";
@@ -28,10 +36,13 @@ export function ClaudeConnect({
 }) {
   const [password, setPassword] = useState("");
   const [sshHosts, setSshHosts] = useState<ClaudeSshHost[]>([]);
+  const [setupElapsed, setSetupElapsed] = useState(0);
   const draft = sheet.draft;
   const probing = sheet.probeStatus === "running";
-  const remote = remoteProjectRoot(draft.user, draft.projectName);
-  const local = localProjectRoot(draft.projectName);
+  const installing = sheet.setupStatus === "running";
+  const remote = draft.remoteRoot.trim() || remoteProjectRoot(draft.user, draft.projectName);
+  const local = draft.localRoot.trim() || localProjectRoot(draft.projectName);
+  const foldersReady = local !== "" && remote !== "";
   const current = stepIndex(sheet.step);
 
   const onPassword = (value: string) => {
@@ -50,9 +61,28 @@ export function ClaudeConnect({
     void listClaudeSshHosts().then(setSshHosts);
   }, []);
 
+  useEffect(() => {
+    if (!installing) {
+      setSetupElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const tick = window.setInterval(() => {
+      setSetupElapsed(Math.floor((Date.now() - started) / 1000));
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [installing]);
+
   const onHostSubmit = (event: FormEvent) => {
     event.preventDefault();
     void runConnectProbe();
+  };
+
+  const pickLocalFolder = () => {
+    void open({ directory: true, multiple: false, title: "选择本机文件夹" }).then((picked) => {
+      if (typeof picked !== "string") return;
+      dispatchClaude({ type: "draft-updated", draft: { localRoot: picked } });
+    });
   };
 
   return (
@@ -223,6 +253,43 @@ export function ClaudeConnect({
                 }
               />
             </div>
+            {sheet.probeStatus === "ok" ? (
+              <>
+                <p className="lumio-claude-lede">探测通过。选好本机和服务器上的项目目录，再装组件。</p>
+                <label className="lumio-claude-note" htmlFor="lumio-claude-local-root">
+                  本机文件夹
+                </label>
+                <div className="lumio-claude-path-row">
+                  <input
+                    className="lumio-claude-field"
+                    id="lumio-claude-local-root"
+                    onChange={(event) =>
+                      dispatchClaude({ type: "draft-updated", draft: { localRoot: event.target.value } })
+                    }
+                    value={local}
+                  />
+                  <button className="lumio-button is-secondary" onClick={pickLocalFolder} type="button">
+                    选择
+                  </button>
+                </div>
+                <label className="lumio-claude-note" htmlFor="lumio-claude-remote-root">
+                  服务器文件夹
+                </label>
+                <input
+                  className="lumio-claude-field"
+                  id="lumio-claude-remote-root"
+                  onChange={(event) => {
+                    const remoteRoot = event.target.value;
+                    dispatchClaude({
+                      type: "draft-updated",
+                      draft: { remoteRoot, projectName: folderNameFromPath(remoteRoot) },
+                    });
+                  }}
+                  value={remote}
+                />
+                <p className="lumio-claude-quiet">服务器上会建这个目录，并和本机文件夹双向同步。</p>
+              </>
+            ) : null}
             <div className="lumio-claude-actions">
               <button
                 className="lumio-button is-secondary"
@@ -233,7 +300,7 @@ export function ClaudeConnect({
               </button>
               <button
                 className="lumio-button is-primary"
-                disabled={sheet.probeStatus !== "ok"}
+                disabled={sheet.probeStatus !== "ok" || !foldersReady}
                 onClick={() => void runConnectSetup()}
                 type="button"
               >
@@ -310,18 +377,42 @@ export function ClaudeConnect({
           <div>
             <h2 id="lumio-claude-connect-title">安装组件</h2>
             <p className="lumio-claude-lede">在服务器上准备同步环境和项目目录。不用你操作。</p>
+            <p className="lumio-claude-meta">
+              {sheet.setupStatus === "ok"
+                ? "安装完成"
+                : `${sheet.setupProgress ? `第 ${sheet.setupProgress.step} / ${sheet.setupProgress.total} 步 · ` : ""}${sheet.setupProgress?.detail ?? setupPhaseCopy("inspect")} · ${formatSetupElapsed(setupElapsed)}`}
+            </p>
+            <div
+              className={`lumio-claude-progress${installing && (sheet.setupProgress?.phase === "upload" || sheet.setupProgress?.phase === "inspect") ? " is-indeterminate" : ""}`}
+            >
+              <i
+                style={{
+                  width:
+                    sheet.setupStatus === "ok"
+                      ? "100%"
+                      : `${Math.max(8, Math.round(((sheet.setupProgress?.step ?? 1) / (sheet.setupProgress?.total ?? 4)) * 100))}%`,
+                }}
+              />
+            </div>
             <div className="lumio-claude-checks">
               <CheckRow done title="已连上服务器" detail={`${draft.user}@${draft.host || draft.hostAlias}`} />
               <CheckRow
                 done={sheet.setupStatus === "ok"}
-                now={sheet.setupStatus === "running"}
+                now={installing && sheet.setupProgress?.phase !== "mkdir"}
                 title="安装同步组件"
-                detail="自动完成，无需操作"
+                detail={
+                  sheet.setupStatus === "ok"
+                    ? "已传到服务器"
+                    : sheet.setupProgress?.phase === "mkdir"
+                      ? "等待上传"
+                      : (sheet.setupProgress?.detail ?? "正在准备…")
+                }
               />
               <CheckRow
-                done={sheet.setupStatus === "ok"}
+                done={sheet.setupStatus === "ok" || sheet.setupProgress?.phase === "upload" || sheet.setupProgress?.phase === "finish"}
+                now={installing && sheet.setupProgress?.phase === "mkdir"}
                 title="创建项目目录"
-                detail={`${remote || `~/bestcodex/${draft.projectName}`} · 本机 ${local || `~/BestCodex/${draft.projectName}`}`}
+                detail={`${remote} · 本机 ${local}`}
               />
             </div>
             <div className="lumio-claude-actions">
@@ -333,12 +424,14 @@ export function ClaudeConnect({
                 取消
               </button>
               <button
-                className="lumio-button is-primary"
+                aria-busy={installing}
+                className={`lumio-button is-primary${installing ? " is-busy" : ""}`}
                 disabled={sheet.setupStatus !== "ok"}
                 onClick={() => void runConnectSync()}
                 type="button"
               >
-                开始首次同步
+                {installing ? <i aria-hidden="true" className="lumio-button-spinner" /> : null}
+                {installing ? "正在安装…" : "开始首次同步"}
               </button>
             </div>
           </div>

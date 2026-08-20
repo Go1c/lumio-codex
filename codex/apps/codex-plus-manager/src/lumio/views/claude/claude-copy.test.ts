@@ -84,14 +84,18 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /IP 是否抄对/);
   assert.match(source, /密码是否正确/);
   assert.match(source, /安全组是否放行 22/);
-  assert.match(source, /~\/bestcodex\//);
-  assert.match(source, /~\/BestCodex\//);
+  const paths = await readFile(new URL("../../claude/paths.ts", import.meta.url), "utf8");
+  assert.match(paths, /~\/bestcodex\//);
+  assert.match(paths, /~\/BestCodex\//);
   assert.match(source, /SSH 配置|Host 别名|配置别名/);
   assert.match(source, /setupStatus === "fail"/);
   assert.match(source, /服务器上已有这个项目/);
   assert.match(source, /继续使用/);
   assert.match(source, /新建 /);
   assert.match(source, /sync\.state === "fail"/);
+  assert.match(source, /本机文件夹/);
+  assert.match(source, /服务器文件夹/);
+  assert.match(source, /选择本机文件夹/);
   assert.doesNotMatch(source, /当作完成/);
   assert.doesNotMatch(source, /懂 SSH 再用/);
 });
@@ -116,6 +120,19 @@ test("user-visible Claude copy never says agent or tmux", async () => {
     assert.doesNotMatch(visible, /\bagent\b/i, `${rel} leaked agent`);
     assert.doesNotMatch(visible, /\btmux\b/i, `${rel} leaked tmux`);
   }
+});
+
+test("the terminal copies locally and opens login links in the system browser", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  const logic = await readFile(new URL("../../claude/terminal-clipboard.ts", import.meta.url), "utf8");
+  assert.match(home, /onContextMenu/);
+  assert.match(home, /复制/);
+  assert.match(home, /用浏览器打开/);
+  assert.match(home, /openInBrowser/);
+  assert.match(home, /attachCustomKeyEventHandler/);
+  assert.match(home, /copyTextForKey/);
+  assert.match(logic, /stitchWrappedHttpsUrls/);
+  assert.doesNotMatch(home, /window\.open/);
 });
 
 test("the workspace shows files and conflicts tabs next to the terminal", async () => {
@@ -157,6 +174,24 @@ test("empty and home surfaces show remaining subscription days from the server",
   assert.match(copy, /剩余/);
   assert.match(`${empty}\n${home}`, /ClaudeEntitlementLine/);
   assert.match(line, /即将到期/);
+});
+
+test("setup shows live progress instead of a silent automatic step", async () => {
+  const connect = await readView("ClaudeConnect.tsx");
+  const api = await readFile(new URL("../../claude/api.ts", import.meta.url), "utf8");
+  const session = await readFile(new URL("../../claude/session.ts", import.meta.url), "utf8");
+  assert.match(connect, /setupProgress/);
+  assert.match(connect, /lumio-claude-progress/);
+  assert.match(connect, /formatSetupElapsed/);
+  assert.match(connect, /正在安装…/);
+  assert.doesNotMatch(connect, /自动完成，无需操作/);
+  assert.match(api, /CLAUDE_PREPARE_PROGRESS_EVENT/);
+  assert.match(api, /已用/);
+  assert.match(api, /正在检查服务器/);
+  assert.match(api, /正在把同步组件传到服务器/);
+  assert.match(session, /CLAUDE_PREPARE_PROGRESS_EVENT/);
+  assert.match(session, /setup-progress/);
+  assert.match(session, /ensureClaudeEngineBridge/);
 });
 
 test("artifact-missing blames the build, not the machine or the connection", async () => {

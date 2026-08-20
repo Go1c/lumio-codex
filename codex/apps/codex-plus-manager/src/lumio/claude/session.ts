@@ -13,9 +13,10 @@ import {
   hasClaudeEntitlement,
   resolveClaudeEntitlement,
 } from "./entitlement.ts";
-import { createProjectFromDraft, decideRemoteProjectRoot, sshFieldsForProbe } from "./machine.ts";
-import { projectSlug, remoteProjectRoot } from "./paths.ts";
+import { createProjectFromDraft, nextProjectName, sshFieldsForProbe } from "./machine.ts";
+import { folderNameFromPath, remoteProjectRoot, replaceLastSegment } from "./paths.ts";
 import {
+  CLAUDE_PREPARE_PROGRESS_EVENT,
   CLAUDE_SYNC_PROGRESS_EVENT,
   firstClaudeSync,
   inspectClaudeRemote,
@@ -77,6 +78,21 @@ let syncBridgeStarted = false;
 export function ensureClaudeEngineBridge(): void {
   if (syncBridgeStarted) return;
   syncBridgeStarted = true;
+  void subscribeClaudeEvent<{
+    phase: "inspect" | "mkdir" | "upload" | "finish";
+    step: number;
+    total: number;
+    detail: string;
+  }>(CLAUDE_PREPARE_PROGRESS_EVENT, (payload) => {
+    if (getClaudeState().sheet === null) return;
+    dispatchClaude({
+      type: "setup-progress",
+      phase: payload.phase,
+      step: payload.step,
+      total: payload.total,
+      detail: payload.detail,
+    });
+  });
   void subscribeClaudeEvent<{
     filesDone: number;
     filesTotal: number;
@@ -217,18 +233,25 @@ export async function runConnectSetup(decision?: "use" | "create"): Promise<void
   const sheet = getClaudeState().sheet;
   const args = sshFromDraft();
   if (sheet === null || args === null) return;
+  ensureClaudeEngineBridge();
 
   let draft = sheet.draft;
   if (decision === "create" && sheet.rootChoice) {
-    draft = { ...draft, projectName: sheet.rootChoice.nextName };
-    dispatchClaude({ type: "draft-updated", draft: { projectName: draft.projectName } });
+    draft = {
+      ...draft,
+      projectName: sheet.rootChoice.nextName,
+      remoteRoot: sheet.rootChoice.nextRoot,
+    };
+    dispatchClaude({
+      type: "draft-updated",
+      draft: { projectName: draft.projectName, remoteRoot: draft.remoteRoot },
+    });
   }
 
   dispatchClaude({ type: "continue-setup" });
 
   if (decision === undefined) {
-    const desired = projectSlug(draft.projectName);
-    const remoteRoot = remoteProjectRoot(draft.user, desired);
+    const remoteRoot = draft.remoteRoot.trim() || remoteProjectRoot(draft.user, draft.projectName);
     const inspected = await inspectClaudeRemote({ ...args, remoteRoot });
     if (!inspected.ok) {
       dispatchClaude({
@@ -239,18 +262,15 @@ export async function runConnectSetup(decision?: "use" | "create"): Promise<void
       });
       return;
     }
-    const names =
-      inspected.exists && !inspected.names.includes(desired)
-        ? [...inspected.names, desired]
-        : inspected.names;
-    const choice = decideRemoteProjectRoot(desired, names);
-    if (choice.action === "choose") {
+    if (inspected.exists) {
+      const existingName = folderNameFromPath(remoteRoot);
+      const nextName = nextProjectName([existingName, ...inspected.names], existingName);
       dispatchClaude({
         type: "setup-choose-root",
-        existingName: choice.existingName,
-        existingRoot: remoteProjectRoot(draft.user, choice.existingName),
-        nextName: choice.nextName,
-        nextRoot: remoteProjectRoot(draft.user, choice.nextName),
+        existingName,
+        existingRoot: remoteRoot,
+        nextName,
+        nextRoot: replaceLastSegment(remoteRoot, nextName),
       });
       return;
     }

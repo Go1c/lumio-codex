@@ -3,8 +3,8 @@
 //! Switching Codex / Claude tabs, or selecting another project, must not kill
 //! other projects' sessions. User-visible errors never mention the session tool.
 
-use crate::claude_ssh::{remote_shell_path, ssh_invocation_args, AskpassGuard, ResolvedSshTarget};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use crate::claude_ssh::{AskpassGuard, ResolvedSshTarget, remote_shell_path, ssh_invocation_args};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
@@ -214,7 +214,10 @@ mod tests {
     fn remote_command_quotes_the_project_root() {
         let command = TerminalManager::remote_command("my project", "~/bestcodex/my-project");
         assert!(command.contains("~/'bestcodex/my-project'"));
-        assert!(!command.contains('"'), "tilde path must not add double quotes");
+        assert!(
+            !command.contains('"'),
+            "tilde path must not add double quotes"
+        );
         assert!(command.contains("'my-project'"));
     }
 }

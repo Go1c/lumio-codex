@@ -15,10 +15,10 @@ use crate::claude_conflicts::{self, ConflictStore, Resolution};
 use crate::claude_deploy;
 use crate::claude_files::{self, expand_local_root};
 use crate::claude_ssh::{
-    parse_ssh_config, remote_shell_join, remote_shell_path, resolve_from_user_config,
-    ssh_invocation_args, ResolvedSshTarget, SshHost,
+    ResolvedSshTarget, SshHost, parse_ssh_config, remote_shell_join, remote_shell_path,
+    resolve_from_user_config, ssh_invocation_args,
 };
-use crate::claude_sync::{self, SyncEngine, SyncProgress, SYNC_PROGRESS_EVENT};
+use crate::claude_sync::{self, SYNC_PROGRESS_EVENT, SyncEngine, SyncProgress};
 use crate::claude_terminal::TerminalManager;
 use crate::claude_tunnel::TunnelManager;
 
@@ -428,7 +428,31 @@ pub fn lumio_claude_probe_connection(
 }
 
 #[tauri::command]
-pub fn lumio_claude_inspect_remote(
+pub async fn lumio_claude_inspect_remote(
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    remote_root: String,
+) -> ClaudeCommandResult<ClaudeInspectPayload> {
+    tauri::async_runtime::spawn_blocking(move || {
+        inspect_remote_inner(
+            host,
+            user,
+            port,
+            password,
+            key_path,
+            host_alias,
+            remote_root,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| ClaudeCommandResult::failed("SSH_PREPARE_FAILED"))
+}
+
+fn inspect_remote_inner(
     host: String,
     user: String,
     port: u16,
@@ -489,7 +513,35 @@ pub fn lumio_claude_inspect_remote(
 }
 
 #[tauri::command]
-pub fn lumio_claude_prepare_remote(
+pub async fn lumio_claude_prepare_remote(
+    app: AppHandle,
+    host: String,
+    user: String,
+    port: u16,
+    password: Option<String>,
+    key_path: Option<String>,
+    host_alias: Option<String>,
+    remote_root: String,
+    local_root: String,
+) -> ClaudeCommandResult<ClaudePreparePayload> {
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_remote_inner(
+            app,
+            host,
+            user,
+            port,
+            password,
+            key_path,
+            host_alias,
+            remote_root,
+            local_root,
+        )
+    })
+    .await
+    .unwrap_or_else(|_| ClaudeCommandResult::failed("SSH_PREPARE_FAILED"))
+}
+
+fn prepare_remote_inner(
     app: AppHandle,
     host: String,
     user: String,
@@ -539,6 +591,7 @@ pub fn lumio_claude_prepare_remote(
             )),
         });
     };
+    let app_progress = app.clone();
     let outcome = claude_deploy::deploy_remote(
         &target,
         password.as_deref(),
@@ -546,6 +599,9 @@ pub fn lumio_claude_prepare_remote(
         &remote_root,
         &artifacts,
         |remote| run_ssh_target(&target, password.as_deref(), key_path.as_deref(), remote),
+        |progress| {
+            let _ = app_progress.emit(claude_deploy::PREPARE_PROGRESS_EVENT, progress);
+        },
     );
     ClaudeCommandResult::ok(ClaudePreparePayload {
         ok: outcome.ok,
@@ -1068,9 +1124,7 @@ mod tests {
             "SSH_UNREACHABLE"
         );
         assert_eq!(
-            classify_ssh_error(
-                "bash: -c: line 1: syntax error near unexpected token `-o'"
-            ),
+            classify_ssh_error("bash: -c: line 1: syntax error near unexpected token `-o'"),
             "SSH_PROBE_FAILED",
             "leftover ssh flags after inspect must not be misread as auth or a missing client"
         );
@@ -1103,7 +1157,10 @@ mod tests {
     }
 
     fn assert_options_before_destination(args: &[String], dest: &str, remote: &str) {
-        let dest_at = args.iter().position(|arg| arg == dest).expect("destination");
+        let dest_at = args
+            .iter()
+            .position(|arg| arg == dest)
+            .expect("destination");
         assert_eq!(args.last().map(String::as_str), Some(remote));
         assert!(
             args[dest_at + 1..].iter().all(|arg| arg == remote),
@@ -1111,7 +1168,8 @@ mod tests {
         );
         assert!(
             args[..dest_at].windows(2).any(|pair| {
-                pair[0] == "-o" && (pair[1] == "BatchMode=yes" || pair[1].starts_with("ConnectTimeout="))
+                pair[0] == "-o"
+                    && (pair[1] == "BatchMode=yes" || pair[1].starts_with("ConnectTimeout="))
             }),
             "options must stay before {dest}: {args:?}"
         );
