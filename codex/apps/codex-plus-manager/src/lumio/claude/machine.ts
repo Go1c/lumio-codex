@@ -49,6 +49,8 @@ export function emptyHostDraft(): ClaudeHostDraft {
     keyPath: "",
     hostAlias: "",
     projectName: "my-project",
+    localRoot: localProjectRoot("my-project"),
+    remoteRoot: remoteProjectRoot("root", "my-project"),
   };
 }
 
@@ -66,10 +68,16 @@ export function sshFieldsForProbe(draft: ClaudeHostDraft): ClaudeHostDraft {
 function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
   return {
     step: "host",
-    draft: { ...emptyHostDraft(), projectName },
+    draft: {
+      ...emptyHostDraft(),
+      projectName,
+      localRoot: localProjectRoot(projectName),
+      remoteRoot: remoteProjectRoot("root", projectName),
+    },
     probeStatus: "idle",
     probe: null,
     setupStatus: "idle",
+    setupProgress: null,
     setupDetail: null,
     setupErrorCode: null,
     rootChoice: null,
@@ -157,8 +165,8 @@ export function createProjectFromDraft(
     auth: draft.auth,
     keyPath: draft.keyPath.trim() === "" ? null : draft.keyPath.trim(),
     hostAlias: draft.hostAlias.trim() === "" ? null : draft.hostAlias.trim(),
-    remoteRoot: remoteProjectRoot(draft.user, name),
-    localRoot: localProjectRoot(name),
+    remoteRoot: draft.remoteRoot.trim() || remoteProjectRoot(draft.user, name),
+    localRoot: draft.localRoot.trim() || localProjectRoot(name),
     createdAt,
   };
 }
@@ -237,7 +245,27 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
           ...state.sheet,
           step: "setup",
           setupStatus: "running",
+          setupProgress: {
+            phase: "inspect",
+            step: 1,
+            total: 4,
+            detail: "正在检查服务器…",
+          },
           rootChoice: null,
+        },
+      };
+    case "setup-progress":
+      if (state.sheet === null || state.sheet.setupStatus !== "running") return state;
+      return {
+        ...state,
+        sheet: {
+          ...state.sheet,
+          setupProgress: {
+            phase: event.phase,
+            step: event.step,
+            total: event.total,
+            detail: event.detail,
+          },
         },
       };
     case "setup-choose-root":

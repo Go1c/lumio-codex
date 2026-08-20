@@ -72,6 +72,30 @@ fn lumio_builder_registers_only_the_lumio_allowlist() {
 }
 
 #[test]
+fn prepare_and_inspect_leave_the_ui_thread() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source =
+        fs::read_to_string(root.join("src/claude_commands.rs")).expect("claude_commands.rs");
+    for name in [
+        "pub async fn lumio_claude_inspect_remote",
+        "pub async fn lumio_claude_prepare_remote",
+    ] {
+        assert!(
+            source.contains(name),
+            "{name} must be async so SCP/SSH cannot freeze the window"
+        );
+    }
+    let prepare = source
+        .split("pub async fn lumio_claude_prepare_remote")
+        .nth(1)
+        .expect("prepare command");
+    assert!(
+        prepare.contains("spawn_blocking"),
+        "prepare must run SCP off the UI thread"
+    );
+}
+
+#[test]
 fn every_registered_command_uses_the_lumio_prefix() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join("src/lib.rs")).expect("lib.rs");

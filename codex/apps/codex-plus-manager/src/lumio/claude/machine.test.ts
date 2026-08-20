@@ -321,6 +321,56 @@ test("an existing remote folder pauses setup so the user can choose", () => {
   assert.equal(state.projects.length, 0);
 });
 
+test("continue-setup starts on the inspect phase so the sheet is not silent", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "continue-setup" },
+  ]);
+  assert.equal(state.sheet?.setupStatus, "running");
+  assert.equal(state.sheet?.setupProgress?.phase, "inspect");
+  assert.equal(state.sheet?.setupProgress?.step, 1);
+  assert.match(state.sheet?.setupProgress?.detail ?? "", /正在检查服务器/);
+});
+
+test("setup progress updates the live install phase without leaving running", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "continue-setup" },
+    {
+      type: "setup-progress",
+      phase: "upload",
+      step: 3,
+      total: 4,
+      detail: "正在把同步组件传到服务器（1 / 2）…",
+    },
+  ]);
+  assert.equal(state.sheet?.step, "setup");
+  assert.equal(state.sheet?.setupStatus, "running");
+  assert.equal(state.sheet?.setupProgress?.phase, "upload");
+  assert.equal(state.sheet?.setupProgress?.step, 3);
+  assert.equal(state.sheet?.setupProgress?.detail, "正在把同步组件传到服务器（1 / 2）…");
+});
+
+test("setup progress is ignored after setup has already finished", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "continue-setup" },
+    { type: "setup-finished", ok: true },
+    {
+      type: "setup-progress",
+      phase: "upload",
+      step: 3,
+      total: 4,
+      detail: "正在把同步组件传到服务器（2 / 2）…",
+    },
+  ]);
+  assert.equal(state.sheet?.setupStatus, "ok");
+  assert.notEqual(state.sheet?.setupProgress?.phase, "upload");
+});
+
 test("prepare failure does not advance the sheet to sync", () => {
   const state = apply([
     { type: "entitlement-resolved", entitlement: entitled },
@@ -404,12 +454,8 @@ test("local SSH connect mode keeps the host alias without requiring an IP", () =
 test("createProjectFromDraft writes BestCodex directory presets", () => {
   const created = createProjectFromDraft(
     {
+      ...emptyHostDraft(),
       host: "43.156.20.8",
-      user: "root",
-      port: 22,
-      auth: "password",
-      keyPath: "",
-      hostAlias: "",
       projectName: "my-project",
     },
     "proj-1",
@@ -417,4 +463,19 @@ test("createProjectFromDraft writes BestCodex directory presets", () => {
   );
   assert.equal(created.remoteRoot, "~/bestcodex/my-project");
   assert.equal(created.localRoot, "~/BestCodex/my-project");
+});
+
+test("createProjectFromDraft keeps user-chosen folders", () => {
+  const created = createProjectFromDraft(
+    {
+      ...emptyHostDraft(),
+      projectName: "shop",
+      localRoot: "/Users/me/code/shop",
+      remoteRoot: "~/sites/shop",
+    },
+    "proj-2",
+    "2026-08-16T00:00:00.000Z",
+  );
+  assert.equal(created.localRoot, "/Users/me/code/shop");
+  assert.equal(created.remoteRoot, "~/sites/shop");
 });

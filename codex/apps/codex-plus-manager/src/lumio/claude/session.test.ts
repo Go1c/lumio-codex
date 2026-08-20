@@ -23,6 +23,13 @@ test("canceling connect does not leave a project in the store", () => {
   assert.equal(getClaudeState().page, "empty");
 });
 
+test("setup inspect uses the user-chosen remote folder", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /draft\.remoteRoot/);
+  assert.match(source, /replaceLastSegment/);
+  assert.doesNotMatch(source, /const remoteRoot = remoteProjectRoot\(draft\.user, desired\)/);
+});
+
 test("SYNC_ENGINE_UNAVAILABLE is not a keep-project success", async () => {
   resetClaudeStore();
   dispatchClaude({ type: "entitlement-resolved", entitlement: { status: "active", source: "local" } });
