@@ -376,6 +376,8 @@
 
 .lumio-claude-check.is-now i {
   background: var(--cc-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--cc-accent) 28%, transparent);
+  animation: lumio-claude-pulse 1s ease-in-out infinite;
 }
 
 .lumio-claude-check.is-done i {
@@ -721,6 +723,12 @@
   color: #8e8e93;
   font-size: 11px;
   line-height: 28px;
+}
+
+@keyframes lumio-claude-pulse {
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--cc-accent) 0%, transparent);
+  }
 }
 
 @media (max-width: 720px) {

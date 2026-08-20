@@ -29,6 +29,7 @@ export function ClaudeConnect({
   const [password, setPassword] = useState("");
   const [sshHosts, setSshHosts] = useState<ClaudeSshHost[]>([]);
   const draft = sheet.draft;
+  const probing = sheet.probeStatus === "running";
   const remote = remoteProjectRoot(draft.user, draft.projectName);
   const local = localProjectRoot(draft.projectName);
   const current = stepIndex(sheet.step);
@@ -76,6 +77,7 @@ export function ClaudeConnect({
               <button
                 aria-selected={draft.auth !== "config"}
                 className={draft.auth !== "config" ? "is-on" : ""}
+                disabled={probing}
                 onClick={() => dispatchClaude({ type: "draft-updated", draft: { auth: "password" } })}
                 role="tab"
                 type="button"
@@ -85,6 +87,7 @@ export function ClaudeConnect({
               <button
                 aria-selected={draft.auth === "config"}
                 className={draft.auth === "config" ? "is-on" : ""}
+                disabled={probing}
                 onClick={() => dispatchClaude({ type: "draft-updated", draft: { auth: "config" } })}
                 role="tab"
                 type="button"
@@ -100,6 +103,7 @@ export function ClaudeConnect({
                 </label>
                 <input
                   className="lumio-claude-field"
+                  disabled={probing}
                   id="lumio-claude-alias"
                   list="lumio-claude-alias-list"
                   onChange={(event) => {
@@ -137,6 +141,7 @@ export function ClaudeConnect({
                 <input
                   autoComplete="off"
                   className="lumio-claude-field"
+                  disabled={probing}
                   id="lumio-claude-host"
                   onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { host: event.target.value } })}
                   onPaste={onHostPaste}
@@ -147,6 +152,7 @@ export function ClaudeConnect({
                 </label>
                 <input
                   className="lumio-claude-field"
+                  disabled={probing}
                   id="lumio-claude-user"
                   onChange={(event) => dispatchClaude({ type: "draft-updated", draft: { user: event.target.value } })}
                   value={draft.user}
@@ -157,6 +163,7 @@ export function ClaudeConnect({
                 <input
                   autoComplete="off"
                   className="lumio-claude-field"
+                  disabled={probing}
                   id="lumio-claude-pass"
                   onChange={(event) => onPassword(event.target.value)}
                   type="password"
@@ -175,8 +182,14 @@ export function ClaudeConnect({
               >
                 取消
               </button>
-              <button className="lumio-button is-primary" type="submit">
-                探测连接
+              <button
+                aria-busy={probing}
+                className={`lumio-button is-primary${probing ? " is-busy" : ""}`}
+                disabled={probing}
+                type="submit"
+              >
+                {probing ? <i aria-hidden="true" className="lumio-button-spinner" /> : null}
+                {probing ? "正在探测…" : "探测连接"}
               </button>
             </div>
           </form>
@@ -254,8 +267,15 @@ export function ClaudeConnect({
               >
                 返回修改
               </button>
-              <button className="lumio-button is-primary" onClick={() => void runConnectProbe()} type="button">
-                重试
+              <button
+                aria-busy={probing}
+                className={`lumio-button is-primary${probing ? " is-busy" : ""}`}
+                disabled={probing}
+                onClick={() => void runConnectProbe()}
+                type="button"
+              >
+                {probing ? <i aria-hidden="true" className="lumio-button-spinner" /> : null}
+                {probing ? "正在探测…" : "重试"}
               </button>
             </div>
           </div>

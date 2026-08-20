@@ -205,8 +205,9 @@ export function cancelClaudeConnect(): void {
 }
 
 export async function runConnectProbe(): Promise<void> {
+  const sheet = getClaudeState().sheet;
   const args = sshFromDraft();
-  if (args === null) return;
+  if (sheet === null || args === null || sheet.probeStatus === "running") return;
   dispatchClaude({ type: "probe-started" });
   const result = await probeClaudeConnection(args);
   dispatchClaude({ type: "probe-finished", result });
