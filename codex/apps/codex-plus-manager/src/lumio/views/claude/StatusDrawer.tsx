@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   formatCapturedClock,
@@ -6,8 +6,100 @@ import {
   serviceDisplayName,
 } from "../../claude/remote-status.ts";
 import { fetchClaudeServerStatus, fetchClaudeSessions } from "../../claude/session.ts";
-import { dispatchClaude } from "../../claude/store.ts";
-import type { ClaudeServerStatus, ClaudeSessionsSnapshot } from "../../claude/types.ts";
+import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
+import type {
+  ClaudeServerStatus,
+  ClaudeSessionsSnapshot,
+  ClaudeState,
+  ClaudeStatusDrawerPane,
+} from "../../claude/types.ts";
+import { ConflictsPane } from "./ConflictsPane.tsx";
+import { liveSessionRows, sessionRowStatus, sessionTitleCopy } from "./status-copy.ts";
+
+const EMPTY_CONFLICTS: ClaudeState["conflictsByProject"][string] = [];
+
+export function StatusDrawer({ state: stateProp }: { state?: ClaudeState } = {}) {
+  const stored = useSyncExternalStore(subscribeClaudeStore, getClaudeState, getClaudeState);
+  const state = stateProp ?? stored;
+  const pane = state.statusDrawer;
+  if (pane === "closed") return null;
+
+  const active =
+    state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0] ?? null;
+  const conflicts = active ? (state.conflictsByProject[active.id] ?? EMPTY_CONFLICTS) : EMPTY_CONFLICTS;
+  const rows = liveSessionRows(state.projects, state.sessionsByProject);
+  const activeSessionId = active ? (state.activeSessionByProject[active.id] ?? null) : null;
+
+  const open = (next: ClaudeStatusDrawerPane) => {
+    dispatchClaude({ type: "set-status-drawer", pane: next });
+  };
+
+  return (
+    <div className="lumio-claude-drawer">
+      <div className="lumio-claude-drawer-tabs">
+        <button className={pane === "server" ? "is-on" : ""} onClick={() => open("server")} type="button">服务器状态</button>
+        <button className={pane === "sessions" ? "is-on" : ""} onClick={() => open("sessions")} type="button">对话状态</button>
+        <button className={pane === "conflicts" ? "is-on" : ""} onClick={() => open("conflicts")} type="button">冲突</button>
+        <button className="close" onClick={() => open("closed")} type="button">收起 ✕</button>
+      </div>
+      {pane === "server" ? (
+        active ? (
+          <ServerStatusPane projectId={active.id} />
+        ) : (
+          <div className="lumio-claude-drawer-body">
+            <p className="dim">还没有项目</p>
+          </div>
+        )
+      ) : null}
+      {pane === "sessions" ? (
+        <div className="lumio-claude-drawer-body" aria-label="对话状态">
+          {rows.length === 0 ? (
+            <p className="dim">暂无对话。</p>
+          ) : (
+            <table className="lumio-claude-status-table">
+              <thead>
+                <tr>
+                  <th>项目</th>
+                  <th>标题</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={`${row.projectId}:${row.session.id}`}>
+                    <td>{row.projectName}</td>
+                    <td>{sessionTitleCopy(row.session)}</td>
+                    <td>
+                      {sessionRowStatus(row.session, {
+                        activeProjectId: state.activeProjectId,
+                        activeSessionId,
+                      })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {active ? (
+            <section className="lumio-claude-status-card">
+              <h3>这台服务器上的对话</h3>
+              <SessionsPane projectId={active.id} />
+            </section>
+          ) : null}
+        </div>
+      ) : null}
+      {pane === "conflicts" ? (
+        active ? (
+          <ConflictsPane conflicts={conflicts} projectId={active.id} />
+        ) : (
+          <div className="lumio-claude-drawer-body">
+            <p>暂无冲突。远端和本机的改动不会被静默覆盖。</p>
+          </div>
+        )
+      ) : null}
+    </div>
+  );
+}
 
 export function ServerStatusPane({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ClaudeServerStatus | null>(null);

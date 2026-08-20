@@ -15,9 +15,9 @@
 .lumio-claude-status-card {
   margin-bottom: 12px;
   padding: 12px 14px;
-  border: 1px solid rgb(255 255 255 / 8%);
+  border: 1px solid var(--cc-line, rgb(255 255 255 / 8%));
   border-radius: 10px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--cc-grouped, rgb(255 255 255 / 4%));
 }
 
 .lumio-claude-status-card h3 {
@@ -26,7 +26,7 @@
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #8e8e93;
+  color: var(--cc-ink-3, #8e8e93);
 }
 
 .lumio-claude-metrics {
@@ -41,7 +41,7 @@
 }
 
 .lumio-claude-metrics span {
-  color: #8e8e93;
+  color: var(--cc-ink-2, #8e8e93);
   font-size: 12px;
 }
 
@@ -50,14 +50,14 @@
   height: 8px;
   margin-top: 10px;
   border-radius: 99px;
-  background: rgb(255 255 255 / 8%);
+  background: var(--cc-field, rgb(255 255 255 / 8%));
 }
 
 .lumio-claude-meter > i {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #0a84ff;
+  background: var(--cc-accent, #0a84ff);
 }
 
 .lumio-claude-status-table {
@@ -73,6 +73,75 @@
 }
 
 .lumio-claude-status-table th {
-  color: #8e8e93;
+  color: var(--cc-ink-3, #8e8e93);
   font-weight: 560;
+}
+
+/* 抽屉：从底栏升起，承载塞不进小字的表格和差异对比。 */
+.lumio-claude-drawer {
+  position: absolute;
+  right: 0;
+  bottom: 26px;
+  left: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-rows: 38px minmax(0, 1fr);
+  height: 62%;
+  border-top: 1px solid var(--cc-line);
+  background: var(--cc-bg-elev);
+  box-shadow: 0 -18px 40px rgb(20 24 32 / 14%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .lumio-claude-drawer {
+    box-shadow: 0 -18px 40px rgb(0 0 0 / 50%);
+  }
+}
+
+.lumio-claude-drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--cc-line);
+  font-size: 12px;
+}
+
+.lumio-claude-drawer-tabs button {
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cc-ink-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lumio-claude-drawer-tabs button:hover {
+  background: var(--cc-field);
+  color: var(--cc-ink);
+}
+
+.lumio-claude-drawer-tabs button.is-on {
+  background: var(--cc-field);
+  color: var(--cc-ink);
+  font-weight: 560;
+}
+
+.lumio-claude-drawer-tabs .close {
+  margin-left: auto;
+  color: var(--cc-ink-3);
+}
+
+.lumio-claude-drawer-body {
+  min-height: 0;
+  padding: 14px 16px;
+  overflow: auto;
+}
+
+.lumio-claude-drawer .lumio-claude-status-pane,
+.lumio-claude-drawer .lumio-claude-conflicts,
+.lumio-claude-drawer .lumio-claude-files {
+  min-height: 0;
+  height: 100%;
 }

@@ -1,10 +1,83 @@
+/* 底栏：唯一的状态出口。全是小字，点哪段升哪个抽屉。 */
 .lumio-claude-status {
   display: flex;
-  justify-content: space-between;
-  padding: 0 14px;
-  border-top: 1px solid rgb(255 255 255 / 7%);
-  background: #101117;
-  color: #8e8e93;
+  align-items: center;
+  gap: 12px;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--cc-line);
+  background: color-mix(in srgb, var(--cc-glass) 78%, transparent);
+  backdrop-filter: blur(18px);
+  color: var(--cc-ink-2);
   font-size: 11px;
-  line-height: 28px;
+  line-height: 25px;
+}
+
+.lumio-claude-status-sep {
+  color: var(--cc-ink-3);
+  opacity: 0.5;
+}
+
+.lumio-claude-status-grow {
+  flex: 1;
+}
+
+.lumio-claude-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lumio-claude-status button:hover {
+  background: var(--cc-field);
+  color: var(--cc-ink);
+}
+
+.lumio-claude-status .is-ok {
+  color: var(--cc-ok);
+  font-weight: 560;
+}
+
+.lumio-claude-status .is-warn {
+  color: var(--warn, #ff9f0a);
+  font-weight: 560;
+}
+
+.lumio-claude-status .is-bad {
+  color: var(--cc-danger);
+  font-weight: 560;
+}
+
+.lumio-claude-status-host {
+  color: var(--cc-ink-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.lumio-claude-status-flag {
+  padding: 0 6px;
+  border-radius: 99px;
+  background: rgba(255, 59, 48, 0.14);
+  color: #c43128;
+  font-weight: 590;
+}
+
+@media (prefers-color-scheme: dark) {
+  .lumio-claude-status-flag {
+    color: #ff8a80;
+  }
+}
+
+.lumio-claude-status-nudge {
+  padding: 0 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--cc-accent) 16%, transparent);
+  color: var(--cc-accent);
+  font-weight: 560;
 }
