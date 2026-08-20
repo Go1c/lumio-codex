@@ -228,6 +228,10 @@
   font-size: 14px;
 }
 
+.lumio-claude-choice {
+  padding: 4px 0 0;
+}
+
 .lumio-claude-mode-tabs {
   display: inline-flex;
   margin: 0 0 14px;

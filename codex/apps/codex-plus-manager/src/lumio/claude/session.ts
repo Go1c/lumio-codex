@@ -13,10 +13,12 @@ import {
   hasClaudeEntitlement,
   resolveClaudeEntitlement,
 } from "./entitlement.ts";
-import { createProjectFromDraft, sshFieldsForProbe } from "./machine.ts";
+import { createProjectFromDraft, decideRemoteProjectRoot, sshFieldsForProbe } from "./machine.ts";
+import { projectSlug, remoteProjectRoot } from "./paths.ts";
 import {
   CLAUDE_SYNC_PROGRESS_EVENT,
   firstClaudeSync,
+  inspectClaudeRemote,
   listClaudeConflicts,
   listClaudeFiles,
   openClaudeSystemTerminal,
@@ -210,12 +212,50 @@ export async function runConnectProbe(): Promise<void> {
   dispatchClaude({ type: "probe-finished", result });
 }
 
-export async function runConnectSetup(): Promise<void> {
+export async function runConnectSetup(decision?: "use" | "create"): Promise<void> {
   const sheet = getClaudeState().sheet;
   const args = sshFromDraft();
   if (sheet === null || args === null) return;
+
+  let draft = sheet.draft;
+  if (decision === "create" && sheet.rootChoice) {
+    draft = { ...draft, projectName: sheet.rootChoice.nextName };
+    dispatchClaude({ type: "draft-updated", draft: { projectName: draft.projectName } });
+  }
+
   dispatchClaude({ type: "continue-setup" });
-  const project = createProjectFromDraft(sheet.draft, "draft", new Date().toISOString());
+
+  if (decision === undefined) {
+    const desired = projectSlug(draft.projectName);
+    const remoteRoot = remoteProjectRoot(draft.user, desired);
+    const inspected = await inspectClaudeRemote({ ...args, remoteRoot });
+    if (!inspected.ok) {
+      dispatchClaude({
+        type: "setup-finished",
+        ok: false,
+        detail: inspected.detail,
+        errorCode: inspected.errorCode ?? "SSH_PREPARE_FAILED",
+      });
+      return;
+    }
+    const names =
+      inspected.exists && !inspected.names.includes(desired)
+        ? [...inspected.names, desired]
+        : inspected.names;
+    const choice = decideRemoteProjectRoot(desired, names);
+    if (choice.action === "choose") {
+      dispatchClaude({
+        type: "setup-choose-root",
+        existingName: choice.existingName,
+        existingRoot: remoteProjectRoot(draft.user, choice.existingName),
+        nextName: choice.nextName,
+        nextRoot: remoteProjectRoot(draft.user, choice.nextName),
+      });
+      return;
+    }
+  }
+
+  const project = createProjectFromDraft(draft, "draft", new Date().toISOString());
   const prepared = await prepareClaudeRemote({
     ...args,
     remoteRoot: project.remoteRoot,
@@ -232,7 +272,7 @@ export async function runConnectSetup(): Promise<void> {
 export async function runConnectSync(): Promise<void> {
   const sheet = getClaudeState().sheet;
   if (sheet === null || sheet.sync.state === "running") return;
-  if (sheet.setupStatus === "fail") return;
+  if (sheet.setupStatus === "fail" || sheet.setupStatus === "choose") return;
   ensureClaudeEngineBridge();
   dispatchClaude({ type: "start-sync" });
   if (getClaudeState().sheet?.step !== "sync") return;

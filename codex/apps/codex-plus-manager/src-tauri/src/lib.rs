@@ -89,6 +89,7 @@ pub fn run() {
             lumio_commands::lumio_official_app_status,
             lumio_commands::lumio_cancel_official_app,
             claude_commands::lumio_claude_probe_connection,
+            claude_commands::lumio_claude_inspect_remote,
             claude_commands::lumio_claude_prepare_remote,
             claude_commands::lumio_claude_first_sync,
             claude_commands::lumio_claude_open_system_terminal,
