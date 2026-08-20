@@ -2,7 +2,7 @@
 <!--
   Unsigned MSIX scaffold. Tauri 2 has no native MSIX target; pack with Windows SDK makeappx.
 
-  Partner Center 还没批下来，下面三个字段先占位，拿到后再改（不要把账号 / token 写进仓）：
+  Partner Center 已签发的商店身份，下面三个字段必须与控制台逐字一致（不要把账号 / token 写进仓）：
     - Identity.Name
     - Identity.Publisher
     - PublisherDisplayName
@@ -13,13 +13,13 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap rescap">
   <Identity
-    Name="LumioGames.BestCodex"
-    Publisher="CN=PLACEHOLDER-PARTNER-CENTER"
+    Name="LumioGames.LumioCodex"
+    Publisher="CN=BAAB68AC-52C5-48A9-B6FD-6680A662815D"
     Version="__MSIX_VERSION__"
     ProcessorArchitecture="x64" />
   <Properties>
     <DisplayName>BestCodex</DisplayName>
-    <PublisherDisplayName>Lumio</PublisherDisplayName>
+    <PublisherDisplayName>Lumio Games</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Dependencies>

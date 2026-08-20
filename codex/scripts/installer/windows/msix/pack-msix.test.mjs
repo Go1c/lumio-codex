@@ -22,10 +22,10 @@ function pngSize(path) {
 describe("AppxManifest.xml.template", () => {
   const xml = readFileSync(templatePath, "utf8");
 
-  it("uses Partner Center placeholders and BestCodex display identity", () => {
-    assert.match(xml, /Name="LumioGames.BestCodex"/);
-    assert.match(xml, /Publisher="CN=PLACEHOLDER-PARTNER-CENTER"/);
-    assert.match(xml, /<PublisherDisplayName>Lumio<\/PublisherDisplayName>/);
+  it("uses issued Partner Center identity and BestCodex display identity", () => {
+    assert.match(xml, /Name="LumioGames.LumioCodex"/);
+    assert.match(xml, /Publisher="CN=BAAB68AC-52C5-48A9-B6FD-6680A662815D"/);
+    assert.match(xml, /<PublisherDisplayName>Lumio Games<\/PublisherDisplayName>/);
     assert.match(xml, /<DisplayName>BestCodex<\/DisplayName>/);
     assert.match(xml, /Executable="lumio-codex.exe"/);
   });
