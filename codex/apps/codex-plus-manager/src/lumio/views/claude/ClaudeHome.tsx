@@ -25,7 +25,7 @@ import {
   type ResumeStepKey,
 } from "./InitChecklist.tsx";
 import { LoginCard } from "./LoginCard.tsx";
-import { ProjectRail } from "./ProjectRail.tsx";
+import { onlineHostsFromState, ProjectRail } from "./ProjectRail.tsx";
 import { SessionTabs } from "./SessionTabs.tsx";
 import { StatusBar } from "./StatusBar.tsx";
 import { StatusDrawer } from "./StatusDrawer.tsx";
@@ -113,6 +113,7 @@ export function ClaudeHome({
         collapsedHosts={state.collapsedHosts}
         cliByHost={state.cliByHost}
         loginByHost={state.loginByHost}
+        onlineHosts={onlineHostsFromState(state)}
         onSelectProject={selectProject}
         onNewProject={(host) => {
           onConnect();
@@ -145,14 +146,24 @@ export function ClaudeHome({
           />
         ) : null}
         <div className="lumio-claude-mid-body">
+          {Object.entries(state.sessionsByProject).flatMap(([projectId, projectSessions]) => {
+            const project = state.projects.find((item) => item.id === projectId);
+            if (!project) return [];
+            return projectSessions.map((session) => (
+              <TerminalPane
+                key={`${projectId}:${session.id}`}
+                hidden={projectId !== active?.id || session.id !== activeSessionId}
+                project={project}
+                sessionId={session.id}
+              />
+            ));
+          })}
           <CenterPane
             active={active}
             phase={phase}
             sync={sync}
             cli={cli}
             login={login}
-            sessions={sessions}
-            activeSessionId={activeSessionId}
             onBackToCodex={onBackToCodex}
           />
           {active && loginExpired ? (
@@ -195,8 +206,6 @@ function CenterPane({
   sync,
   cli,
   login,
-  sessions,
-  activeSessionId,
   onBackToCodex,
 }: {
   active: ClaudeProject | null;
@@ -204,8 +213,6 @@ function CenterPane({
   sync: ClaudeState["syncByProject"][string] | null | undefined;
   cli: ClaudeCliInstallStatus | undefined;
   login: ClaudeLoginStatus | undefined;
-  sessions: ClaudeState["sessionsByProject"][string];
-  activeSessionId: string | null;
   onBackToCodex?: () => void;
 }) {
   if (!active) return <PickProjectHint />;
@@ -252,20 +259,7 @@ function CenterPane({
       />
     );
   }
-  if (phase === "ready") {
-    return (
-      <>
-        {sessions.map((session) => (
-          <TerminalPane
-            hidden={session.id !== activeSessionId}
-            key={session.id}
-            project={active}
-            sessionId={session.id}
-          />
-        ))}
-      </>
-    );
-  }
+  if (phase === "ready") return null;
   return (
     <ResumeProgress
       projectName={active.name}

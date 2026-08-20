@@ -251,3 +251,16 @@ test("artifact-missing blames the build, not the machine or the connection", asy
   assert.match(connect, /打开帮助页/);
   assert.match(connect, /HELP_URL/);
 });
+
+test("ClaudeHome maps TerminalPane from sessionsByProject, not only the active sessions alias", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /Object\.entries\(\s*state\.sessionsByProject\s*\)/);
+  assert.match(home, /<TerminalPane/);
+  assert.doesNotMatch(home, /sessions\.map\(\(session\) =>\s*\(\s*<TerminalPane/);
+});
+
+test("ClaudeHome passes onlineHosts into ProjectRail from state", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /onlineHosts=/);
+  assert.match(home, /onlineHostsFromState/);
+});

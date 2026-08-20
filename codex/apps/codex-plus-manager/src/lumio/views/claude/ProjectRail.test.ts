@@ -44,6 +44,10 @@ test("icon buttons wrap svgs with width/height or a sized class", () => {
   assert.match(css, /svg\s*\{[^}]*height:\s*1[1-6]px/);
 });
 
+test("onlineHostsFromState is exported for ClaudeHome to pass onlineHosts", () => {
+  assert.match(source, /export function onlineHostsFromState/);
+});
+
 test("the rail is scheme D: no entitlement line, no orders slot, no prototype d-* classes", () => {
   assert.doesNotMatch(source, /ClaudeEntitlementLine/);
   assert.doesNotMatch(source, /\{ordersSlot\}/);

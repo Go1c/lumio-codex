@@ -724,6 +724,11 @@ export async function activateClaudeProject(projectId: string): Promise<void> {
       await continueClaudeInit(projectId);
       return;
     }
+    if (currentPhase === "ready") {
+      await resumeClaudeSync(projectId);
+      await refreshClaudeFiles(projectId);
+      return;
+    }
     dispatchClaude({ type: "set-workspace-phase", projectId, phase: "resume" });
     await resumeClaudeSync(projectId);
     const sync = getClaudeState().syncByProject[projectId];

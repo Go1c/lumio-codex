@@ -505,11 +505,19 @@
   min-height: 0;
 }
 
-.lumio-claude-mid-body > .lumio-claude-xterm-wrap,
-.lumio-claude-mid-body > .lumio-claude-init-pane,
-.lumio-claude-mid-body > .lumio-claude-shell-center {
+.lumio-claude-mid-body > .lumio-claude-xterm-wrap {
   flex: 1;
   min-height: 0;
+}
+
+.lumio-claude-mid-body > .lumio-claude-init-pane,
+.lumio-claude-mid-body > .lumio-claude-shell-center {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  background: var(--cc-grouped);
 }
 
 .lumio-claude-files {

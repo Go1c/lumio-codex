@@ -77,3 +77,12 @@ test("hydrate and first sync kick CLI install then login for that host", async (
   assert.match(source, /closeClaudeChat/);
   assert.match(source, /listClaudeChats/);
 });
+
+test("activateClaudeProject keeps a ready workspace mounted instead of bouncing to resume", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /currentPhase === "ready"/);
+  assert.match(
+    source,
+    /if \(currentPhase === "ready"\)[\s\S]*?resumeClaudeSync\(projectId\)[\s\S]*?refreshClaudeFiles\(projectId\)[\s\S]*?return;/,
+  );
+});

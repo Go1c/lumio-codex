@@ -40,7 +40,7 @@ export function LoginCard({
       ) : null}
       {overlay ? (
         <p className="lumio-claude-init-meta">
-          服务器和文件都是好的，Claude 也还是 {claudeVersion ?? "2.1.228"}。只是授权到期了。
+          服务器和文件都是好的，Claude {claudeVersion ? `也还是 ${claudeVersion}` : "已装好"}。只是授权到期了。
         </p>
       ) : null}
       <div className="lumio-claude-actions">

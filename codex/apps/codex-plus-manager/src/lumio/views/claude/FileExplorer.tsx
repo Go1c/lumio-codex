@@ -87,6 +87,9 @@ export function FileExplorer({
   const [spinning, setSpinning] = useState(false);
   const [conflictPaths, setConflictPaths] = useState<Set<string>>(() => readConflictPaths(project.id));
   const [ctx, setCtx] = useState<{ x: number; y: number; path: string; ext: string } | null>(null);
+  const [contentByPath, setContentByPath] = useState<Map<string, string>>(() => new Map());
+  const contentRef = useRef(contentByPath);
+  contentRef.current = contentByPath;
 
   const tree = useMemo(() => {
     const local = listingsFromEntries(files.filter((file) => file.side !== "remote"));
@@ -95,7 +98,13 @@ export function FileExplorer({
   }, [files]);
 
   const dirPaths = useMemo(() => collectDirPaths(tree), [tree]);
-  const texts = useMemo(() => textsFromEntries(files), [files]);
+  const catalogPaths = useMemo(
+    () =>
+      flattenVisible(tree, new Set(dirPaths))
+        .filter((node) => node.kind === "file")
+        .map((node) => node.path),
+    [dirPaths, tree],
+  );
 
   useEffect(() => {
     if (seededFor.current === project.id) return;
@@ -103,6 +112,58 @@ export function FileExplorer({
     seededFor.current = project.id;
     setExpanded(new Set(dirPaths));
   }, [dirPaths, files.length, project.id]);
+
+  useEffect(() => {
+    contentRef.current = new Map();
+    setContentByPath(new Map());
+  }, [project.id]);
+
+  useEffect(() => {
+    if (mode !== "content") return;
+    if (!query.trim()) return;
+    const pending = catalogPaths.filter((path) => !contentRef.current.has(path));
+    if (pending.length === 0) return undefined;
+    let cancelled = false;
+    void Promise.all(
+      pending.map(async (path) => {
+        try {
+          const preview = await previewClaudeFile({
+            host: project.host,
+            user: project.user,
+            port: project.port,
+            password: projectPassword(project.id),
+            keyPath: project.keyPath,
+            hostAlias: project.hostAlias,
+            auth: project.auth,
+            localRoot: project.localRoot,
+            remoteRoot: project.remoteRoot,
+            path,
+            side: "local",
+          });
+          if (!preview || preview.binary || preview.tooLarge) return null;
+          return [path, preview.content] as const;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      setContentByPath((current) => {
+        let changed = false;
+        const next = new Map(current);
+        for (const row of rows) {
+          if (!row) continue;
+          if (next.get(row[0]) === row[1]) continue;
+          next.set(row[0], row[1]);
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogPaths, mode, project, query]);
 
   useEffect(() => {
     const read = () => setConflictPaths(readConflictPaths(project.id));
@@ -131,12 +192,12 @@ export function FileExplorer({
 
   const allRows = useMemo(() => {
     const catalog = flattenVisible(tree, new Set(dirPaths));
-    return sortExplorerNodes(catalog.map((node) => toRow(node, texts)));
-  }, [dirPaths, texts, tree]);
+    return sortExplorerNodes(catalog.map((node) => toRow(node, contentByPath)));
+  }, [contentByPath, dirPaths, tree]);
 
   const treeRows = useMemo(() => {
-    return sortExplorerNodes(flattenVisible(tree, expanded).map((node) => toRow(node, texts)));
-  }, [expanded, texts, tree]);
+    return sortExplorerNodes(flattenVisible(tree, expanded).map((node) => toRow(node, contentByPath)));
+  }, [contentByPath, expanded, tree]);
 
   const shown = useMemo(() => {
     const trimmed = query.trim();
@@ -538,18 +599,6 @@ function collectDirPaths(nodes: ExplorerNode[]): string[] {
   };
   walk(nodes);
   return paths;
-}
-
-function textsFromEntries(entries: ClaudeState["filesByProject"][string]): Map<string, string> {
-  const map = new Map<string, string>();
-  const walk = (list: ClaudeState["filesByProject"][string]) => {
-    for (const entry of list) {
-      if (entry.fingerprint) map.set(entry.path, entry.fingerprint);
-      if (entry.children) walk(entry.children);
-    }
-  };
-  walk(entries);
-  return map;
 }
 
 function readConflictPaths(projectId: string): Set<string> {

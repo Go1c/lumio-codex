@@ -32,6 +32,12 @@ test("the init checklist lists the five scheme D steps with retry callbacks", as
   assert.doesNotMatch(init, /安装失败/);
 });
 
+test("the login overlay does not invent a Claude version number", async () => {
+  const { login } = await readOwned();
+  assert.doesNotMatch(login, /2\.1\.228/);
+  assert.match(login, /已装好/);
+});
+
 test("the login card pastes an authorization code in both layouts", async () => {
   const { init, login } = await readOwned();
   assert.match(login, /在浏览器中登录/);

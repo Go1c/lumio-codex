@@ -68,7 +68,7 @@ function isLegacyProps(props: ProjectRailProps | ProjectRailLegacyProps): props 
   return "state" in props;
 }
 
-function onlineHostsFromState(state: ClaudeState): Record<string, boolean> {
+export function onlineHostsFromState(state: ClaudeState): Record<string, boolean> {
   const onlineHosts: Record<string, boolean> = {};
   for (const project of state.projects) {
     const phase = state.workspacePhaseByProject[project.id];

@@ -75,6 +75,13 @@ test("FileExplorer reuses explorer-filter, file-icons, and file-tree merge", asy
   assert.match(source, /only:\s*"md"/);
 });
 
+test("content search previews local file text instead of fingerprints", async () => {
+  const source = await readExplorer();
+  assert.match(source, /previewClaudeFile/);
+  assert.match(source, /side:\s*"local"/);
+  assert.doesNotMatch(source, /map\.set\(entry\.path,\s*entry\.fingerprint\)/);
+});
+
 test("FileExplorer source and CSS never mention agent or tmux", async () => {
   const source = await readExplorer();
   const css = await readExplorerCss();
