@@ -100,6 +100,7 @@ pub fn run() {
             claude_commands::lumio_claude_list_local_files,
             claude_commands::lumio_claude_list_files,
             claude_commands::lumio_claude_preview_file,
+            claude_commands::lumio_claude_local_fs,
             claude_commands::lumio_claude_list_conflicts,
             claude_commands::lumio_claude_resolve_conflict,
             claude_commands::lumio_claude_conflict_diff,

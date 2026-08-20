@@ -266,6 +266,207 @@ pub fn apply_fingerprints(
     }
 }
 
+pub fn relative_parent(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(at) => &path[..at],
+        None => "",
+    }
+}
+
+pub fn relative_join(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+pub fn target_dir(path: &str, is_dir: bool) -> String {
+    if path.is_empty() {
+        String::new()
+    } else if is_dir {
+        path.to_string()
+    } else {
+        relative_parent(path).to_string()
+    }
+}
+
+pub fn sanitize_file_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
+        return Err("FILE_NAME_INVALID".into());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains(':') {
+        return Err("FILE_NAME_INVALID".into());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub fn split_stem_ext(name: &str) -> (String, String) {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => (name[..dot].to_string(), name[dot..].to_string()),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
+pub fn unique_relative(root: &Path, dir: &str, stem: &str, ext: &str) -> Result<String, String> {
+    let first = relative_join(dir, &format!("{stem}{ext}"));
+    if !root.join(&first).exists() {
+        return Ok(first);
+    }
+    for n in 2..1000 {
+        let candidate = relative_join(dir, &format!("{stem} {n}{ext}"));
+        if !root.join(&candidate).exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("FILE_EXISTS".into())
+}
+
+pub fn unique_named_relative(root: &Path, dir: &str, name: &str) -> Result<String, String> {
+    let clean = sanitize_file_name(name)?;
+    let (stem, ext) = split_stem_ext(&clean);
+    unique_relative(root, dir, &stem, &ext)
+}
+
+pub fn resolve_existing(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    if relative.is_empty() {
+        return Err("FILE_MISSING".into());
+    }
+    let candidate = Path::new(relative);
+    if candidate.is_absolute() {
+        return Err("PATH_OUTSIDE_PROJECT".into());
+    }
+    for component in candidate.components() {
+        match component {
+            Component::Normal(_) => {}
+            _ => return Err("PATH_OUTSIDE_PROJECT".into()),
+        }
+    }
+    let root_real = root
+        .canonicalize()
+        .map_err(|_| "FILE_MISSING".to_string())?;
+    let target = root_real.join(candidate);
+    if !target.exists() {
+        return Err("FILE_MISSING".into());
+    }
+    let real = target
+        .canonicalize()
+        .map_err(|_| "FILE_MISSING".to_string())?;
+    if !real.starts_with(&root_real) {
+        return Err("PATH_OUTSIDE_PROJECT".into());
+    }
+    Ok(real)
+}
+
+pub fn create_empty_file(root: &Path, relative: &str) -> Result<(), String> {
+    let target = resolve_for_write(root, relative)?;
+    if target.exists() {
+        return Err("FILE_EXISTS".into());
+    }
+    std::fs::write(&target, b"").map_err(|_| "FILE_WRITE_FAILED".to_string())
+}
+
+pub fn create_folder(root: &Path, relative: &str) -> Result<(), String> {
+    let target = resolve_for_write(root, relative)?;
+    if target.exists() {
+        return Err("FILE_EXISTS".into());
+    }
+    std::fs::create_dir(&target).map_err(|_| "FILE_WRITE_FAILED".to_string())
+}
+
+fn copy_recursive(from: &Path, to: &Path) -> Result<(), String> {
+    let meta = std::fs::metadata(from).map_err(|_| "FILE_MISSING".to_string())?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(to).map_err(|_| "FILE_WRITE_FAILED".to_string())?;
+        for entry in std::fs::read_dir(from).map_err(|_| "FILE_WRITE_FAILED".to_string())? {
+            let entry = entry.map_err(|_| "FILE_WRITE_FAILED".to_string())?;
+            copy_recursive(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|_| "FILE_WRITE_FAILED".to_string())?;
+        }
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|_| "FILE_WRITE_FAILED".to_string())
+    }
+}
+
+pub fn duplicate_entry(root: &Path, relative: &str) -> Result<String, String> {
+    let source = resolve_existing(root, relative)?;
+    let name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "FILE_NAME_INVALID".to_string())?;
+    let (stem, ext) = split_stem_ext(name);
+    let dir = relative_parent(relative);
+    let dest_rel = unique_relative(root, dir, &format!("{stem} copy"), &ext)?;
+    let dest = resolve_for_write(root, &dest_rel)?;
+    copy_recursive(&source, &dest)?;
+    Ok(dest_rel)
+}
+
+pub fn rename_entry(root: &Path, relative: &str, new_name: &str) -> Result<String, String> {
+    let name = sanitize_file_name(new_name)?;
+    let source = resolve_existing(root, relative)?;
+    let dest_rel = relative_join(relative_parent(relative), &name);
+    let dest = resolve_for_write(root, &dest_rel)?;
+    if dest.exists() && dest != source {
+        return Err("FILE_EXISTS".into());
+    }
+    std::fs::rename(&source, &dest).map_err(|_| "FILE_WRITE_FAILED".to_string())?;
+    Ok(dest_rel)
+}
+
+pub fn delete_entry(root: &Path, relative: &str) -> Result<(), String> {
+    if relative.is_empty() {
+        return Err("PATH_OUTSIDE_PROJECT".into());
+    }
+    let target = resolve_existing(root, relative)?;
+    let meta = std::fs::metadata(&target).map_err(|_| "FILE_MISSING".to_string())?;
+    if meta.is_dir() {
+        std::fs::remove_dir_all(&target).map_err(|_| "FILE_WRITE_FAILED".to_string())
+    } else {
+        std::fs::remove_file(&target).map_err(|_| "FILE_WRITE_FAILED".to_string())
+    }
+}
+
+pub fn reveal_invocation(path: &Path) -> (String, Vec<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        ("open".into(), vec!["-R".into(), path.display().to_string()])
+    }
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "explorer".into(),
+            vec![format!("/select,{}", path.display())],
+        )
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let parent = path.parent().unwrap_or(path).display().to_string();
+        ("xdg-open".into(), vec![parent])
+    }
+}
+
+pub fn open_path_invocation(path: &Path) -> (String, Vec<String>) {
+    #[cfg(target_os = "macos")]
+    {
+        ("open".into(), vec![path.display().to_string()])
+    }
+    #[cfg(target_os = "windows")]
+    {
+        ("explorer".into(), vec![path.display().to_string()])
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        ("xdg-open".into(), vec![path.display().to_string()])
+    }
+}
+
 pub fn flatten_file_paths(nodes: &[FileNode]) -> Vec<String> {
     let mut paths = Vec::new();
     fn walk(nodes: &[FileNode], paths: &mut Vec<String>) {
@@ -310,6 +511,52 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         assert!(resolve_for_write(root.path(), "../secret").is_err());
         assert!(resolve_for_write(root.path(), "/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn target_dir_uses_the_folder_or_the_file_parent() {
+        assert_eq!(target_dir("src", true), "src");
+        assert_eq!(target_dir("src/app.ts", false), "src");
+        assert_eq!(target_dir("README.md", false), "");
+    }
+
+    #[test]
+    fn sanitize_file_name_rejects_path_pieces() {
+        assert!(sanitize_file_name("ok.ts").is_ok());
+        assert!(sanitize_file_name("../x").is_err());
+        assert!(sanitize_file_name("a/b").is_err());
+        assert!(sanitize_file_name("").is_err());
+    }
+
+    #[test]
+    fn create_rename_duplicate_and_delete_stay_inside_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        create_empty_file(root.path(), "src/app.ts").unwrap();
+        assert!(root.path().join("src/app.ts").is_file());
+        let copied = duplicate_entry(root.path(), "src/app.ts").unwrap();
+        assert_eq!(copied, "src/app copy.ts");
+        assert!(root.path().join("src/app copy.ts").is_file());
+        let renamed = rename_entry(root.path(), "src/app copy.ts", "util.ts").unwrap();
+        assert_eq!(renamed, "src/util.ts");
+        delete_entry(root.path(), "src/util.ts").unwrap();
+        assert!(!root.path().join("src/util.ts").exists());
+        assert!(delete_entry(root.path(), "").is_err());
+        assert!(create_empty_file(root.path(), "../escape.ts").is_err());
+    }
+
+    #[test]
+    fn create_folder_and_unique_names() {
+        let root = tempfile::tempdir().unwrap();
+        create_folder(root.path(), "docs").unwrap();
+        create_empty_file(root.path(), "untitled").unwrap();
+        let second = unique_relative(root.path(), "", "untitled", "").unwrap();
+        assert_eq!(second, "untitled 2");
+        create_empty_file(root.path(), "note.md").unwrap();
+        let named = unique_named_relative(root.path(), "", "note.md").unwrap();
+        assert_eq!(named, "note 2.md");
+        let (cmd, args) = reveal_invocation(root.path().join("docs").as_path());
+        assert!(!cmd.is_empty());
+        assert!(args.iter().any(|arg| arg.contains("docs")));
     }
 
     #[test]

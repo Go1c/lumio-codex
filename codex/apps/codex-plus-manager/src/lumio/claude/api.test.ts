@@ -6,6 +6,7 @@ import {
   CLAUDE_CLI_PROGRESS_EVENT,
   CLAUDE_LOGIN_PROGRESS_EVENT,
   cliErrorCopy,
+  localFsErrorCopy,
   loginErrorCopy,
   terminalClosedEvent,
   terminalOutputEvent,
@@ -78,7 +79,19 @@ test("api.ts registers install, login, and chat commands", async () => {
   assert.match(source, /lumio_claude_open_chat/);
   assert.match(source, /lumio_claude_close_chat/);
   assert.match(source, /lumio_claude_list_chats/);
+  assert.match(source, /lumio_claude_local_fs/);
   assert.match(source, /sessionId/);
   assert.doesNotMatch(source, /\bagent\b/i);
   assert.doesNotMatch(source, /\btmux\b/i);
+});
+
+test("localFsErrorCopy maps file command codes to human copy", () => {
+  assert.equal(localFsErrorCopy("FILE_EXISTS"), "已经有这个名字。");
+  assert.equal(localFsErrorCopy("FILE_MISSING"), "找不到这个文件。");
+  assert.equal(localFsErrorCopy("FILE_NAME_INVALID"), "这个名字不能用。");
+  assert.equal(localFsErrorCopy("FILE_REVEAL_FAILED"), "没能在 Finder 里打开。");
+  assert.equal(localFsErrorCopy("PATH_OUTSIDE_PROJECT"), "路径必须位于项目文件夹内。");
+  assert.equal(localFsErrorCopy("FILE_WRITE_FAILED"), "没能改这个文件。");
+  assert.equal(localFsErrorCopy("UNKNOWN"), "没能改这个文件。");
+  assert.equal(localFsErrorCopy("路径必须位于项目文件夹内。"), "路径必须位于项目文件夹内。");
 });
