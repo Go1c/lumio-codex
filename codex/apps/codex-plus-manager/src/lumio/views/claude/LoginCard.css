@@ -1,1 +1,42 @@
-/* LoginCard — Wave 0 placeholder */
+.lumio-claude-paste-label {
+  display: block;
+  margin: 16px 0 6px;
+  color: var(--cc-ink-2);
+  font-size: 12px;
+}
+
+.lumio-claude-paste-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 0;
+}
+
+.lumio-claude-paste-row .lumio-claude-field {
+  margin: 0;
+  min-height: 40px;
+}
+
+.lumio-claude-login-submit {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.lumio-claude-login.is-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  overflow: hidden;
+  background: rgb(6 7 10 / 62%);
+  backdrop-filter: blur(3px);
+}
+
+.lumio-claude-login.is-overlay .lumio-claude-login-card {
+  position: relative;
+  z-index: 2;
+  width: min(440px, 100%);
+}
