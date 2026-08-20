@@ -22,12 +22,17 @@ function pngSize(path) {
 describe("AppxManifest.xml.template", () => {
   const xml = readFileSync(templatePath, "utf8");
 
-  it("uses Partner Center placeholders and BestCodex display identity", () => {
-    assert.match(xml, /Name="LumioGames.BestCodex"/);
-    assert.match(xml, /Publisher="CN=PLACEHOLDER-PARTNER-CENTER"/);
-    assert.match(xml, /<PublisherDisplayName>Lumio<\/PublisherDisplayName>/);
-    assert.match(xml, /<DisplayName>BestCodex<\/DisplayName>/);
+  it("uses issued Partner Center identity and Lumio Codex display identity", () => {
+    assert.match(xml, /Name="LumioGames.LumioCodex"/);
+    assert.match(xml, /Publisher="CN=BAAB68AC-52C5-48A9-B6FD-6680A662815D"/);
+    assert.match(xml, /<PublisherDisplayName>Lumio Games<\/PublisherDisplayName>/);
+    assert.match(xml, /<DisplayName>Lumio Codex<\/DisplayName>/);
+    assert.match(xml, /DisplayName="Lumio Codex"/);
+    assert.match(xml, /Description="Lumio Codex \(BestCodex\)"/);
+    assert.match(xml, /Application Id="BestCodex"/);
     assert.match(xml, /Executable="lumio-codex.exe"/);
+    assert.doesNotMatch(xml, /<DisplayName>BestCodex<\/DisplayName>/);
+    assert.doesNotMatch(xml, /DisplayName="BestCodex"/);
   });
 
   it("leaves Identity.Version as a substitution token, not a live store version", () => {

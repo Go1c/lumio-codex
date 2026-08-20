@@ -202,6 +202,76 @@ fn is_real_sidecar(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResumeAction {
+    AlreadyRunning,
+    StartSidecarAndTunnel,
+    EngineUnavailable,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResumeOutcome {
+    pub ok: bool,
+    pub running: bool,
+    pub files_done: u32,
+    pub files_total: u32,
+    pub error_code: Option<String>,
+}
+
+pub fn plan_resume_sync(sidecar_available: bool, sidecar_running: bool) -> ResumeAction {
+    if sidecar_running {
+        ResumeAction::AlreadyRunning
+    } else if sidecar_available {
+        ResumeAction::StartSidecarAndTunnel
+    } else {
+        ResumeAction::EngineUnavailable
+    }
+}
+
+pub fn execute_resume<F>(action: ResumeAction, mut start_engine: F) -> ResumeOutcome
+where
+    F: FnMut() -> Result<(), String>,
+{
+    match action {
+        ResumeAction::AlreadyRunning => ResumeOutcome {
+            ok: true,
+            running: true,
+            files_done: 0,
+            files_total: 0,
+            error_code: None,
+        },
+        ResumeAction::EngineUnavailable => ResumeOutcome {
+            ok: false,
+            running: false,
+            files_done: 0,
+            files_total: 0,
+            error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+        },
+        ResumeAction::StartSidecarAndTunnel => match start_engine() {
+            Ok(()) => ResumeOutcome {
+                ok: true,
+                running: true,
+                files_done: 0,
+                files_total: 0,
+                error_code: None,
+            },
+            Err(_) => ResumeOutcome {
+                ok: false,
+                running: false,
+                files_done: 0,
+                files_total: 0,
+                error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+            },
+        },
+    }
+}
+
+#[cfg(test)]
+pub fn listed_remote_does_not_confirm_sync(listed_remote: u32) -> FirstSyncConfirmation {
+    confirm_copy_from_counts(0, Some(listed_remote), 0)
+}
+
 pub fn sidecar_command() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("BESTCODEX_CLAUDE_SIDECAR") {
         let path = PathBuf::from(explicit);
@@ -293,6 +363,10 @@ impl SyncEngine {
             jobs: Mutex::new(HashMap::new()),
             sidecars: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn is_running(&self, key: &str) -> bool {
+        Self::sidecar_running(&self.sidecars, key)
     }
 
     pub fn adopt_sidecar(&self, key: &str, config_path: &Path) -> Result<(), String> {
@@ -533,5 +607,56 @@ mod tests {
         std::fs::write(root.path().join(".bestcodex-sync/agent.json"), "{}\n").unwrap();
         std::fs::write(root.path().join("readme.md"), "hi\n").unwrap();
         assert_eq!(count_project_files(root.path()), 1);
+    }
+
+    #[test]
+    fn listed_remote_files_are_not_a_confirmed_sync() {
+        let confirmation = listed_remote_does_not_confirm_sync(12);
+        assert!(!confirmation.confirmed);
+        let outcome = first_sync_from_sidecar(true, confirmation);
+        assert!(!outcome.ok);
+        assert_eq!(outcome.error_code.as_deref(), Some("SYNC_COPY_UNCONFIRMED"));
+    }
+
+    #[test]
+    fn resume_of_a_stopped_engine_starts_sidecar_and_tunnel() {
+        let mut started = false;
+        let action = plan_resume_sync(true, false);
+        assert_eq!(action, ResumeAction::StartSidecarAndTunnel);
+        let outcome = execute_resume(action, || {
+            started = true;
+            Ok(())
+        });
+        assert!(started, "resume must start the sidecar/tunnel, not no-op");
+        assert!(outcome.ok);
+        assert!(outcome.running);
+    }
+
+    #[test]
+    fn resume_without_sidecar_is_engine_unavailable_not_success() {
+        let mut started = false;
+        let outcome = execute_resume(plan_resume_sync(false, false), || {
+            started = true;
+            Ok(())
+        });
+        assert!(!started);
+        assert!(!outcome.ok);
+        assert!(!outcome.running);
+        assert_eq!(
+            outcome.error_code.as_deref(),
+            Some("SYNC_ENGINE_UNAVAILABLE")
+        );
+    }
+
+    #[test]
+    fn resume_already_running_reports_running() {
+        let mut started = false;
+        let outcome = execute_resume(plan_resume_sync(true, true), || {
+            started = true;
+            Ok(())
+        });
+        assert!(!started);
+        assert!(outcome.ok);
+        assert!(outcome.running);
     }
 }

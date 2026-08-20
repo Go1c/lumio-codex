@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XTerm } from "@xterm/xterm";
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import {
@@ -13,13 +13,29 @@ import {
   terminalOutputEvent,
   writeClaudeTerminal,
 } from "../../claude/api.ts";
+import { tagColorDiff } from "../../claude/color-diff.ts";
 import {
+  flattenVisible,
+  listingsFromEntries,
+  mergeExplorerTrees,
+  sideForExplorerPath,
+} from "../../claude/file-tree.ts";
+import {
+  formatCapturedClock,
+  formatStatusBytes,
+  serviceDisplayName,
+} from "../../claude/remote-status.ts";
+import {
+  fetchClaudeServerStatus,
+  fetchClaudeSessions,
   refreshClaudeConflicts,
   refreshClaudeFiles,
   resolveProjectConflict,
+  resumeClaudeSync,
 } from "../../claude/session.ts";
 import { dispatchClaude } from "../../claude/store.ts";
 import { projectPassword } from "../../claude/store.ts";
+import { workspaceStatusCopy } from "../../claude/sync-status.ts";
 import {
   copyTextForKey,
   firstOpenableHttpsUrl,
@@ -29,14 +45,17 @@ import {
 } from "../../claude/terminal-clipboard.ts";
 import { openInBrowser } from "../../invoke.ts";
 import type {
-  ClaudeConflictEntry,
   ClaudeConflictResolution,
-  ClaudeFileEntry,
   ClaudeFilePreview,
   ClaudeProject,
+  ClaudeServerStatus,
+  ClaudeSessionsSnapshot,
   ClaudeState,
 } from "../../claude/types.ts";
 import { ClaudeEntitlementLine } from "./ClaudeEntitlementLine.tsx";
+
+const EMPTY_FILES: ClaudeState["filesByProject"][string] = [];
+const EMPTY_CONFLICTS: ClaudeState["conflictsByProject"][string] = [];
 
 export function ClaudeHome({
   state,
@@ -50,8 +69,12 @@ export function ClaudeHome({
   const active =
     state.projects.find((project) => project.id === state.activeProjectId) ?? state.projects[0] ?? null;
   const sync = active ? state.syncByProject[active.id] : null;
-  const files = active ? (state.filesByProject[active.id] ?? []) : [];
-  const conflicts = active ? (state.conflictsByProject[active.id] ?? []) : [];
+  const files = active ? (state.filesByProject[active.id] ?? EMPTY_FILES) : EMPTY_FILES;
+  const conflicts = active ? (state.conflictsByProject[active.id] ?? EMPTY_CONFLICTS) : EMPTY_CONFLICTS;
+
+  useEffect(() => {
+    if (active) void resumeClaudeSync(active.id);
+  }, [active?.id]);
 
   useEffect(() => {
     if (active && state.stageTab === "files") void refreshClaudeFiles(active.id);
@@ -72,7 +95,10 @@ export function ClaudeHome({
           <button
             className={`lumio-claude-proj${project.id === active?.id ? " is-on" : ""}`}
             key={project.id}
-            onClick={() => dispatchClaude({ type: "select-project", projectId: project.id })}
+            onClick={() => {
+              dispatchClaude({ type: "select-project", projectId: project.id });
+              void resumeClaudeSync(project.id);
+            }}
             type="button"
           >
             <span className="k">{project.name}</span>
@@ -101,6 +127,16 @@ export function ClaudeHome({
             onClick={() => dispatchClaude({ type: "set-stage-tab", tab: "conflicts" })}
             type="button"
           >冲突</button>
+          <button
+            className={state.stageTab === "server" ? "is-on" : ""}
+            onClick={() => dispatchClaude({ type: "set-stage-tab", tab: "server" })}
+            type="button"
+          >服务器状态</button>
+          <button
+            className={state.stageTab === "sessions" ? "is-on" : ""}
+            onClick={() => dispatchClaude({ type: "set-stage-tab", tab: "sessions" })}
+            type="button"
+          >对话状态</button>
         </nav>
         {active === null ? (
           <div className="lumio-claude-term">
@@ -113,20 +149,12 @@ export function ClaudeHome({
             {state.stageTab === "conflicts" ? (
               <ConflictsPane conflicts={conflicts} projectId={active.id} />
             ) : null}
+            {state.stageTab === "server" ? <ServerStatusPane projectId={active.id} /> : null}
+            {state.stageTab === "sessions" ? <SessionsPane projectId={active.id} /> : null}
           </>
         )}
         <div className="lumio-claude-status">
-          <span>
-            {sync?.state === "conflicts"
-              ? `${sync.conflicts} 个冲突`
-              : sync?.state === "synced"
-                ? "已同步 · 文件与远端一致"
-                : sync?.state === "running"
-                  ? `正在同步 ${sync.filesDone} / ${sync.filesTotal || "…"}`
-                  : sync?.state === "offline"
-                    ? "离线 · 本机目录可用"
-                    : "本机目录已就绪"}
-          </span>
+          <span>{workspaceStatusCopy(sync)}</span>
           <span>{active ? `${active.user}@${active.host}` : ""}</span>
         </div>
       </section>
@@ -423,11 +451,32 @@ function FilesPane({
   files: ClaudeState["filesByProject"][string];
 }) {
   const [preview, setPreview] = useState<ClaudeFilePreview | null>(null);
-  const local = files.filter((file) => file.side !== "remote");
-  const remote = files.filter((file) => file.side === "remote");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const tree = useMemo(() => {
+    const local = listingsFromEntries(files.filter((file) => file.side !== "remote"));
+    const remote = listingsFromEntries(files.filter((file) => file.side === "remote"));
+    return mergeExplorerTrees(local, remote);
+  }, [files]);
+  const visible = flattenVisible(tree, expanded);
 
-  const openFile = (file: ClaudeFileEntry) => {
-    if (file.kind === "directory") return;
+  useEffect(() => {
+    const dirs = tree.filter((node) => node.kind === "directory").map((node) => node.path);
+    setExpanded((current) => {
+      if (current.size === 0 && dirs.length > 0) return new Set(dirs);
+      return current;
+    });
+  }, [tree]);
+
+  const openPath = (path: string, kind: "file" | "directory") => {
+    if (kind === "directory") {
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+      return;
+    }
     void previewClaudeFile({
       host: project.host,
       user: project.user,
@@ -438,22 +487,34 @@ function FilesPane({
       auth: project.auth,
       localRoot: project.localRoot,
       remoteRoot: project.remoteRoot,
-      path: file.path,
-      side: file.side === "remote" ? "remote" : "local",
+      path,
+      side: sideForExplorerPath(path, files),
     }).then(setPreview);
   };
 
   return (
     <div className="lumio-claude-files">
-      <div className="lumio-claude-files-split">
-        <div>
-          <p className="dim">本机 {project.localRoot}</p>
-          <FileTree files={local} onOpen={openFile} />
-        </div>
-        <div>
-          <p className="dim">远端 {project.remoteRoot}</p>
-          <FileTree files={remote} onOpen={openFile} />
-        </div>
+      <div className="lumio-claude-explorer">
+        <p className="dim lumio-claude-explorer-root">{project.name}</p>
+        {visible.length === 0 ? (
+          <p>还没有同步下来的文件。</p>
+        ) : (
+          visible.map((node) => (
+            <button
+              className={`lumio-claude-file-row is-${node.kind} is-${node.change}`}
+              key={node.path}
+              onClick={() => openPath(node.path, node.kind)}
+              style={{ "--depth": String(node.depth) } as CSSProperties}
+              type="button"
+            >
+              <span className="chev" aria-hidden="true">
+                {node.kind === "directory" ? (expanded.has(node.path) ? "▾" : "▸") : ""}
+              </span>
+              <span className="name">{node.kind === "directory" ? `${node.name}/` : node.name}</span>
+              {node.badge ? <span className={`badge is-${node.badge}`}>{node.badge}</span> : null}
+            </button>
+          ))
+        )}
       </div>
       {preview ? (
         <pre className="lumio-claude-preview">
@@ -468,32 +529,6 @@ function FilesPane({
   );
 }
 
-function FileTree({
-  files,
-  onOpen,
-}: {
-  files: ClaudeFileEntry[];
-  onOpen: (file: ClaudeFileEntry) => void;
-}) {
-  if (files.length === 0) {
-    return <p>还没有同步下来的文件。</p>;
-  }
-  return (
-    <ul>
-      {files.map((file) => (
-        <li key={`${file.side ?? "local"}:${file.path}`}>
-          <button onClick={() => onOpen(file)} type="button">
-            {file.kind === "directory" ? `${file.name}/` : file.name}
-          </button>
-          {file.children && file.children.length > 0 ? (
-            <FileTree files={file.children} onOpen={onOpen} />
-          ) : null}
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function ConflictsPane({
   projectId,
   conflicts,
@@ -503,6 +538,7 @@ function ConflictsPane({
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(conflicts[0]?.id ?? null);
   const current = conflicts.find((item) => item.id === selectedId) ?? conflicts[0] ?? null;
+  const tagged = tagColorDiff(current?.localContent ?? "", current?.remoteContent ?? "");
 
   useEffect(() => {
     if (!conflicts.some((item) => item.id === selectedId)) {
@@ -552,20 +588,205 @@ function ConflictsPane({
               两者都保留
             </button>
           </div>
-          <div className="lumio-claude-diff">
-            <pre>
-              <span className="dim">本地</span>
-              {"\n"}
-              {current.localContent ?? ""}
-            </pre>
-            <pre>
-              <span className="dim">远端</span>
-              {"\n"}
-              {current.remoteContent ?? ""}
-            </pre>
+          <div className="lumio-claude-color-diff">
+            {tagged.map((line, index) => (
+              <div className={`ln is-${line.tag}`} key={`${index}-${line.tag}`}>
+                {line.text || " "}
+              </div>
+            ))}
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ServerStatusPane({ projectId }: { projectId: string }) {
+  const [snapshot, setSnapshot] = useState<ClaudeServerStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    void fetchClaudeServerStatus(projectId)
+      .then((next) => setSnapshot(next))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, [projectId]);
+
+  const host = snapshot?.host;
+  const clock = snapshot?.capturedAt ? formatCapturedClock(snapshot.capturedAt) : "";
+
+  return (
+    <div className="lumio-claude-status-pane" aria-label="服务器状态">
+      <div className="lumio-claude-status-toolbar">
+        <span className="dim">{clock ? `采集于 ${clock}` : loading ? "正在读取…" : "尚未采集"}</span>
+        <button className="lumio-button is-secondary" onClick={load} type="button">
+          刷新
+        </button>
+      </div>
+      {snapshot && !snapshot.ok && snapshot.error ? (
+        <div className="lumio-claude-fail" role="alert">
+          {snapshot.error.message}
+        </div>
+      ) : null}
+      {host ? (
+        <>
+          <section className="lumio-claude-status-card">
+            <h3>主机</h3>
+            <div className="lumio-claude-metrics">
+              <div>
+                <strong>{host.cpu.usagePercent.toFixed(1)}%</strong>
+                <span>CPU{host.cpu.cores != null ? ` · ${host.cpu.cores} 核` : ""}</span>
+              </div>
+              <div>
+                <strong>{host.cpu.load1 != null ? host.cpu.load1.toFixed(2) : "—"}</strong>
+                <span>1 分钟负载</span>
+              </div>
+              <div>
+                <strong>{formatStatusBytes(host.memory.usedBytes)}</strong>
+                <span>
+                  内存 {formatStatusBytes(host.memory.totalBytes)} · {host.memory.usedPercent.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+            <div className="lumio-claude-meter" aria-hidden="true">
+              <i style={{ width: `${Math.min(host.memory.usedPercent, 100)}%` }} />
+            </div>
+            {host.hostname ? <p className="dim">{host.hostname}</p> : null}
+          </section>
+          <section className="lumio-claude-status-card">
+            <h3>磁盘</h3>
+            <table className="lumio-claude-status-table">
+              <thead>
+                <tr>
+                  <th>挂载点</th>
+                  <th>已用</th>
+                  <th>总量</th>
+                  <th>%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {host.disks.map((disk) => (
+                  <tr key={disk.mount}>
+                    <td>
+                      <code>{disk.mount}</code>
+                    </td>
+                    <td>{formatStatusBytes(disk.usedBytes)}</td>
+                    <td>{formatStatusBytes(disk.totalBytes)}</td>
+                    <td>{disk.usedPercent.toFixed(0)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        </>
+      ) : null}
+      {snapshot?.services ? (
+        <section className="lumio-claude-status-card">
+          <h3>服务</h3>
+          <table className="lumio-claude-status-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>状态</th>
+                <th>进程</th>
+                <th>内存</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.services.items.map((item) => (
+                <tr key={item.key}>
+                  <td>{item.displayName || serviceDisplayName(item.key)}</td>
+                  <td>{item.running ? "运行中" : "未运行"}</td>
+                  <td>{item.processCount}</td>
+                  <td>{formatStatusBytes(item.memoryRssBytes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+      {loading && !snapshot ? <p className="dim">正在读取服务器状态…</p> : null}
+    </div>
+  );
+}
+
+function SessionsPane({ projectId }: { projectId: string }) {
+  const [snapshot, setSnapshot] = useState<ClaudeSessionsSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    void fetchClaudeSessions(projectId)
+      .then((next) => setSnapshot(next))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+  }, [projectId]);
+
+  const clock = snapshot?.capturedAt ? formatCapturedClock(snapshot.capturedAt) : "";
+
+  return (
+    <div className="lumio-claude-status-pane" aria-label="对话状态">
+      <div className="lumio-claude-status-toolbar">
+        <span className="dim">
+          {snapshot?.windows
+            ? `${snapshot.windows.length} 个对话`
+            : loading
+              ? "正在读取…"
+              : ""}
+          {clock ? ` · ${clock}` : ""}
+        </span>
+        <button className="lumio-button is-secondary" onClick={load} type="button">
+          刷新
+        </button>
+        <button
+          className="lumio-button is-secondary"
+          onClick={() => dispatchClaude({ type: "set-stage-tab", tab: "terminal" })}
+          type="button"
+        >
+          打开终端
+        </button>
+      </div>
+      {snapshot && !snapshot.ok && snapshot.error ? (
+        <div className="lumio-claude-fail" role="alert">
+          {snapshot.error.message}
+        </div>
+      ) : null}
+      {snapshot?.ok && snapshot.sessionExists === false ? (
+        <p className="dim">暂无对话。</p>
+      ) : null}
+      {snapshot?.ok && snapshot.sessionExists && snapshot.windows.length === 0 ? (
+        <p className="dim">暂无对话窗口。</p>
+      ) : null}
+      {snapshot && snapshot.windows.length > 0 ? (
+        <section className="lumio-claude-status-card">
+          <table className="lumio-claude-status-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>标题</th>
+                <th>当前</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.windows.map((window) => (
+                <tr key={window.id}>
+                  <td>{window.index}</td>
+                  <td>{window.title}</td>
+                  <td>{window.active ? "当前" : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+      {loading && !snapshot ? <p className="dim">正在读取对话状态…</p> : null}
     </div>
   );
 }

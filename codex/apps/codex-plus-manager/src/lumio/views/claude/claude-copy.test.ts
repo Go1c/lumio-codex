@@ -140,6 +140,8 @@ test("the workspace shows files and conflicts tabs next to the terminal", async 
   assert.match(source, />终端</);
   assert.match(source, />文件</);
   assert.match(source, />冲突</);
+  assert.match(source, />服务器状态</);
+  assert.match(source, />对话状态</);
   assert.match(source, /连接新服务器/);
   assert.match(source, />项目</);
 });
