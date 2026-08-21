@@ -107,6 +107,9 @@ test("the connect sheet has the four prototype steps and the SSH paste hint", as
   assert.match(source, /服务器上已有这个项目/);
   assert.match(source, /继续使用/);
   assert.match(source, /新建 /);
+  assert.match(source, /已经装过同步组件/);
+  assert.match(source, /setupStatus === "reinstall"/);
+  assert.match(source, />重装</);
   assert.match(source, /sync\.state === "fail"/);
   assert.match(source, /本机文件夹/);
   assert.match(source, /服务器文件夹/);
@@ -275,4 +278,14 @@ test("ClaudeHome passes onlineHosts into ProjectRail from state", async () => {
   const home = await readView("ClaudeHome.tsx");
   assert.match(home, /onlineHosts=/);
   assert.match(home, /onlineHostsFromState/);
+});
+
+test("the offline card can be dismissed back to the workspace", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /<OfflineCard/);
+  assert.match(home, /onDismiss=/);
+  assert.match(
+    home,
+    /onDismiss=\{\(\) => \{[\s\S]*set-workspace-phase[\s\S]*phase: "ready"/,
+  );
 });

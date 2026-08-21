@@ -15,6 +15,7 @@ import {
   conflictFlagCopy,
   conversationCountCopy,
   hostResourceCopy,
+  nextStatusDrawerPane,
   readyStatusCopy,
   updateNudgeCopy,
 } from "./status-copy.ts";
@@ -123,7 +124,12 @@ function StatusSeg({
   return (
     <button
       className={className}
-      onClick={() => dispatchClaude({ type: "set-status-drawer", pane })}
+      onClick={() =>
+        dispatchClaude({
+          type: "set-status-drawer",
+          pane: nextStatusDrawerPane(getClaudeState().statusDrawer, pane),
+        })
+      }
       type="button"
     >
       {children}

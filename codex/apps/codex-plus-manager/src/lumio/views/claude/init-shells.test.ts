@@ -72,6 +72,8 @@ test("resume, offline and pick-project shells copy the prototype wording", async
   assert.match(init, /不会静默覆盖谁/);
   assert.match(init, /看本机文件/);
   assert.match(init, /重试连接/);
+  assert.match(init, /onDismiss/);
+  assert.match(init, /aria-label="关闭"/);
   assert.match(init, /CLAUDE_SSH_TIMEOUT/);
   assert.match(init, /连接超时。检查这台服务器是否开机、网络是否可达。/);
   assert.match(init, /export function PickProjectHint/);

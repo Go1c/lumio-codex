@@ -9,6 +9,7 @@ import {
   conflictFlagCopy,
   conversationCountCopy,
   hostResourceCopy,
+  nextStatusDrawerPane,
   readyStatusCopy,
   updateNudgeCopy,
 } from "./status-copy.ts";
@@ -78,6 +79,13 @@ test("conflict badge is a count, not a blocking message", () => {
   assert.equal(conflictFlagCopy(2), "冲突 2");
 });
 
+test("clicking the open drawer pane again collapses it", () => {
+  assert.equal(nextStatusDrawerPane("closed", "server"), "server");
+  assert.equal(nextStatusDrawerPane("server", "server"), "closed");
+  assert.equal(nextStatusDrawerPane("server", "sessions"), "sessions");
+  assert.equal(nextStatusDrawerPane("conflicts", "closed"), "closed");
+});
+
 test("StatusBar.tsx renders 对话 / 在跑, dispatches the drawer, and never says agent or tmux", async () => {
   const source = await readOwn("StatusBar.tsx");
   assert.match(source, /对话/);
@@ -86,6 +94,7 @@ test("StatusBar.tsx renders 对话 / 在跑, dispatches the drawer, and never sa
   assert.match(source, /collectSessions/);
   assert.match(source, /sessionsByProject/);
   assert.match(source, /set-status-drawer/);
+  assert.match(source, /nextStatusDrawerPane/);
   assert.match(source, /workspaceStatusAppearance/);
   assert.match(source, /applyRemoteSyncHealth/);
   assert.match(source, /user\}@\$\{active\.host/);

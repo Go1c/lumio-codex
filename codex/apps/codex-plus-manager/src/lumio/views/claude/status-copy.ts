@@ -2,9 +2,18 @@ import { DEFAULT_SESSION_TITLE } from "../../claude/session-title.ts";
 import type {
   ClaudeChatSession,
   ClaudeLoginPhase,
+  ClaudeStatusDrawerPane,
   ClaudeSyncStatus,
   ClaudeWorkspacePhase,
 } from "../../claude/types.ts";
+
+export function nextStatusDrawerPane(
+  current: ClaudeStatusDrawerPane,
+  requested: ClaudeStatusDrawerPane,
+): ClaudeStatusDrawerPane {
+  if (requested === "closed") return "closed";
+  return current === requested ? "closed" : requested;
+}
 
 export function conversationCountCopy(total: number, running: number): string {
   return running > 0 ? `对话 ${total} · ${running} 在跑` : `对话 ${total}`;

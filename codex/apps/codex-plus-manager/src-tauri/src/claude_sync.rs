@@ -270,14 +270,22 @@ where
                 files_total: 0,
                 error_code: None,
             },
-            Err(_) => ResumeOutcome {
+            Err(code) => ResumeOutcome {
                 ok: false,
                 running: false,
                 files_done: 0,
                 files_total: 0,
-                error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+                error_code: Some(resume_error_code(code)),
             },
         },
+    }
+}
+
+fn resume_error_code(code: String) -> String {
+    if code.starts_with("SYNC_") || code.starts_with("SSH_") {
+        code
+    } else {
+        "SYNC_FAILED".into()
     }
 }
 
@@ -312,7 +320,7 @@ pub fn write_agent_config(
     std::fs::create_dir_all(state_dir).map_err(|e| format!("没能准备同步状态目录：{e}"))?;
     let token_file = state_dir.join("unused-private-pipe-token");
     if !token_file.exists() {
-        std::fs::write(&token_file, "bestcodex-local-token\n")
+        std::fs::write(&token_file, "bestcodex-local-token")
             .map_err(|e| format!("没能准备同步凭据：{e}"))?;
         #[cfg(unix)]
         {
@@ -647,6 +655,18 @@ mod tests {
         assert!(started, "resume must start the sidecar/tunnel, not no-op");
         assert!(outcome.ok);
         assert!(outcome.running);
+    }
+
+    #[test]
+    fn resume_start_failure_keeps_the_remote_error() {
+        let outcome = execute_resume(ResumeAction::StartSidecarAndTunnel, || {
+            Err("SYNC_REMOTE_START_FAILED".into())
+        });
+        assert!(!outcome.ok);
+        assert_eq!(
+            outcome.error_code.as_deref(),
+            Some("SYNC_REMOTE_START_FAILED")
+        );
     }
 
     #[test]

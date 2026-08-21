@@ -384,9 +384,9 @@ export function LumioApp() {
 
   return (
     <div className={`lumio-app${macosOverlay ? " is-macos" : ""}${showClaude ? " is-claude-workspace" : ""}`}>
-      <header className="lumio-topbar">
+      <header className="lumio-topbar" data-tauri-drag-region="deep">
         {showProductTabs ? (
-          <nav aria-label="主导航" className="lumio-nav">
+          <nav aria-label="主导航" className="lumio-nav" data-tauri-drag-region="false">
             <button
               aria-current={workspace === "codex" && view !== "settings" ? "page" : undefined}
               className={workspace === "codex" && view !== "settings" ? "is-active" : ""}
@@ -414,7 +414,7 @@ export function LumioApp() {
           <div className="lumio-titlebar-name">BestCodex</div>
         )}
 
-        <div className="lumio-titlebar-tools">
+        <div className="lumio-titlebar-tools" data-tauri-drag-region="false">
           <button
             aria-label="帮助"
             className="lumio-icon-btn"

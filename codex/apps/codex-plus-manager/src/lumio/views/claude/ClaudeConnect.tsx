@@ -407,7 +407,33 @@ export function ClaudeConnect({
           </div>
         ) : null}
 
-        {sheet.step === "setup" && sheet.setupStatus !== "fail" && sheet.setupStatus !== "choose" ? (
+        {sheet.step === "setup" && sheet.setupStatus === "reinstall" ? (
+          <div className="lumio-claude-choice" role="dialog" aria-modal="true" aria-labelledby="lumio-claude-connect-title">
+            <h2 id="lumio-claude-connect-title">已经装过同步组件</h2>
+            <p className="lumio-claude-lede">
+              这台服务器上已经有同步组件。点重装会换成这一版并保持运行，不会当成失败。
+            </p>
+            <div className="lumio-claude-actions">
+              <button
+                className="lumio-button is-secondary"
+                onClick={() => dispatchClaude({ type: "back-to-host" })}
+                type="button"
+              >
+                返回修改
+              </button>
+              <button
+                className="lumio-button is-primary"
+                onClick={() => void runConnectSetup("reinstall")}
+                type="button"
+              >重装</button>
+            </div>
+          </div>
+        ) : null}
+
+        {sheet.step === "setup" &&
+        sheet.setupStatus !== "fail" &&
+        sheet.setupStatus !== "choose" &&
+        sheet.setupStatus !== "reinstall" ? (
           <div>
             <h2 id="lumio-claude-connect-title">安装组件</h2>
             <p className="lumio-claude-lede">在服务器上准备同步环境和项目目录。不用你操作。</p>

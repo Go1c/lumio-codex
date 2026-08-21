@@ -60,7 +60,7 @@ export interface ClaudeProbeResult {
   detail: string | null;
 }
 
-export type ClaudeSetupStatus = "idle" | "running" | "ok" | "fail" | "choose";
+export type ClaudeSetupStatus = "idle" | "running" | "ok" | "fail" | "choose" | "reinstall";
 
 export type ClaudeSetupPhase = "inspect" | "mkdir" | "upload" | "finish";
 
@@ -113,6 +113,7 @@ export interface ClaudeConnectSheet {
   setupDetail: string | null;
   setupErrorCode: string | null;
   rootChoice: ClaudeRootChoice | null;
+  componentsInstalled: boolean;
   sync: ClaudeSyncStatus;
 }
 
@@ -323,6 +324,8 @@ export type ClaudeEvent =
       nextName: string;
       nextRoot: string;
     }
+  | { type: "setup-inspected"; componentsInstalled: boolean }
+  | { type: "setup-needs-reinstall" }
   | { type: "setup-finished"; ok: boolean; detail?: string | null; errorCode?: string | null }
   | { type: "start-sync" }
   | { type: "sync-progress"; filesDone: number; filesTotal: number }

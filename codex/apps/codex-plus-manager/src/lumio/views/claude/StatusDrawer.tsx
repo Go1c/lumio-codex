@@ -14,7 +14,7 @@ import type {
   ClaudeStatusDrawerPane,
 } from "../../claude/types.ts";
 import { ConflictsPane } from "./ConflictsPane.tsx";
-import { liveSessionRows, sessionRowStatus, sessionTitleCopy } from "./status-copy.ts";
+import { liveSessionRows, nextStatusDrawerPane, sessionRowStatus, sessionTitleCopy } from "./status-copy.ts";
 
 const EMPTY_CONFLICTS: ClaudeState["conflictsByProject"][string] = [];
 
@@ -36,11 +36,11 @@ export function StatusDrawer({ state: stateProp }: { state?: ClaudeState } = {})
 
   return (
     <div className="lumio-claude-drawer">
-      <div className="lumio-claude-drawer-tabs">
-        <button className={pane === "server" ? "is-on" : ""} onClick={() => open("server")} type="button">服务器状态</button>
-        <button className={pane === "sessions" ? "is-on" : ""} onClick={() => open("sessions")} type="button">对话状态</button>
-        <button className={pane === "conflicts" ? "is-on" : ""} onClick={() => open("conflicts")} type="button">冲突</button>
-        <button className="close" onClick={() => open("closed")} type="button">收起 ✕</button>
+      <div className="lumio-claude-drawer-tabs" onClick={() => open("closed")}>
+        <button className={pane === "server" ? "is-on" : ""} onClick={(event) => { event.stopPropagation(); open(nextStatusDrawerPane(pane, "server")); }} type="button">服务器状态</button>
+        <button className={pane === "sessions" ? "is-on" : ""} onClick={(event) => { event.stopPropagation(); open(nextStatusDrawerPane(pane, "sessions")); }} type="button">对话状态</button>
+        <button className={pane === "conflicts" ? "is-on" : ""} onClick={(event) => { event.stopPropagation(); open(nextStatusDrawerPane(pane, "conflicts")); }} type="button">冲突</button>
+        <button className="close" onClick={(event) => { event.stopPropagation(); open("closed"); }} type="button">收起 ✕</button>
       </div>
       {pane === "server" ? (
         active ? (
