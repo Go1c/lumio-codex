@@ -52,7 +52,7 @@ impl PrepareProgress {
             phase: "finish".into(),
             step: 4,
             total: 4,
-            detail: "正在完成安装…".into(),
+            detail: "正在启动同步组件并保持运行…".into(),
         }
     }
 }
@@ -234,10 +234,7 @@ pub fn deploy_remote(
     }
 
     on_progress(PrepareProgress::finish());
-    let start = format!(
-        "chmod 0755 ~/.local/share/bestcodex/bin/fns-server ~/.local/share/bestcodex/bin/fns-agent && mkdir -p {}",
-        remote_shell_path(remote_root)
-    );
+    let start = keep_sync_running_script(remote_root);
     match run_ssh(&start) {
         Ok(output) if output.status.success() => PrepareOutcome {
             ok: true,
@@ -279,6 +276,124 @@ fn scp_file(
     } else {
         Err("SSH_PREPARE_FAILED")
     }
+}
+
+fn fnv1a64(data: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325;
+    for byte in data.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn uuid_from_tag(tag: &str, remote_root: &str) -> String {
+    let hashed = fnv1a64(&format!("{tag}:{remote_root}")) & 0x0000_ffff_ffff_ffff;
+    format!("6b657374-c0de-4000-8000-{hashed:012x}")
+}
+
+pub fn sync_workspace_id(remote_root: &str) -> String {
+    uuid_from_tag("ws", remote_root)
+}
+
+pub fn sync_client_id(side: &str, remote_root: &str) -> String {
+    uuid_from_tag(side, remote_root)
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    let mut index = 0;
+    while index < input.len() {
+        let first = input[index];
+        let second = input.get(index + 1).copied().unwrap_or(0);
+        let third = input.get(index + 2).copied().unwrap_or(0);
+        let triple = (u32::from(first) << 16) | (u32::from(second) << 8) | u32::from(third);
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if index + 1 < input.len() {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if index + 2 < input.len() {
+            out.push(TABLE[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        index += 3;
+    }
+    out
+}
+
+pub fn remote_sync_unit(wanted_by: &str) -> String {
+    format!(
+        "[Unit]\nDescription=BestCodex file sync\nAfter=network-online.target bestcodex-workspace.service\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=ROOT_PLACEHOLDER\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-agent run --config HOME_PLACEHOLDER/.local/share/bestcodex/state/agent.json\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
+    )
+}
+
+pub fn remote_workspace_unit(wanted_by: &str) -> String {
+    format!(
+        "[Unit]\nDescription=BestCodex remote workspace\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=HOME_PLACEHOLDER/.local/share/bestcodex/server\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-server run -p 127.0.0.1:9000\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
+    )
+}
+
+pub fn keep_sync_running_script(remote_root: &str) -> String {
+    let root = remote_shell_path(remote_root);
+    let workspace_id = sync_workspace_id(remote_root);
+    let client_id = sync_client_id("remote", remote_root);
+    let config = format!(
+        "{{\n  \"schemaVersion\": \"fns-agent-config/1\",\n  \"endpoint\": \"ws://127.0.0.1:9000/api/user/workspace-sync/v2\",\n  \"workspaceId\": \"{workspace_id}\",\n  \"clientId\": \"{client_id}\",\n  \"workspaceRoot\": \"ROOT_PLACEHOLDER\",\n  \"stateDir\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state\",\n  \"tokenFile\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state/token\",\n  \"sync\": {{\n    \"includes\": [\"**/*\"],\n    \"excludes\": [],\n    \"protectSecrets\": true\n  }},\n  \"transport\": {{ \"maxActiveTransfers\": 2 }}\n}}\n"
+    );
+    let token_b64 = base64_encode(b"bestcodex-local-token\n");
+    let config_b64 = base64_encode(config.as_bytes());
+    let sync_system_b64 = base64_encode(remote_sync_unit("multi-user.target").as_bytes());
+    let sync_user_b64 = base64_encode(remote_sync_unit("default.target").as_bytes());
+    let workspace_system_b64 = base64_encode(remote_workspace_unit("multi-user.target").as_bytes());
+    let workspace_user_b64 = base64_encode(remote_workspace_unit("default.target").as_bytes());
+    format!(
+        "set -eu
+home=$HOME
+bin=$home/.local/share/bestcodex/bin
+state=$home/.local/share/bestcodex/state
+server_dir=$home/.local/share/bestcodex/server
+root={root}
+mkdir -p $root $state $server_dir $home/.config/systemd/user
+chmod 0755 $bin/fns-server $bin/fns-agent
+root=$(cd $root && pwd)
+printf %s {token_b64} | base64 -d > $state/token
+chmod 0600 $state/token
+printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root# | sed s#HOME_PLACEHOLDER#$home# > $state/agent.json
+chmod 0600 $state/agent.json
+started=0
+if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  mkdir -p /etc/systemd/system
+  printf %s {workspace_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > /etc/systemd/system/bestcodex-workspace.service
+  printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > /etc/systemd/system/bestcodex-sync.service
+  systemctl daemon-reload
+  systemctl enable --now bestcodex-workspace.service || true
+  systemctl enable --now bestcodex-sync.service
+  started=1
+elif command -v systemctl >/dev/null 2>&1; then
+  printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > $home/.config/systemd/user/bestcodex-workspace.service
+  printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > $home/.config/systemd/user/bestcodex-sync.service
+  systemctl --user daemon-reload
+  systemctl --user enable --now bestcodex-workspace.service || true
+  systemctl --user enable --now bestcodex-sync.service
+  started=1
+fi
+if [ $started -eq 0 ]; then
+  if ! pgrep -f $bin/fns-server >/dev/null 2>&1; then
+    nohup $bin/fns-server run -p 127.0.0.1:9000 >/dev/null 2>&1 &
+  fi
+  if ! pgrep -f $bin/fns-agent >/dev/null 2>&1; then
+    nohup $bin/fns-agent run --config $state/agent.json >/dev/null 2>&1 &
+  fi
+fi
+sleep 1
+pgrep -f $bin/fns-agent >/dev/null 2>&1
+"
+    )
 }
 
 #[cfg(test)]
@@ -368,6 +483,37 @@ mod tests {
         assert_eq!(seen[0].0, "mkdir");
         assert!(seen[0].1.contains("项目目录"));
         assert!(seen.iter().all(|(_, detail)| !detail.contains("agent")));
+    }
+
+    #[test]
+    fn keep_sync_running_script_enables_a_permanent_service() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        assert!(
+            script.contains("systemctl") && script.contains("enable --now"),
+            "install must enable a permanent service, not only chmod: {script}"
+        );
+        assert!(
+            script.contains("Restart=always") || script.contains("base64"),
+            "service must restart forever: {script}"
+        );
+        assert!(script.contains("fns-agent") || script.contains("bestcodex-sync"));
+        assert!(
+            !script.contains('"'),
+            "double quotes break sshd's shell -c wrapper: {script}"
+        );
+        assert!(!script.contains("sudo"));
+        assert!(!script.contains("tmux"));
+        let unit = remote_sync_unit("multi-user.target");
+        assert!(unit.contains("Restart=always"));
+        assert!(unit.contains("fns-agent run --config"));
+        assert!(!unit.contains("sudo"));
+        let workspace_id = sync_workspace_id("~/bestcodex/docs");
+        assert_eq!(workspace_id.len(), 36);
+        assert_eq!(workspace_id.chars().filter(|ch| *ch == '-').count(), 4);
+        assert_ne!(
+            sync_client_id("local", "~/bestcodex/docs"),
+            sync_client_id("remote", "~/bestcodex/docs")
+        );
     }
 
     #[test]
