@@ -345,7 +345,7 @@ func (a *App) Validator() pkgapp.ValidatorInterface {
 // IsReturnSuccess whether to return success response
 // IsReturnSuccess 是否返回成功响应
 func (a *App) IsReturnSuccess() bool {
-	return a.config.App.IsReturnSussess
+	return a.config.App.ReturnSuccessEnabled()
 }
 
 // GetAuthTokenKey gets Token key
