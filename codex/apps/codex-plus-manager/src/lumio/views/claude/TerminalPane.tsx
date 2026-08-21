@@ -14,7 +14,11 @@ import {
 } from "../../claude/api.ts";
 import { lockTitleFromInput } from "../../claude/session-title.ts";
 import { dispatchClaude, getClaudeState, projectPassword } from "../../claude/store.ts";
-import { terminalBanner } from "../../claude/terminal-status.ts";
+import {
+  TERMINAL_FAIL_BANNER,
+  TERMINAL_RETRY_LABEL,
+  terminalBanner,
+} from "../../claude/terminal-status.ts";
 import {
   copyTextForKey,
   firstOpenableHttpsUrl,
@@ -43,6 +47,7 @@ export function TerminalPane({
   const [opening, setOpening] = useState(true);
   const [disconnected, setDisconnected] = useState(false);
   const [loginUrl, setLoginUrl] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
   const status = terminalBanner(
     opened || opening,
     hasOutput,
@@ -207,7 +212,7 @@ export function TerminalPane({
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [project.id, sessionId]);
+  }, [project.id, sessionId, retryTick]);
 
   useEffect(() => {
     if (hidden) return;
@@ -251,6 +256,20 @@ export function TerminalPane({
       ref={wrapRef}
     >
       {status ? <p className="dim lumio-claude-xterm-status">{status}</p> : null}
+      {status === TERMINAL_FAIL_BANNER ? (
+        <div className="lumio-claude-term-actions">
+          <button
+            className="lumio-button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setRetryTick((tick) => tick + 1);
+            }}
+            type="button"
+          >
+            {TERMINAL_RETRY_LABEL}
+          </button>
+        </div>
+      ) : null}
       {loginUrl ? (
         <div className="lumio-claude-term-actions">
           <button

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { TERMINAL_FAIL_BANNER, terminalBanner } from "./terminal-status.ts";
+import { TERMINAL_FAIL_BANNER, TERMINAL_RETRY_LABEL, terminalBanner } from "./terminal-status.ts";
 
 test("terminalBanner shows 没能打开终端 only when start failed and there is no output", () => {
   assert.equal(terminalBanner(false, false), TERMINAL_FAIL_BANNER);
@@ -22,6 +22,17 @@ test("terminalBanner keeps a non-fail status while the session is open without o
   assert.equal(terminalBanner(true, false, "连接已断开，正在重连…"), "连接已断开，正在重连…");
   assert.equal(terminalBanner(true, false), null);
   assert.equal(terminalBanner(true, false, TERMINAL_FAIL_BANNER), null);
+});
+
+test("failed open is not a dead end: banner plus retry copy", async () => {
+  assert.equal(terminalBanner(false, false), TERMINAL_FAIL_BANNER);
+  assert.equal(TERMINAL_RETRY_LABEL, "重试");
+  const pane = await readFile(
+    new URL("../views/claude/TerminalPane.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(pane, /TERMINAL_RETRY_LABEL/);
+  assert.match(pane, /重试|TERMINAL_RETRY_LABEL/);
 });
 
 test("terminalBanner copy never says agent or tmux", async () => {

@@ -1,4 +1,5 @@
 export const TERMINAL_FAIL_BANNER = "没能打开终端。";
+export const TERMINAL_RETRY_LABEL = "重试";
 
 export function terminalBanner(
   opened: boolean,
