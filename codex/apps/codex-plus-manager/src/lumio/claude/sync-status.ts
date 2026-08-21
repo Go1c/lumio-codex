@@ -1,5 +1,7 @@
 import { syncErrorCopy } from "./api.ts";
-import type { ClaudeProject, ClaudeSyncStatus } from "./types.ts";
+import type { ClaudeProject, ClaudeServerStatus, ClaudeSyncStatus } from "./types.ts";
+
+export type WorkspaceStatusTone = "ok" | "warn" | "bad" | "plain";
 
 export function projectsToResume(
   projects: ClaudeProject[],
@@ -19,17 +21,52 @@ export async function resumeSavedProjects(
   }
 }
 
-export function workspaceStatusCopy(sync: ClaudeSyncStatus | null): string {
-  if (!sync || sync.state === "idle") return "同步未运行";
-  if (sync.state === "fail") return syncErrorCopy(sync.errorCode);
-  if (sync.state === "conflicts") return `${sync.conflicts} 个冲突`;
-  if (sync.state === "running") {
-    if (sync.filesTotal > 0) {
-      return `同步运行中 · ${sync.filesDone} / ${sync.filesTotal}`;
-    }
-    return "同步运行中";
+export function reconcileSyncWithRemote(
+  sync: ClaudeSyncStatus | null,
+  snapshot: ClaudeServerStatus | null,
+): ClaudeSyncStatus | null {
+  if (!sync) return sync;
+  if (!snapshot?.ok || !snapshot.services) return sync;
+  const remoteSync = snapshot.services.items.find((item) => item.key === "sync");
+  if (!remoteSync || remoteSync.running) return sync;
+  if (sync.state === "conflicts" || sync.state === "offline") return sync;
+  if (sync.state === "fail" && sync.errorCode && sync.errorCode !== "SYNC_REMOTE_NOT_RUNNING") {
+    return sync;
   }
-  if (sync.state === "synced") return "已同步 · 文件与远端一致";
-  if (sync.state === "offline") return "离线 · 本机目录可用";
-  return "同步未运行";
+  return {
+    ...sync,
+    state: "fail",
+    errorCode: "SYNC_REMOTE_NOT_RUNNING",
+  };
+}
+
+export function workspaceStatusAppearance(
+  sync: ClaudeSyncStatus | null,
+  remote?: ClaudeServerStatus | null,
+): { copy: string; tone: WorkspaceStatusTone } {
+  const effective = reconcileSyncWithRemote(sync, remote ?? null);
+  if (!effective || effective.state === "idle") return { copy: "同步未运行", tone: "bad" };
+  if (effective.state === "fail") return { copy: syncErrorCopy(effective.errorCode), tone: "bad" };
+  if (effective.state === "conflicts") {
+    return { copy: `${effective.conflicts} 个冲突`, tone: "warn" };
+  }
+  if (effective.state === "running") {
+    if (effective.filesTotal > 0) {
+      return {
+        copy: `同步运行中 · ${effective.filesDone} / ${effective.filesTotal}`,
+        tone: "plain",
+      };
+    }
+    return { copy: "同步运行中", tone: "plain" };
+  }
+  if (effective.state === "synced") return { copy: "已同步 · 文件与远端一致", tone: "ok" };
+  if (effective.state === "offline") return { copy: "离线 · 本机目录可用", tone: "warn" };
+  return { copy: "同步未运行", tone: "bad" };
+}
+
+export function workspaceStatusCopy(
+  sync: ClaudeSyncStatus | null,
+  remote?: ClaudeServerStatus | null,
+): string {
+  return workspaceStatusAppearance(sync, remote).copy;
 }

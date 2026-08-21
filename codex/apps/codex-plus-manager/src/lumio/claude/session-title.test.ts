@@ -64,6 +64,13 @@ test("lockTitleFromInput skips slash commands and blank input", () => {
   assert.deepEqual(lockTitleFromInput(current, "  "), current);
 });
 
+test("lockTitleFromInput ignores terminal device replies so a new Claude chat stays 新对话", () => {
+  const current = { title: null, titleLocked: false };
+  assert.deepEqual(lockTitleFromInput(current, "[>0;276;0c[O[I[<0;3"), current);
+  assert.deepEqual(lockTitleFromInput(current, "[?1;2c"), current);
+  assert.equal(firstSubmittedLine("[>0;276;0c"), null);
+});
+
 test("lockTitleFromInput clips long titles to the default width", () => {
   const locked = lockTitleFromInput(
     { title: null, titleLocked: false },

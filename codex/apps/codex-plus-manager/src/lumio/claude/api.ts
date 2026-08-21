@@ -178,6 +178,8 @@ export function syncErrorCopy(code: string | null): string {
   switch (code) {
     case "SYNC_ENGINE_UNAVAILABLE":
       return "这个版本的 BestCodex 没有把同步组件打进来，暂时拉不了文件。更新或重装 BestCodex 后再试。";
+    case "SYNC_REMOTE_NOT_RUNNING":
+      return "服务器上的同步组件没有在运行，文件还没同步过去。";
     case "SYNC_COPY_UNCONFIRMED":
       return "还没把服务器上的文件拉到这台电脑。";
     case "SSH_ALIAS_UNKNOWN":

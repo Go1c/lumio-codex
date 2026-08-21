@@ -41,7 +41,7 @@ import {
   subscribeClaudeEvent,
   type ClaudeSshArgs,
 } from "./api.ts";
-import { resumeSavedProjects } from "./sync-status.ts";
+import { reconcileSyncWithRemote, resumeSavedProjects } from "./sync-status.ts";
 import type {
   ClaudeCliInstallPhase,
   ClaudeConflictResolution,
@@ -51,6 +51,7 @@ import type {
   ClaudeProject,
   ClaudeServerStatus,
   ClaudeSessionsSnapshot,
+  ClaudeSyncStatus,
 } from "./types.ts";
 import { DEFAULT_CLAUDE_PLAN_CENTS } from "./types.ts";
 
@@ -119,6 +120,8 @@ export function ensureClaudeEngineBridge(): void {
     filesDone: number;
     filesTotal: number;
     projectId?: string;
+    running?: boolean;
+    errorCode?: string | null;
   }>(CLAUDE_SYNC_PROGRESS_EVENT, (payload) => {
     const sheet = getClaudeState().sheet;
     if (sheet !== null) {
@@ -130,14 +133,15 @@ export function ensureClaudeEngineBridge(): void {
     }
     if (payload.projectId) {
       const current = getClaudeState().syncByProject[payload.projectId];
+      const stopped = payload.running === false;
       dispatchClaude({
         type: "project-sync-updated",
         projectId: payload.projectId,
         sync: {
-          state: current?.state === "conflicts" ? "conflicts" : "running",
+          state: current?.state === "conflicts" ? "conflicts" : stopped ? "fail" : "running",
           filesDone: payload.filesDone,
           filesTotal: payload.filesTotal,
-          errorCode: current?.errorCode ?? null,
+          errorCode: stopped ? (payload.errorCode ?? "SYNC_FAILED") : (current?.errorCode ?? null),
           conflicts: current?.conflicts ?? 0,
         },
       });
@@ -429,18 +433,6 @@ function sshFromProject(project: ClaudeProject): ClaudeSshArgs {
 export async function resumeClaudeSync(projectId: string): Promise<void> {
   const project = getClaudeState().projects.find((item) => item.id === projectId);
   if (!project) return;
-  const current = getClaudeState().syncByProject[projectId];
-  dispatchClaude({
-    type: "project-sync-updated",
-    projectId,
-    sync: {
-      state: current?.state === "conflicts" ? "conflicts" : "running",
-      filesDone: current?.filesDone ?? 0,
-      filesTotal: current?.filesTotal ?? 0,
-      errorCode: null,
-      conflicts: current?.conflicts ?? 0,
-    },
-  });
   const result = await resumeOfficialSync({
     ...sshFromProject(project),
     remoteRoot: project.remoteRoot,
@@ -473,6 +465,28 @@ export async function resumeClaudeSync(projectId: string): Promise<void> {
       conflicts: after?.conflicts ?? 0,
     },
   });
+  applyRemoteSyncHealth(projectId, await fetchClaudeServerStatus(projectId));
+}
+
+export function applyRemoteSyncHealth(
+  projectId: string,
+  snapshot: ClaudeServerStatus | null,
+): void {
+  const current = getClaudeState().syncByProject[projectId];
+  if (!current) return;
+  const next = reconcileSyncWithRemote(current, snapshot);
+  if (!next || syncStatusUnchanged(current, next)) return;
+  dispatchClaude({ type: "project-sync-updated", projectId, sync: next });
+}
+
+function syncStatusUnchanged(left: ClaudeSyncStatus, right: ClaudeSyncStatus): boolean {
+  return (
+    left.state === right.state &&
+    left.errorCode === right.errorCode &&
+    left.filesDone === right.filesDone &&
+    left.filesTotal === right.filesTotal &&
+    left.conflicts === right.conflicts
+  );
 }
 
 export async function fetchClaudeServerStatus(projectId: string): Promise<ClaudeServerStatus | null> {
@@ -746,7 +760,7 @@ export async function activateClaudeProject(projectId: string): Promise<void> {
     dispatchClaude({ type: "set-workspace-phase", projectId, phase: "resume" });
     await resumeClaudeSync(projectId);
     const sync = getClaudeState().syncByProject[projectId];
-    if (sync?.state === "fail") {
+    if (sync?.state === "fail" && sync.errorCode !== "SYNC_REMOTE_NOT_RUNNING") {
       dispatchClaude({ type: "set-workspace-phase", projectId, phase: "offline" });
       await refreshClaudeFiles(projectId);
       return;

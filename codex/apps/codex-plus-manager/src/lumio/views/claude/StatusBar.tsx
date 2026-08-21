@@ -1,8 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { fetchClaudeServerStatus } from "../../claude/session.ts";
+import { applyRemoteSyncHealth, fetchClaudeServerStatus } from "../../claude/session.ts";
 import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
-import { workspaceStatusCopy } from "../../claude/sync-status.ts";
+import { workspaceStatusAppearance } from "../../claude/sync-status.ts";
 import type {
   ClaudeProject,
   ClaudeServerStatus,
@@ -38,8 +38,11 @@ export function StatusBar({
     }
     let cancelled = false;
     const load = () => {
-      void fetchClaudeServerStatus(active.id).then((next) => {
-        if (!cancelled) setSnapshot(next);
+      const projectId = active.id;
+      void fetchClaudeServerStatus(projectId).then((next) => {
+        if (cancelled) return;
+        setSnapshot(next);
+        applyRemoteSyncHealth(projectId, next);
       });
     };
     load();
@@ -65,6 +68,7 @@ export function StatusBar({
   const running = sessions.filter((session) => session.running).length;
   const conversation = conversationCountCopy(sessions.length, running);
   const syncPane: ClaudeStatusDrawerPane = conflictCount > 0 ? "conflicts" : "server";
+  const appearance = workspaceStatusAppearance(sync, snapshot);
 
   return (
     <footer className="lumio-claude-status">
@@ -76,8 +80,13 @@ export function StatusBar({
           <span className="lumio-claude-status-sep">·</span>
           <StatusSeg pane="server">{claudeLine}</StatusSeg>
           <span className="lumio-claude-status-sep">·</span>
-          <StatusSeg className={sync?.state === "conflicts" ? "is-warn" : undefined} pane={syncPane}>
-            {workspaceStatusCopy(sync)}
+          <StatusSeg
+            className={appearance.tone === "plain" ? undefined : `is-${appearance.tone}`}
+            pane={syncPane}
+          >
+            {appearance.tone === "bad" || appearance.tone === "warn"
+              ? `● ${appearance.copy}`
+              : appearance.copy}
           </StatusSeg>
           {resources ? (
             <>

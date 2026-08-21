@@ -23,7 +23,16 @@ export function firstSubmittedLine(input: string): string | null {
   const line = (input.split(/\r?\n/, 1)[0] ?? "").trimEnd();
   if (line.trim() === "") return null;
   if (isSlashCommand(line)) return null;
+  if (isTerminalDeviceReply(line)) return null;
   return line;
+}
+
+function isTerminalDeviceReply(line: string): boolean {
+  const text = line.trim();
+  if (text === "") return false;
+  if (/[\x00-\x1f\x7f]/.test(text)) return true;
+  if (text.includes("[>") || text.includes("[?") || text.includes("[<")) return true;
+  return /^\[[\?><=0-9;]*[A-Za-z](?:\[[\?><=0-9;]*[A-Za-z])*$/.test(text);
 }
 
 export function lockTitleFromInput(
