@@ -85,11 +85,19 @@ Claude 四步 sheet 的「装组件」和「首次同步」依赖两套构建产
 
 真文件由 `scripts/sync-components/stage.mjs` 写入；缺失时 `src-tauri/build.rs` 生成占位（运行时会拒绝）。git 里没有真二进制是预期。
 
-`apps/codex-plus-manager` 的 `npm run dev` 会先跑 `stage.mjs --dev`：sidecar 必须到位；远端组件缺了会告警，四步 sheet 第三步会诚实失败。补齐远端组件（需要本机 Go；源在仓内 `cchaven/services/fns-server`，不擅装 Go）：
+`apps/codex-plus-manager` 的 `npm run dev` 会先跑 `stage.mjs --dev`：sidecar 必须到位；远端组件缺了会告警，四步 sheet 第三步会诚实失败。远端 `fns-agent` 必须是静态 musl ELF；CI 用官方 Rust Alpine 容器构建。本机补齐远端组件需要 Docker 与 Go（源在仓内 `cchaven/services/fns-server`，不擅自安装）：
 
 ```bash
-# 在 codex/ 目录
-node scripts/sync-components/stage.mjs --build-remote
+# 在仓库根目录构建静态 Linux agent
+docker run --rm \
+  --volume "$PWD:/workspace" \
+  --workdir /workspace/cchaven \
+  rust:1.94-alpine \
+  cargo build --locked --release --target x86_64-unknown-linux-musl -p fns-agent --bin fns-agent
+
+# 在 codex/ 目录构建 server 并生成远端组件目录
+FNS_AGENT_LINUX_X86_64_ARTIFACT=../cchaven/target/x86_64-unknown-linux-musl/release/fns-agent \
+  node scripts/sync-components/stage.mjs --build-remote
 ```
 
 打内部包（§5）之前先严格暂存（两边都必须到位，缺了失败）：

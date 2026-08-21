@@ -23,18 +23,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: stable
+      - name: Build static musl agent
+        run: |
+          docker run --rm \
+            --volume ${{ github.workspace }}:/workspace \
+            --workdir /workspace/cchaven \
+            rust:1.94-alpine \
+            cargo build --locked --release --target x86_64-unknown-linux-musl -p fns-agent --bin fns-agent
       - name: Build remote components
+        env:
+          FNS_AGENT_LINUX_X86_64_ARTIFACT: ${{ github.workspace }}/cchaven/target/x86_64-unknown-linux-musl/release/fns-agent
         run: node codex/scripts/sync-components/stage.mjs --build-remote
       - name: Verify remote components
         run: node codex/scripts/sync-components/verify.mjs remote codex/target/sync-components/remote-linux-x86_64
+      - name: Smoke remote watchdog
+        run: codex/scripts/sync-components/smoke-linux.sh codex/target/sync-components/remote-linux-x86_64
       - name: Upload sync components
         uses: actions/upload-artifact@v4
         with:

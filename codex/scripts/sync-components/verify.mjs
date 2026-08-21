@@ -20,6 +20,25 @@ export function isElfX8664(buf) {
   );
 }
 
+export function hasElfInterpreter(buf) {
+  if (!isElfX8664(buf)) throw new Error("不是可解析的 ELF64 x86_64 制品");
+  const programHeaderOffset = Number(buf.readBigUInt64LE(32));
+  const programHeaderSize = buf.readUInt16LE(54);
+  const programHeaderCount = buf.readUInt16LE(56);
+  if (programHeaderCount === 0) return false;
+  if (!Number.isSafeInteger(programHeaderOffset) || programHeaderSize < 56) {
+    throw new Error("ELF64 program headers 无效");
+  }
+  const programHeadersEnd = programHeaderOffset + programHeaderSize * programHeaderCount;
+  if (programHeaderOffset < 64 || programHeadersEnd > buf.length) {
+    throw new Error("ELF64 program headers 越界");
+  }
+  for (let index = 0; index < programHeaderCount; index += 1) {
+    if (buf.readUInt32LE(programHeaderOffset + index * programHeaderSize) === 3) return true;
+  }
+  return false;
+}
+
 export function isMachO64(buf, cpu) {
   const type = { x64: 0x01000007, arm64: 0x0100000c }[cpu];
   return buf.length > MIN_BYTES && buf.readUInt32LE(0) === 0xfeedfacf && buf.readUInt32LE(4) === type;
@@ -38,6 +57,10 @@ export function verifyRemoteDir(dir) {
     const file = path.join(dir, name);
     const buf = readFileSync(file);
     if (!isElfX8664(buf)) throw new Error(`${file} 不是 Linux x86_64 ELF（或不足 ${MIN_BYTES} 字节）`);
+  }
+  const agent = readFileSync(path.join(dir, "fns-agent"));
+  if (hasElfInterpreter(agent)) {
+    throw new Error("fns-agent 含 PT_INTERP，是动态链接 ELF；远端制品必须静态链接");
   }
   const provenancePath = path.join(dir, "release-provenance.json");
   const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
