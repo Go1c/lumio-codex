@@ -70,6 +70,8 @@ test("nohup watchdog does not re-enable SIGHUP termination", () => {
   const watchdog = readFileSync(new URL("./watchdog.sh", import.meta.url), "utf8");
   assert.doesNotMatch(watchdog, /^trap .*HUP/m);
   assert.match(watchdog, /^trap .*TERM/m);
+  assert.match(watchdog, /state=STATE_PLACEHOLDER/);
+  assert.match(watchdog, /process_pid \$agent \$state\/agent\.json/);
 });
 
 test("Linux smoke matches private credential modes and preserves failure logs", () => {
@@ -79,4 +81,12 @@ test("Linux smoke matches private credential modes and preserves failure logs", 
   assert.match(smoke, /chmod 0600 \$state\/token \$state\/agent\.json/);
   assert.match(smoke, /smoke failed: scratch=\$scratch/);
   assert.match(smoke, /tail -n 80 \$state\/agent\.stderr\.log/);
+  assert.match(smoke, /workspace_one/);
+  assert.match(smoke, /workspace_two/);
+  assert.match(smoke, /state_one/);
+  assert.match(smoke, /state_two/);
+  assert.match(smoke, /sed s#STATE_PLACEHOLDER#/);
+  assert.match(smoke, /agent_one_pid/);
+  assert.match(smoke, /agent_two_pid/);
+  assert.match(smoke, /replacement_agent_one_pid/);
 });
