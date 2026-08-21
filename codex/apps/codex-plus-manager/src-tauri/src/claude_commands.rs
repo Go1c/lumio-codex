@@ -687,6 +687,7 @@ pub fn lumio_claude_first_sync(
         key_path.as_deref(),
         password.as_deref(),
         &local_root,
+        &remote_root,
     )
     .is_ok();
 
@@ -1182,7 +1183,17 @@ fn spawn_official_engine(
     key_path: Option<&str>,
     password: Option<&str>,
     local_root: &str,
+    remote_root: &str,
 ) -> Result<(), String> {
+    match run_ssh_target(
+        target,
+        password,
+        key_path,
+        &claude_deploy::keep_sync_running_script(remote_root),
+    ) {
+        Ok(output) if output.status.success() => {}
+        _ => return Err("SYNC_ENGINE_UNAVAILABLE".into()),
+    }
     let local_port = app
         .state::<TunnelManager>()
         .open(key, target, key_path, password, 9000)?;
@@ -1193,8 +1204,8 @@ fn spawn_official_engine(
         &state_dir,
         &local,
         &format!("ws://127.0.0.1:{local_port}/api/user/workspace-sync/v2"),
-        key,
-        key,
+        &claude_deploy::sync_workspace_id(remote_root),
+        &claude_deploy::sync_client_id("local", remote_root),
     )?;
     engine.adopt_sidecar(key, &config)
 }
@@ -1208,6 +1219,7 @@ fn resume_sync_inner(
     key_path: Option<String>,
     host_alias: Option<String>,
     local_root: String,
+    remote_root: String,
     project_id: Option<String>,
 ) -> ClaudeCommandResult<claude_sync::ResumeOutcome> {
     let alias = host_alias.as_deref().filter(|value| !value.is_empty());
@@ -1224,6 +1236,12 @@ fn resume_sync_inner(
         }
     };
     let key = project_id.unwrap_or_else(|| format!("{}@{}", target.user, target.host));
+    let _ = run_ssh_target(
+        &target,
+        password.as_deref(),
+        key_path.as_deref(),
+        &claude_deploy::keep_sync_running_script(&remote_root),
+    );
     let engine = app.state::<SyncEngine>();
     let action = claude_sync::plan_resume_sync(
         claude_sync::sidecar_command().is_some(),
@@ -1232,6 +1250,7 @@ fn resume_sync_inner(
     let watch_app = app.clone();
     let watch_root = local_root.clone();
     let watch_key = key.clone();
+    let remote_for_keep = remote_root.clone();
     let outcome = claude_sync::execute_resume(action, || {
         spawn_official_engine(
             &app,
@@ -1241,6 +1260,7 @@ fn resume_sync_inner(
             key_path.as_deref(),
             password.as_deref(),
             &local_root,
+            &remote_for_keep,
         )?;
         let emit_app = watch_app.clone();
         engine.watch_local_files(&watch_key, watch_root.clone(), move |progress| {
@@ -1264,10 +1284,18 @@ pub async fn lumio_claude_resume_sync(
     local_root: String,
     project_id: Option<String>,
 ) -> ClaudeCommandResult<claude_sync::ResumeOutcome> {
-    let _ = remote_root;
     tauri::async_runtime::spawn_blocking(move || {
         resume_sync_inner(
-            app, host, user, port, password, key_path, host_alias, local_root, project_id,
+            app,
+            host,
+            user,
+            port,
+            password,
+            key_path,
+            host_alias,
+            local_root,
+            remote_root,
+            project_id,
         )
     })
     .await

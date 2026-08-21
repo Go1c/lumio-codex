@@ -67,7 +67,7 @@ export function setupPhaseCopy(phase: string, uploadIndex = 1): string {
         ? "正在把同步组件传到服务器（2 / 2）…"
         : "正在把同步组件传到服务器（1 / 2）…";
     case "finish":
-      return "正在完成安装…";
+      return "正在启动同步组件并保持运行…";
     default:
       return "正在准备…";
   }
