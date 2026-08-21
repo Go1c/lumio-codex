@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // 同步组件唯一暂存入口。
 // 用法: node stage.mjs [--dev | --build-remote]
-// 环境: BESTCODEX_FNS_PREBUILT_DIR   远端对预制目录（CI artifact 下载处 / 本机缓存）
-//       FNS_SERVER_SOURCE_DIR        覆盖仓内 fns-server 路径（默认 cchaven/services/fns-server）
+// 环境: BESTCODEX_FNS_PREBUILT_DIR          远端对预制目录（CI artifact 下载处 / 本机缓存）
+//       FNS_AGENT_LINUX_X86_64_ARTIFACT     显式预构建的静态 musl fns-agent
+//       FNS_SERVER_SOURCE_DIR               覆盖仓内 fns-server 路径（默认 cchaven/services/fns-server）
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -30,6 +31,14 @@ export function cargoTargetRoot(env = process.env, root = cchavenRoot) {
 
 export function resolveServerSource(env = process.env, cchaven = cchavenRoot) {
   return env.FNS_SERVER_SOURCE_DIR || path.join(cchaven, "services", "fns-server");
+}
+
+export function resolveRemoteAgentInput(env = process.env) {
+  const input = env.FNS_AGENT_LINUX_X86_64_ARTIFACT;
+  if (!input) {
+    throw new Error("构建远端组件必须设置 FNS_AGENT_LINUX_X86_64_ARTIFACT，指向静态 musl fns-agent");
+  }
+  return input;
 }
 
 export function hostTriple(platform = process.platform, arch = process.arch) {
@@ -83,13 +92,12 @@ function stageHostSidecar() {
 function buildRemote() {
   fs.mkdirSync(prebuiltDir, { recursive: true });
   const agentOut = path.join(prebuiltDir, "fns-agent");
-  if (process.platform === "linux") {
-    run("cargo", ["build", "--locked", "--release", "--target", "x86_64-unknown-linux-gnu", "-p", "fns-agent", "--bin", "fns-agent"], { cwd: cchavenRoot });
-    fs.copyFileSync(path.join(cargoTargetRoot(), "x86_64-unknown-linux-gnu", "release", "fns-agent"), agentOut);
-    fs.chmodSync(agentOut, 0o755);
-  } else if (!fs.existsSync(agentOut)) {
-    throw new Error(`非 Linux 宿主无法编 Linux fns-agent；请先把产物放进 ${prebuiltDir}（CI 由 ubuntu job 提供）`);
+  const agentInput = path.resolve(resolveRemoteAgentInput());
+  if (!fs.existsSync(agentInput)) {
+    throw new Error(`预构建 fns-agent 不存在：${agentInput}`);
   }
+  if (agentInput !== path.resolve(agentOut)) fs.copyFileSync(agentInput, agentOut);
+  fs.chmodSync(agentOut, 0o755);
   const serverSource = resolveServerSource();
   if (!fs.existsSync(path.join(serverSource, "go.mod"))) {
     throw new Error(`仓内 fns-server 源缺失或不是 Go 模块：${serverSource}`);

@@ -159,6 +159,23 @@ pub fn parse_inspect_output(stdout: &str) -> InspectReport {
 pub fn stop_sync_for_replace_script() -> String {
     "set -u
 bin=$HOME/.local/share/bestcodex/bin
+state=$HOME/.local/share/bestcodex/state
+if [ -f $state/watchdog.pid ]; then
+  watchdog_pid=$(cat $state/watchdog.pid 2>/dev/null || true)
+  if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+    kill $watchdog_pid 2>/dev/null || true
+    watchdog_stop_attempt=0
+    while [ $watchdog_stop_attempt -lt 10 ] && kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; do
+      watchdog_stop_attempt=$((watchdog_stop_attempt + 1))
+      sleep 1
+    done
+    if kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+      kill -KILL $watchdog_pid 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+  rm -f $state/watchdog.pid
+fi
 if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   systemctl stop bestcodex-sync.service || true
   systemctl stop bestcodex-workspace.service || true
@@ -166,10 +183,35 @@ elif command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop bestcodex-sync.service || true
   systemctl --user stop bestcodex-workspace.service || true
 fi
-pkill -f $bin/fns-agent || true
-pkill -f $bin/fns-server || true
-sleep 1
-true
+for proc_exe in /proc/[0-9]*/exe; do
+  [ -L $proc_exe ] || continue
+  target=$(readlink $proc_exe 2>/dev/null || true)
+  case x$target in
+    x$bin/fns-agent|x$bin/fns-server)
+      pid=${proc_exe#/proc/}
+      kill ${pid%/exe} 2>/dev/null || true
+      ;;
+  esac
+done
+binary_stop_attempt=0
+while [ $binary_stop_attempt -lt 10 ]; do
+  binary_running=0
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L $proc_exe ] || continue
+    target=$(readlink $proc_exe 2>/dev/null || true)
+    case x$target in
+      x$bin/fns-agent|x$bin/fns-server)
+        binary_running=1
+        pid=${proc_exe#/proc/}
+        kill ${pid%/exe} 2>/dev/null || true
+        ;;
+    esac
+  done
+  if [ $binary_running -eq 0 ]; then exit 0; fi
+  binary_stop_attempt=$((binary_stop_attempt + 1))
+  sleep 1
+done
+exit 1
 "
     .into()
 }
@@ -223,9 +265,11 @@ pub fn deploy_remote(
 ) -> PrepareOutcome {
     on_progress(PrepareProgress::mkdir());
     let mkdir = remote_prepare_mkdir(remote_root);
-    match run_ssh(&mkdir) {
+    let mkdir_result = run_ssh(&mkdir);
+    match mkdir_result {
         Ok(output) if output.status.success() => {}
-        Ok(_) | Err(_) => {
+        failed => {
+            log_ssh_failure("mkdir", &failed);
             return PrepareOutcome {
                 ok: false,
                 error_code: Some("SSH_PREPARE_FAILED".into()),
@@ -235,7 +279,15 @@ pub fn deploy_remote(
     }
 
     if replace {
-        let _ = run_ssh(&stop_sync_for_replace_script());
+        let stop_result = run_ssh(&stop_sync_for_replace_script());
+        if !matches!(&stop_result, Ok(output) if output.status.success()) {
+            log_ssh_failure("replace-stop", &stop_result);
+            return PrepareOutcome {
+                ok: false,
+                error_code: Some("SSH_PREPARE_FAILED".into()),
+                detail: Some("没能在服务器上装好同步组件。".into()),
+            };
+        }
     }
 
     on_progress(PrepareProgress::upload(1));
@@ -273,17 +325,47 @@ pub fn deploy_remote(
 
     on_progress(PrepareProgress::finish());
     let start = keep_sync_running_script(remote_root);
-    match run_ssh(&start) {
+    let start_result = run_ssh(&start);
+    match start_result {
         Ok(output) if output.status.success() => PrepareOutcome {
             ok: true,
             error_code: None,
             detail: None,
         },
-        _ => PrepareOutcome {
-            ok: false,
-            error_code: Some("SSH_PREPARE_FAILED".into()),
-            detail: Some("没能在服务器上装好同步组件。".into()),
-        },
+        failed => {
+            log_ssh_failure("start", &failed);
+            PrepareOutcome {
+                ok: false,
+                error_code: Some("SSH_PREPARE_FAILED".into()),
+                detail: Some("没能在服务器上装好同步组件。".into()),
+            }
+        }
+    }
+}
+
+fn format_ssh_failure_log(stage: &str, exit: Option<i32>, stderr: &[u8]) -> String {
+    let tail_start = stderr.len().saturating_sub(4096);
+    let mut bounded = String::from_utf8_lossy(&stderr[tail_start..]).into_owned();
+    if bounded.len() > 4096 {
+        let mut end = 4096;
+        while !bounded.is_char_boundary(end) {
+            end -= 1;
+        }
+        bounded.truncate(end);
+    }
+    format!(
+        "[claude-deploy] stage={stage} exit={} stderr={bounded}",
+        exit.map_or_else(|| "unknown".into(), |code| code.to_string())
+    )
+}
+
+fn log_ssh_failure(stage: &str, result: &Result<std::process::Output, &'static str>) {
+    match result {
+        Ok(output) => eprintln!(
+            "{}",
+            format_ssh_failure_log(stage, output.status.code(), &output.stderr)
+        ),
+        Err(code) => eprintln!("[claude-deploy] stage={stage} exit=unavailable error={code}"),
     }
 }
 
@@ -322,14 +404,14 @@ fn scp_file(
     command.args(&args);
     command.stdin(Stdio::null());
     command.stdout(Stdio::null());
-    command.stderr(Stdio::null());
     let askpass =
         crate::claude_ssh::attach_askpass(&mut command, password, key, target.use_config)?;
-    let status = command.status().map_err(|_| "SSH_CLIENT_MISSING")?;
+    let output = command.output().map_err(|_| "SSH_CLIENT_MISSING")?;
     drop(askpass);
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
+        log_ssh_failure("scp", &Ok(output));
         Err("SSH_PREPARE_FAILED")
     }
 }
@@ -407,6 +489,8 @@ pub fn keep_sync_running_script(remote_root: &str) -> String {
     let sync_user_b64 = base64_encode(remote_sync_unit("default.target").as_bytes());
     let workspace_system_b64 = base64_encode(remote_workspace_unit("multi-user.target").as_bytes());
     let workspace_user_b64 = base64_encode(remote_workspace_unit("default.target").as_bytes());
+    let watchdog_b64 =
+        base64_encode(include_str!("../../../../scripts/sync-components/watchdog.sh").as_bytes());
     format!(
         "set -eu
 home=$HOME
@@ -419,30 +503,85 @@ chmod 0755 $bin/fns-server $bin/fns-agent
 root=$(cd $root && pwd)
 printf %s {token_b64} | base64 -d > $state/token
 chmod 0600 $state/token
-printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root# | sed s#HOME_PLACEHOLDER#$home# > $state/agent.json
+printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root#g | sed s#HOME_PLACEHOLDER#$home#g > $state/agent.json
 chmod 0600 $state/agent.json
+printf %s {watchdog_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g | sed s#PORT_PLACEHOLDER#9000#g > $state/watchdog.sh
+chmod 0700 $state/watchdog.sh
+if grep -R PLACEHOLDER $state/agent.json $state/watchdog.sh >/dev/null; then exit 1; fi
+systemd_scope=none
+watchdog_required=0
 if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  systemd_scope=system
   mkdir -p /etc/systemd/system
-  printf %s {workspace_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > /etc/systemd/system/bestcodex-workspace.service
-  printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > /etc/systemd/system/bestcodex-sync.service
+  printf %s {workspace_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g > /etc/systemd/system/bestcodex-workspace.service
+  printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g > /etc/systemd/system/bestcodex-sync.service
+  if grep -R PLACEHOLDER $state/agent.json /etc/systemd/system/bestcodex-workspace.service /etc/systemd/system/bestcodex-sync.service >/dev/null; then exit 1; fi
   systemctl daemon-reload || true
   systemctl enable --now bestcodex-workspace.service || true
   systemctl enable --now bestcodex-sync.service || true
 elif command -v systemctl >/dev/null 2>&1; then
-  printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > $home/.config/systemd/user/bestcodex-workspace.service
-  printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > $home/.config/systemd/user/bestcodex-sync.service
+  systemd_scope=user
+  printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g > $home/.config/systemd/user/bestcodex-workspace.service
+  printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g > $home/.config/systemd/user/bestcodex-sync.service
+  if grep -R PLACEHOLDER $state/agent.json $home/.config/systemd/user/bestcodex-workspace.service $home/.config/systemd/user/bestcodex-sync.service >/dev/null; then exit 1; fi
   systemctl --user daemon-reload || true
   systemctl --user enable --now bestcodex-workspace.service || true
   systemctl --user enable --now bestcodex-sync.service || true
+  if ! command -v loginctl >/dev/null 2>&1 || ! loginctl show-user $(id -u) -p Linger 2>/dev/null | grep -Fx Linger=yes >/dev/null; then
+    systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service || true
+    rm -f $home/.config/systemd/user/default.target.wants/bestcodex-sync.service
+    rm -f $home/.config/systemd/user/default.target.wants/bestcodex-workspace.service
+    systemd_scope=none
+    watchdog_required=1
+  fi
 fi
-if ! pgrep -f $bin/fns-server >/dev/null 2>&1; then
-  nohup $bin/fns-server run -p 127.0.0.1:9000 >/dev/null 2>&1 &
+process_pid() {{
+  wanted=$1
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L $proc_exe ] || continue
+    target=$(readlink $proc_exe 2>/dev/null || true)
+    case x$target in
+      x$wanted)
+        pid=${{proc_exe#/proc/}}
+        echo ${{pid%/exe}}
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}}
+attempt=0
+while [ $attempt -lt 5 ]; do
+  if process_pid $bin/fns-server >/dev/null && process_pid $bin/fns-agent >/dev/null; then break; fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+if [ $watchdog_required -eq 1 ] || ! process_pid $bin/fns-server >/dev/null || ! process_pid $bin/fns-agent >/dev/null; then
+  if [ $systemd_scope = system ]; then
+    systemctl stop bestcodex-sync.service bestcodex-workspace.service || true
+  elif [ $systemd_scope = user ]; then
+    systemctl --user stop bestcodex-sync.service bestcodex-workspace.service || true
+  fi
+  watchdog_running=0
+  if [ -f $state/watchdog.pid ]; then
+    watchdog_pid=$(cat $state/watchdog.pid 2>/dev/null || true)
+    if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then watchdog_running=1; fi
+  fi
+  if [ $watchdog_running -eq 0 ]; then
+    nohup sh $state/watchdog.sh >/dev/null 2>>$state/watchdog.stderr.log &
+    echo $! > $state/watchdog.pid
+  fi
 fi
-if ! pgrep -f $bin/fns-agent >/dev/null 2>&1; then
-  nohup $bin/fns-agent run --config $state/agent.json >/dev/null 2>&1 &
-fi
-sleep 1
-pgrep -f $bin/fns-agent >/dev/null 2>&1
+attempt=0
+while [ $attempt -lt 20 ]; do
+  if process_pid $bin/fns-server >/dev/null && process_pid $bin/fns-agent >/dev/null; then exit 0; fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+echo bestcodex-sync-start-failed >&2
+tail -n 40 $state/server.stderr.log >&2 2>/dev/null || true
+tail -n 40 $state/agent.stderr.log >&2 2>/dev/null || true
+exit 1
 "
     )
 }
@@ -494,7 +633,19 @@ mod tests {
     #[test]
     fn replace_stops_running_binaries_before_copy() {
         let script = stop_sync_for_replace_script();
-        assert!(script.contains("pkill"));
+        let watchdog = script.find("watchdog.pid").expect("watchdog stop");
+        let server = script.find("fns-server").expect("server stop");
+        assert!(
+            watchdog < server,
+            "watchdog must stop before binaries: {script}"
+        );
+        assert!(script.contains("watchdog_stop_attempt=0"));
+        assert!(script.contains("kill -0 $watchdog_pid"));
+        assert!(script.contains("/proc/[0-9]*/exe"));
+        assert!(!script.contains("pkill"));
+        assert!(script.contains("binary_stop_attempt=0"));
+        assert!(script.contains("[ $binary_stop_attempt -lt 10 ]"));
+        assert!(script.contains("exit 1"));
         assert!(
             !script.contains('"'),
             "double quotes break sshd's shell -c wrapper: {script}"
@@ -622,6 +773,9 @@ mod tests {
         );
         assert!(!script.contains("sudo"));
         assert!(!script.contains("tmux"));
+        assert!(!script.contains("pgrep -f"));
+        assert!(script.contains("/proc/[0-9]*/exe"));
+        assert!(script.contains("watchdog.pid"));
         let unit = remote_sync_unit("multi-user.target");
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("fns-agent run --config"));
@@ -646,11 +800,92 @@ mod tests {
             !script.contains("if [ $started -eq 0 ]"),
             "nohup must still run when systemd exists but the process is missing: {script}"
         );
-        assert!(script.contains("nohup $bin/fns-agent"));
+        assert!(script.contains("nohup sh $state/watchdog.sh"));
+        assert!(script.contains("server.stderr.log"));
+        assert!(script.contains("agent.stderr.log"));
+        assert!(script.contains("tail -n 40"));
+        assert!(script.contains("attempt=0"));
+        assert!(script.contains("[ $attempt -lt 20 ]"));
         assert!(
             !script.contains('"'),
             "double quotes break sshd's shell -c wrapper: {script}"
         );
+    }
+
+    #[test]
+    fn user_systemd_without_linger_falls_back_to_watchdog() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        assert!(script.contains("loginctl show-user $(id -u) -p Linger"));
+        assert!(script.contains("grep -Fx Linger=yes"));
+        assert!(script.contains("systemd_scope=none"));
+        assert!(script.contains("watchdog_required=1"));
+        assert!(script.contains("if [ $watchdog_required -eq 1 ]"));
+        assert!(script.contains(
+            "systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service"
+        ));
+        assert!(script.contains(
+            "rm -f $home/.config/systemd/user/default.target.wants/bestcodex-sync.service"
+        ));
+    }
+
+    #[test]
+    fn generated_remote_files_replace_every_placeholder() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        assert!(script.contains("sed s#HOME_PLACEHOLDER#$home#g"));
+        assert!(script.contains("sed s#ROOT_PLACEHOLDER#$root#g"));
+        assert!(script.contains("grep -R PLACEHOLDER"));
+    }
+
+    #[test]
+    fn ssh_failure_diagnostic_is_bounded_and_internal() {
+        let diagnostic = format_ssh_failure_log("start", Some(1), &vec![b'x'; 10_000]);
+        assert!(
+            diagnostic.len() <= 4_200,
+            "diagnostic was {} bytes",
+            diagnostic.len()
+        );
+        assert!(diagnostic.contains("stage=start"));
+        assert!(diagnostic.contains("exit=1"));
+        assert!(!human_prepare_detail("SSH_PREPARE_FAILED", "host", 22).contains(&diagnostic));
+    }
+
+    #[test]
+    fn replace_stop_failure_aborts_before_upload() {
+        let local = tempfile::tempdir().unwrap();
+        let server = local.path().join("fns-server");
+        let agent = local.path().join("fns-agent");
+        std::fs::write(&server, vec![0u8; 2048]).unwrap();
+        std::fs::write(&agent, vec![0u8; 2048]).unwrap();
+        let artifacts = ArtifactPaths { server, agent };
+        let target = ResolvedSshTarget {
+            host: "127.0.0.1".into(),
+            user: "root".into(),
+            port: 22,
+            alias: None,
+            use_config: false,
+            identity_file: None,
+        };
+        let calls = std::cell::Cell::new(0usize);
+        let outcome = deploy_remote(
+            &target,
+            None,
+            None,
+            "~/bestcodex/my-project",
+            &artifacts,
+            true,
+            |_| {
+                let call = calls.get();
+                calls.set(call + 1);
+                if call == 0 {
+                    Ok(Command::new("true").output().unwrap())
+                } else {
+                    Ok(Command::new("false").output().unwrap())
+                }
+            },
+            |_| {},
+        );
+        assert!(!outcome.ok);
+        assert_eq!(calls.get(), 2, "upload must not start after stop failure");
     }
 
     #[test]

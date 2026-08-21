@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { hostTriple, buildProvenance, cargoTargetRoot, isInvokedDirectly, resolveServerSource } from "./stage.mjs";
+import {
+  hostTriple,
+  buildProvenance,
+  cargoTargetRoot,
+  isInvokedDirectly,
+  resolveRemoteAgentInput,
+  resolveServerSource,
+} from "./stage.mjs";
 
 test("host triple mapping covers the three shipping hosts", () => {
   assert.equal(hostTriple("darwin", "arm64"), "aarch64-apple-darwin");
@@ -48,4 +56,25 @@ test("server source defaults to the in-repo copy, not an external git url", () =
     resolveServerSource({ FNS_SERVER_SOURCE_DIR: "/tmp/override" }, "/repo/cchaven"),
     "/tmp/override",
   );
+});
+
+test("remote agent build requires an explicit prebuilt musl artifact", () => {
+  assert.equal(
+    resolveRemoteAgentInput({ FNS_AGENT_LINUX_X86_64_ARTIFACT: "/tmp/musl/fns-agent" }),
+    "/tmp/musl/fns-agent",
+  );
+  assert.throws(() => resolveRemoteAgentInput({}), /FNS_AGENT_LINUX_X86_64_ARTIFACT/);
+});
+
+test("nohup watchdog does not re-enable SIGHUP termination", () => {
+  const watchdog = readFileSync(new URL("./watchdog.sh", import.meta.url), "utf8");
+  assert.doesNotMatch(watchdog, /^trap .*HUP/m);
+  assert.match(watchdog, /^trap .*TERM/m);
+});
+
+test("Linux smoke matches private credential modes and preserves failure logs", () => {
+  const smoke = readFileSync(new URL("./smoke-linux.sh", import.meta.url), "utf8");
+  assert.match(smoke, /chmod 0600 \$state\/token \$state\/agent\.json/);
+  assert.match(smoke, /smoke failed: scratch=\$scratch/);
+  assert.match(smoke, /tail -n 80 \$state\/agent\.stderr\.log/);
 });
