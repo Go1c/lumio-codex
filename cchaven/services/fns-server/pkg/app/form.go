@@ -69,6 +69,16 @@ func (v ValidErrors) MapsToString() string {
 	return string(re)
 }
 
+// ResponseData is the structured value for HTTP/JSON `data` (field error maps).
+// Do not JSON-encode this into a string first — that double-encodes the payload.
+func (v ValidErrors) ResponseData() interface{} {
+	maps := v.Maps()
+	if maps == nil {
+		maps = []map[string]string{}
+	}
+	return maps
+}
+
 // BindAndValid bind request parameters and perform validation, supporting multiple languages
 // BindAndValid 绑定请求参数并进行验证，支持多语言
 func BindAndValid(c *gin.Context, obj interface{}) (bool, ValidErrors) {
@@ -94,6 +104,11 @@ func BindAndValid(c *gin.Context, obj interface{}) (bool, ValidErrors) {
 					Message: translatedMsg,
 				})
 			}
+		} else {
+			errs = append(errs, &ValidError{
+				Key:     "body",
+				Message: err.Error(),
+			})
 		}
 
 		return false, errs // Return validation error // 返回验证错误

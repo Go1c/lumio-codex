@@ -49,7 +49,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.Register.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.Login.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -169,7 +169,7 @@ func (h *UserHandler) UserChangePassword(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.UserChangePassword.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

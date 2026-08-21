@@ -23,7 +23,7 @@ func (h *FolderWSHandler) FolderSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebS
 	params := &dto.FolderSyncRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.folder.FolderSync.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.folder.FolderSync.BindAndValid")
 		return
 	}
 
@@ -248,7 +248,7 @@ func (h *FolderWSHandler) FolderModify(c *pkgapp.WebsocketClient, msg *pkgapp.We
 	params := &dto.FolderCreateRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.folder.FolderModify.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.folder.FolderModify.BindAndValid")
 		return
 	}
 
@@ -281,7 +281,7 @@ func (h *FolderWSHandler) FolderDelete(c *pkgapp.WebsocketClient, msg *pkgapp.We
 	params := &dto.FolderDeleteRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.folder.FolderDelete.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.folder.FolderDelete.BindAndValid")
 		return
 	}
 
@@ -314,7 +314,7 @@ func (h *FolderWSHandler) FolderRename(c *pkgapp.WebsocketClient, msg *pkgapp.We
 	params := &dto.FolderRenameRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.folder.FolderRename.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.folder.FolderRename.BindAndValid")
 		return
 	}
 

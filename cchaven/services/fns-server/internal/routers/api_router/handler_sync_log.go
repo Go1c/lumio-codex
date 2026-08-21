@@ -47,7 +47,7 @@ func (h *SyncLogHandler) List(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("SyncLogHandler.List.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

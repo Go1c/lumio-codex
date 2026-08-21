@@ -51,7 +51,7 @@ func (h *VaultHandler) CreateOrUpdate(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("VaultHandler.CreateOrUpdate.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -111,7 +111,7 @@ func (h *VaultHandler) Get(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("VaultHandler.Get.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -203,7 +203,7 @@ func (h *VaultHandler) Delete(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("VaultHandler.Delete.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -261,7 +261,7 @@ func (h *VaultHandler) RebuildIndex(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("VaultHandler.RebuildIndex.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -308,7 +308,7 @@ func (h *VaultHandler) ForceDeleteDataItem(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("VaultHandler.ForceDeleteDataItem.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

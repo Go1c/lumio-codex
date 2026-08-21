@@ -72,7 +72,7 @@ func (h *BackupHandler) UpdateConfig(c *gin.Context) {
 	params := &dto.BackupConfigRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *BackupHandler) DeleteConfig(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.BackupExecuteRequest{} // Reusing ID struct
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -147,7 +147,7 @@ func (h *BackupHandler) ListHistory(c *gin.Context) {
 	pager := pkgapp.NewPager(c)
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -192,7 +192,7 @@ func (h *BackupHandler) Execute(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.BackupExecuteRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

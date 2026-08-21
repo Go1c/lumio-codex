@@ -57,7 +57,7 @@ func (h *NoteWSHandler) NoteModify(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteModify.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteModify.BindAndValid")
 		return
 	}
 	if params.PathHash == "" {
@@ -431,7 +431,7 @@ func (h *NoteWSHandler) NoteModifyCheck(c *pkgapp.WebsocketClient, msg *pkgapp.W
 
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteModifyCheck.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteModifyCheck.BindAndValid")
 		return
 	}
 
@@ -506,7 +506,7 @@ func (h *NoteWSHandler) NoteDelete(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteDelete.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteDelete.BindAndValid")
 		return
 	}
 
@@ -568,7 +568,7 @@ func (h *NoteWSHandler) NoteRename(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 	params := &dto.NoteRenameRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteRename.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteRename.BindAndValid")
 		return
 	}
 
@@ -607,7 +607,7 @@ func (h *NoteWSHandler) NoteRePush(c *pkgapp.WebsocketClient, msg *pkgapp.WebSoc
 	params := &dto.NoteGetRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteReceiveMissing.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteReceiveMissing.BindAndValid")
 		return
 	}
 
@@ -671,7 +671,7 @@ func (h *NoteWSHandler) NoteSync(c *pkgapp.WebsocketClient, msg *pkgapp.WebSocke
 
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.note.NoteSync.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.note.NoteSync.BindAndValid")
 		return
 	}
 

@@ -70,7 +70,7 @@ func (h *GitSyncHandler) UpdateConfig(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.GitSyncConfigRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *GitSyncHandler) DeleteConfig(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.GitSyncDeleteRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -143,7 +143,7 @@ func (h *GitSyncHandler) Validate(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.GitSyncValidateRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -174,7 +174,7 @@ func (h *GitSyncHandler) Execute(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.GitSyncExecuteRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -211,7 +211,7 @@ func (h *GitSyncHandler) CleanWorkspace(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
 	params := &dto.GitSyncCleanRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -248,7 +248,7 @@ func (h *GitSyncHandler) GetHistories(c *gin.Context) {
 	pager := pkgapp.NewPager(c)
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

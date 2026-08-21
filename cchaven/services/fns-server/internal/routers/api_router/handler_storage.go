@@ -41,7 +41,7 @@ func (h *StorageHandler) CreateOrUpdate(c *gin.Context) {
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("StorageHandler.CreateOrUpdate.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -106,7 +106,7 @@ func (h *StorageHandler) Delete(c *gin.Context) {
 	params := &dto.StorageGetRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *StorageHandler) Validate(c *gin.Context) {
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("StorageHandler.Validate.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

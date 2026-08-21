@@ -33,7 +33,7 @@ func (h *SettingWSHandler) SettingModify(c *pkgapp.WebsocketClient, msg *pkgapp.
 	params := &dto.SettingModifyOrCreateRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingModify.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingModify.BindAndValid")
 		return
 	}
 
@@ -102,7 +102,7 @@ func (h *SettingWSHandler) SettingModifyCheck(c *pkgapp.WebsocketClient, msg *pk
 	params := &dto.SettingUpdateCheckRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingModifyCheck.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingModifyCheck.BindAndValid")
 		return
 	}
 
@@ -150,7 +150,7 @@ func (h *SettingWSHandler) SettingDelete(c *pkgapp.WebsocketClient, msg *pkgapp.
 	params := &dto.SettingDeleteRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingDelete.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingDelete.BindAndValid")
 		return
 	}
 
@@ -190,7 +190,7 @@ func (h *SettingWSHandler) SettingSync(c *pkgapp.WebsocketClient, msg *pkgapp.We
 	params := &dto.SettingSyncRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingSync.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingSync.BindAndValid")
 		return
 	}
 
@@ -507,7 +507,7 @@ func (h *SettingWSHandler) SettingClear(c *pkgapp.WebsocketClient, msg *pkgapp.W
 	params := &dto.SettingClearRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingClear.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingClear.BindAndValid")
 		return
 	}
 
@@ -532,7 +532,7 @@ func (h *SettingWSHandler) SettingRePush(c *pkgapp.WebsocketClient, msg *pkgapp.
 	params := &dto.SettingGetRequest{}
 	valid, errs := c.BindAndValidWithAction(msg.Type, msg.Data, params)
 	if !valid {
-		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.MapsToString(), "websocket_router.setting.SettingRePush.BindAndValid")
+		h.respondErrorWithData(c, code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()), errs, errs.ResponseData(), "websocket_router.setting.SettingRePush.BindAndValid")
 		return
 	}
 

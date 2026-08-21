@@ -70,7 +70,7 @@ func (h *StytchOAuthHandler) AuthorizeStart(c *gin.Context) {
 	params := &StytchOAuthAuthorizeRequest{}
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -107,7 +107,7 @@ func (h *StytchOAuthHandler) AuthorizeSubmit(c *gin.Context) {
 	params := &StytchOAuthAuthorizeSubmitRequest{}
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

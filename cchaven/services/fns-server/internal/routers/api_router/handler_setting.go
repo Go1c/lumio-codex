@@ -37,7 +37,7 @@ func (h *SettingHandler) Get(c *gin.Context) {
 	params := &dto.SettingGetRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("SettingHandler.Get.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -67,7 +67,7 @@ func (h *SettingHandler) List(c *gin.Context) {
 	params := &dto.SettingListRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("SettingHandler.List.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *SettingHandler) CreateOrUpdate(c *gin.Context) {
 	params := &dto.SettingModifyOrCreateRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("SettingHandler.CreateOrUpdate.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -142,7 +142,7 @@ func (h *SettingHandler) Delete(c *gin.Context) {
 	params := &dto.SettingDeleteRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("SettingHandler.Delete.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -179,7 +179,7 @@ func (h *SettingHandler) Rename(c *gin.Context) {
 	params := &dto.SettingRenameRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("SettingHandler.Rename.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

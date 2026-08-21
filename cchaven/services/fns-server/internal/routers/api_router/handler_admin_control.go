@@ -199,7 +199,7 @@ func (h *AdminControlHandler) UpdateConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.WebGUI.UpdateConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -506,7 +506,7 @@ func (h *AdminControlHandler) UpdateUserDatabaseConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.UpdateUserDatabaseConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -591,7 +591,7 @@ func (h *AdminControlHandler) ValidateUserDatabaseConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.ValidateUserDatabaseConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -740,7 +740,7 @@ func (h *AdminControlHandler) UpdateCloudflareConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.UpdateCloudflareConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -809,7 +809,7 @@ func (h *AdminControlHandler) CreateUser(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("apiRouter.AdminControl.CreateUser.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -866,7 +866,7 @@ func (h *AdminControlHandler) UpdateUser(c *gin.Context) {
 
 	if !valid {
 		h.App.Logger().Error("apiRouter.AdminControl.UpdateUser.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

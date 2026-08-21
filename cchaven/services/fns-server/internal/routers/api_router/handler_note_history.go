@@ -55,7 +55,7 @@ func (h *NoteHistoryHandler) Get(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("NoteHistoryHandler.Get.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -102,7 +102,7 @@ func (h *NoteHistoryHandler) List(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("NoteHistoryHandler.List.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *NoteHistoryHandler) Restore(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("NoteHistoryHandler.Restore.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
