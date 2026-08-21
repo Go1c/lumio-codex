@@ -157,7 +157,7 @@ impl TerminalManager {
 
     pub fn remote_command(session: &str, remote_root: &str) -> String {
         format!(
-            "env TERM=xterm-256color tmux new-session -A -s {session} -c {root}",
+            "PATH=$HOME/.local/bin:$PATH env TERM=xterm-256color tmux new-session -A -s {session} -c {root} -- $HOME/.local/bin/claude",
             session = Self::posix_shell_single_quote(&Self::sanitize_session_name(session)),
             root = remote_shell_path(remote_root)
         )
@@ -381,6 +381,21 @@ mod tests {
             !command.contains("sudo"),
             "open command must not use elevated execution"
         );
+    }
+
+    #[test]
+    fn new_conversation_starts_official_claude_in_the_project() {
+        let command = open_remote_session_command("p-docs", "s-new", "~/bestcodex/docs");
+        assert!(
+            command.contains(".local/bin/claude") && command.contains(" -- "),
+            "new conversation must run official Claude in the project, not a bare shell: {command}"
+        );
+        assert!(command.contains("~/'bestcodex/docs'"));
+        assert!(
+            !command.contains('"'),
+            "double quotes break sshd's shell -c wrapper: {command}"
+        );
+        assert!(!command.contains("sudo"));
     }
 
     #[test]

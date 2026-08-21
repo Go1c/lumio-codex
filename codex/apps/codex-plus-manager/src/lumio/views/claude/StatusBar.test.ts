@@ -86,7 +86,8 @@ test("StatusBar.tsx renders 对话 / 在跑, dispatches the drawer, and never sa
   assert.match(source, /collectSessions/);
   assert.match(source, /sessionsByProject/);
   assert.match(source, /set-status-drawer/);
-  assert.match(source, /workspaceStatusCopy/);
+  assert.match(source, /workspaceStatusAppearance/);
+  assert.match(source, /applyRemoteSyncHealth/);
   assert.match(source, /user\}@\$\{active\.host/);
   assert.doesNotMatch(source, /\bagent\b/i);
   assert.doesNotMatch(source, /\btmux\b/i);

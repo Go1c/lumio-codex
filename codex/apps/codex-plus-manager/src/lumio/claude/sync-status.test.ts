@@ -5,10 +5,12 @@ import test from "node:test";
 import { readAllClaudeViews } from "./read-claude-views.ts";
 import {
   projectsToResume,
+  reconcileSyncWithRemote,
   resumeSavedProjects,
+  workspaceStatusAppearance,
   workspaceStatusCopy,
 } from "./sync-status.ts";
-import type { ClaudeProject, ClaudeSyncStatus } from "./types.ts";
+import type { ClaudeProject, ClaudeServerStatus, ClaudeSyncStatus } from "./types.ts";
 
 function project(id = "p-docs"): ClaudeProject {
   return {
@@ -28,6 +30,38 @@ function project(id = "p-docs"): ClaudeProject {
 
 function idle(): ClaudeSyncStatus {
   return { state: "idle", filesDone: 0, filesTotal: 0, errorCode: null, conflicts: 0 };
+}
+
+function running(): ClaudeSyncStatus {
+  return { state: "running", filesDone: 2, filesTotal: 8, errorCode: null, conflicts: 0 };
+}
+
+function remoteStatus(syncRunning: boolean): ClaudeServerStatus {
+  return {
+    projectId: "p-docs",
+    capturedAt: "1",
+    ok: true,
+    services: {
+      items: [
+        {
+          key: "sync",
+          displayName: "同步组件",
+          running: syncRunning,
+          processCount: syncRunning ? 1 : 0,
+          cpuPercent: 0,
+          memoryRssBytes: 0,
+        },
+        {
+          key: "workspace",
+          displayName: "远端服务",
+          running: true,
+          processCount: 1,
+          cpuPercent: 0,
+          memoryRssBytes: 79 * 1024 * 1024,
+        },
+      ],
+    },
+  };
 }
 
 test("saved connected projects resume the official sync engine", async () => {
@@ -54,16 +88,7 @@ test("engine not running is not 本机目录已就绪", () => {
     }),
     /同步组件/,
   );
-  assert.match(
-    workspaceStatusCopy({
-      state: "running",
-      filesDone: 2,
-      filesTotal: 8,
-      errorCode: null,
-      conflicts: 0,
-    }),
-    /同步运行中|正在同步/,
-  );
+  assert.match(workspaceStatusCopy(running()), /同步运行中|正在同步/);
   assert.match(
     workspaceStatusCopy({
       state: "conflicts",
@@ -76,6 +101,39 @@ test("engine not running is not 本机目录已就绪", () => {
   );
 });
 
+test("idle, fail, and a stopped remote sync component are red warnings, not 同步运行中", () => {
+  assert.equal(workspaceStatusAppearance(null).tone, "bad");
+  assert.equal(workspaceStatusAppearance(idle()).tone, "bad");
+  assert.match(workspaceStatusAppearance(idle()).copy, /同步未运行/);
+
+  const failed = workspaceStatusAppearance({
+    state: "fail",
+    filesDone: 0,
+    filesTotal: 0,
+    errorCode: "SYNC_ENGINE_UNAVAILABLE",
+    conflicts: 0,
+  });
+  assert.equal(failed.tone, "bad");
+  assert.match(failed.copy, /同步组件|暂时拉不了文件/);
+
+  const remoteDown = workspaceStatusAppearance(running(), remoteStatus(false));
+  assert.equal(remoteDown.tone, "bad");
+  assert.notEqual(remoteDown.copy, "同步运行中");
+  assert.match(remoteDown.copy, /同步未运行|没有在运行|同步组件/);
+
+  const remoteUp = workspaceStatusAppearance(running(), remoteStatus(true));
+  assert.match(remoteUp.copy, /同步运行中/);
+  assert.notEqual(remoteUp.tone, "bad");
+});
+
+test("a local running flag is not kept when the remote sync component is down", () => {
+  const next = reconcileSyncWithRemote(running(), remoteStatus(false));
+  assert.equal(next?.state, "fail");
+  assert.equal(next?.errorCode, "SYNC_REMOTE_NOT_RUNNING");
+  assert.equal(reconcileSyncWithRemote(running(), remoteStatus(true))?.state, "running");
+  assert.equal(reconcileSyncWithRemote(running(), null)?.state, "running");
+});
+
 test("hydrate and open invoke resume, not only SSH list files", async () => {
   const session = await readFile(new URL("./session.ts", import.meta.url), "utf8");
   const views = await readAllClaudeViews();
@@ -84,8 +142,11 @@ test("hydrate and open invoke resume, not only SSH list files", async () => {
   assert.match(session, /hydrateClaudeWorkspace[\s\S]*resumeSavedProjects/s);
   assert.match(session, /resumeClaudeSync/);
   assert.match(views, /resumeClaudeSync/);
-  assert.match(views, /workspaceStatusCopy/);
+  assert.match(views, /workspaceStatusAppearance/);
+  assert.match(session, /applyRemoteSyncHealth|reconcileSyncWithRemote/);
+  assert.match(session, /running === false|payload\.running === false/);
   assert.doesNotMatch(views, /本机目录已就绪/);
   assert.match(api, /lumio_claude_resume_sync/);
+  assert.match(api, /SYNC_REMOTE_NOT_RUNNING/);
   assert.doesNotMatch(session, /listClaudeFiles\(\{[\s\S]*\}\);\s*dispatchClaude\(\{\s*type: "project-sync-updated"/);
 });

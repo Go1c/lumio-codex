@@ -24,12 +24,26 @@ pub struct SyncOutcome {
     pub error_code: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProgress {
     pub files_done: u32,
     pub files_total: u32,
     pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
+pub fn stopped_progress(project_id: &str, files: u32) -> SyncProgress {
+    SyncProgress {
+        files_done: files,
+        files_total: files.max(1),
+        project_id: Some(project_id.to_string()),
+        running: Some(false),
+        error_code: Some("SYNC_FAILED".into()),
+    }
 }
 
 pub fn count_files(root: &Path) -> u32 {
@@ -410,9 +424,11 @@ impl SyncEngine {
                         files_done: files,
                         files_total: files.max(1),
                         project_id: Some(key_owned.clone()),
+                        ..SyncProgress::default()
                     });
                 }
                 if !Self::sidecar_running(&sidecars, &key_owned) {
+                    on_progress(stopped_progress(&key_owned, last));
                     break;
                 }
                 thread::sleep(Duration::from_millis(500));
@@ -440,6 +456,7 @@ impl SyncEngine {
                     files_done: done,
                     files_total: total,
                     project_id: Some(key.clone()),
+                    ..SyncProgress::default()
                 });
             }) {
                 Ok(outcome) => outcome,
@@ -646,6 +663,14 @@ mod tests {
             outcome.error_code.as_deref(),
             Some("SYNC_ENGINE_UNAVAILABLE")
         );
+    }
+
+    #[test]
+    fn stopped_progress_is_not_a_running_engine() {
+        let progress = stopped_progress("p-docs", 3);
+        assert_eq!(progress.running, Some(false));
+        assert_eq!(progress.error_code.as_deref(), Some("SYNC_FAILED"));
+        assert_eq!(progress.project_id.as_deref(), Some("p-docs"));
     }
 
     #[test]
