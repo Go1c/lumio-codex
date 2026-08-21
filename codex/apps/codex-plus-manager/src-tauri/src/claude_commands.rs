@@ -79,6 +79,7 @@ pub struct ClaudeInspectPayload {
     pub ok: bool,
     pub exists: bool,
     pub names: Vec<String>,
+    pub components_installed: bool,
     pub error_code: Option<String>,
     pub detail: Option<String>,
 }
@@ -470,6 +471,7 @@ fn inspect_remote_inner(
                 ok: false,
                 exists: false,
                 names: Vec::new(),
+                components_installed: false,
                 error_code: Some(code.into()),
                 detail: Some(human_detail(code, host.trim(), port)),
             });
@@ -482,12 +484,13 @@ fn inspect_remote_inner(
         &claude_deploy::inspect_remote_script(&remote_root),
     ) {
         Ok(output) if output.status.success() => {
-            let (exists, names) =
+            let report =
                 claude_deploy::parse_inspect_output(&String::from_utf8_lossy(&output.stdout));
             ClaudeCommandResult::ok(ClaudeInspectPayload {
                 ok: true,
-                exists,
-                names,
+                exists: report.exists,
+                names: report.names,
+                components_installed: report.components_installed,
                 error_code: None,
                 detail: None,
             })
@@ -499,6 +502,7 @@ fn inspect_remote_inner(
                 ok: false,
                 exists: false,
                 names: Vec::new(),
+                components_installed: false,
                 error_code: Some(code.into()),
                 detail: Some(human_detail(code, &target.host, target.port)),
             })
@@ -507,6 +511,7 @@ fn inspect_remote_inner(
             ok: false,
             exists: false,
             names: Vec::new(),
+            components_installed: false,
             error_code: Some(code.into()),
             detail: Some(human_detail(code, &target.host, target.port)),
         }),
@@ -524,6 +529,7 @@ pub async fn lumio_claude_prepare_remote(
     host_alias: Option<String>,
     remote_root: String,
     local_root: String,
+    replace: Option<bool>,
 ) -> ClaudeCommandResult<ClaudePreparePayload> {
     tauri::async_runtime::spawn_blocking(move || {
         prepare_remote_inner(
@@ -536,6 +542,7 @@ pub async fn lumio_claude_prepare_remote(
             host_alias,
             remote_root,
             local_root,
+            replace.unwrap_or(false),
         )
     })
     .await
@@ -552,6 +559,7 @@ fn prepare_remote_inner(
     host_alias: Option<String>,
     remote_root: String,
     local_root: String,
+    replace: bool,
 ) -> ClaudeCommandResult<ClaudePreparePayload> {
     let alias = host_alias.as_deref().filter(|v| !v.is_empty());
     let target = match resolve_from_user_config(host.trim(), Some(user.trim()), port, alias) {
@@ -599,6 +607,7 @@ fn prepare_remote_inner(
         key_path.as_deref(),
         &remote_root,
         &artifacts,
+        replace,
         |remote| run_ssh_target(&target, password.as_deref(), key_path.as_deref(), remote),
         |progress| {
             let _ = app_progress.emit(claude_deploy::PREPARE_PROGRESS_EVENT, progress);
@@ -688,42 +697,40 @@ pub fn lumio_claude_first_sync(
         password.as_deref(),
         &local_root,
         &remote_root,
-    )
-    .is_ok();
-
-    if spawned {
-        engine.watch_local_files(&key, local_root.clone(), move |progress| {
-            let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
-        });
-        let confirmation = claude_sync::wait_for_confirmed_copy(
-            &local,
-            baseline,
-            remote_total,
-            claude_sync::confirm_timeout(),
-            std::time::Duration::from_millis(250),
-        );
-        let finished = claude_sync::first_sync_from_sidecar(true, confirmation);
-        ingest_detected_conflicts(
-            &key,
-            &local,
-            &target,
-            password.as_deref(),
-            key_path.as_deref(),
-            &remote_root,
-        );
+    );
+    if let Err(code) = spawned {
         return ClaudeCommandResult::ok(ClaudeSyncPayload {
-            ok: finished.ok,
-            files_done: finished.files_done,
-            files_total: finished.files_total,
-            error_code: finished.error_code,
+            ok: false,
+            files_done: outcome.files_done,
+            files_total: outcome.files_total,
+            error_code: Some(code),
         });
     }
 
+    engine.watch_local_files(&key, local_root.clone(), move |progress| {
+        let _ = watch_progress.emit(SYNC_PROGRESS_EVENT, progress);
+    });
+    let confirmation = claude_sync::wait_for_confirmed_copy(
+        &local,
+        baseline,
+        remote_total,
+        claude_sync::confirm_timeout(),
+        std::time::Duration::from_millis(250),
+    );
+    let finished = claude_sync::first_sync_from_sidecar(true, confirmation);
+    ingest_detected_conflicts(
+        &key,
+        &local,
+        &target,
+        password.as_deref(),
+        key_path.as_deref(),
+        &remote_root,
+    );
     ClaudeCommandResult::ok(ClaudeSyncPayload {
-        ok: false,
-        files_done: outcome.files_done,
-        files_total: outcome.files_total,
-        error_code: Some("SYNC_ENGINE_UNAVAILABLE".into()),
+        ok: finished.ok,
+        files_done: finished.files_done,
+        files_total: finished.files_total,
+        error_code: finished.error_code,
     })
 }
 
@@ -1185,18 +1192,19 @@ fn spawn_official_engine(
     local_root: &str,
     remote_root: &str,
 ) -> Result<(), String> {
-    match run_ssh_target(
+    let remote_started = match run_ssh_target(
         target,
         password,
         key_path,
         &claude_deploy::keep_sync_running_script(remote_root),
     ) {
-        Ok(output) if output.status.success() => {}
-        _ => return Err("SYNC_ENGINE_UNAVAILABLE".into()),
-    }
+        Ok(output) if output.status.success() => true,
+        _ => false,
+    };
     let local_port = app
         .state::<TunnelManager>()
-        .open(key, target, key_path, password, 9000)?;
+        .open(key, target, key_path, password, 9000)
+        .map_err(|_| "SYNC_FAILED".to_string())?;
     let local = expand_local_root(local_root);
     let _ = std::fs::create_dir_all(&local);
     let state_dir = local.join(".bestcodex-sync");
@@ -1207,7 +1215,12 @@ fn spawn_official_engine(
         &claude_deploy::sync_workspace_id(remote_root),
         &claude_deploy::sync_client_id("local", remote_root),
     )?;
-    engine.adopt_sidecar(key, &config)
+    engine.adopt_sidecar(key, &config)?;
+    if remote_started {
+        Ok(())
+    } else {
+        Err("SYNC_REMOTE_START_FAILED".into())
+    }
 }
 
 fn resume_sync_inner(

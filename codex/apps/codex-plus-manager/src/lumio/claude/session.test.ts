@@ -70,6 +70,14 @@ test("setup inspect uses the user-chosen remote folder", async () => {
   assert.doesNotMatch(source, /const remoteRoot = remoteProjectRoot\(draft\.user, desired\)/);
 });
 
+test("an already-installed host asks to reinstall instead of failing", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /componentsInstalled/);
+  assert.match(source, /setup-needs-reinstall/);
+  assert.match(source, /"reinstall"/);
+  assert.match(source, /replace:\s*decision === "reinstall"/);
+});
+
 test("SYNC_ENGINE_UNAVAILABLE is not a keep-project success", async () => {
   resetClaudeStore();
   dispatchClaude({ type: "entitlement-resolved", entitlement: { status: "active", source: "local" } });
@@ -116,6 +124,13 @@ test("hydrate and first sync kick CLI install then login for that host", async (
   assert.match(source, /phase: "ready"/);
   assert.match(source, /closeClaudeChat/);
   assert.match(source, /listClaudeChats/);
+});
+
+test("a missing or stopped sync component does not take the whole workspace offline", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(source, /isWorkspaceOfflineSyncError/);
+  assert.match(source, /SSH_UNREACHABLE/);
+  assert.match(source, /if \(sync\?\.state === "fail" && isWorkspaceOfflineSyncError\(sync\.errorCode\)\)/);
 });
 
 test("activateClaudeProject keeps a ready workspace mounted instead of bouncing to resume", async () => {

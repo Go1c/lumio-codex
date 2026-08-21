@@ -405,11 +405,20 @@ test("the shell chrome uses Codex and Claude tabs and keeps HomeView mounted", a
 
 test("the titlebar leaves room for macOS traffic lights and is a drag region", async () => {
   const css = await readFile(new URL("../lumio-shell.css", import.meta.url), "utf8");
+  const shell = await readFile(new URL("../LumioApp.tsx", import.meta.url), "utf8");
+  const capabilities = await readFile(
+    new URL("../../src-tauri/capabilities/default.json", import.meta.url),
+    "utf8",
+  );
 
   assert.match(css, /prefers-color-scheme:\s*dark/);
   assert.match(css, /-webkit-app-region:\s*drag/);
   assert.match(css, /no-drag/);
   assert.match(css, /78px/);
+  assert.match(shell, /className="lumio-topbar"[\s\S]*data-tauri-drag-region/);
+  assert.match(shell, /lumio-nav[\s\S]*data-tauri-drag-region="false"/);
+  assert.match(shell, /lumio-titlebar-tools[\s\S]*data-tauri-drag-region="false"/);
+  assert.match(capabilities, /core:window:allow-start-dragging/);
 });
 
 test("settings is five groups rather than a third product tab", async () => {

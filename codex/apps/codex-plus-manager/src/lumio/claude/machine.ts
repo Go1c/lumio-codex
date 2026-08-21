@@ -83,6 +83,7 @@ function emptySheet(projectName = "my-project"): ClaudeConnectSheet {
     setupDetail: null,
     setupErrorCode: null,
     rootChoice: null,
+    componentsInstalled: false,
     sync: idleSync(),
   };
 }
@@ -326,6 +327,24 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
           },
         },
       };
+    case "setup-inspected":
+      if (state.sheet === null) return state;
+      return {
+        ...state,
+        sheet: { ...state.sheet, componentsInstalled: event.componentsInstalled },
+      };
+    case "setup-needs-reinstall":
+      if (state.sheet === null) return state;
+      return {
+        ...state,
+        sheet: {
+          ...state.sheet,
+          step: "setup",
+          setupStatus: "reinstall",
+          setupDetail: null,
+          setupErrorCode: null,
+        },
+      };
     case "setup-finished":
       if (state.sheet === null) return state;
       return {
@@ -340,7 +359,13 @@ export function reduceClaudeState(state: ClaudeState, event: ClaudeEvent): Claud
       };
     case "start-sync":
       if (state.sheet === null) return state;
-      if (state.sheet.setupStatus === "fail" || state.sheet.setupStatus === "choose") return state;
+      if (
+        state.sheet.setupStatus === "fail" ||
+        state.sheet.setupStatus === "choose" ||
+        state.sheet.setupStatus === "reinstall"
+      ) {
+        return state;
+      }
       return {
         ...state,
         sheet: {

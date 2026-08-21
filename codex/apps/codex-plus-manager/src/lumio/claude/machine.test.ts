@@ -373,6 +373,21 @@ test("setup progress is ignored after setup has already finished", () => {
   assert.notEqual(state.sheet?.setupProgress?.phase, "upload");
 });
 
+test("already installed components pause setup for reinstall instead of failing", () => {
+  const state = apply([
+    { type: "entitlement-resolved", entitlement: entitled },
+    { type: "open-connect" },
+    { type: "continue-setup" },
+    { type: "setup-inspected", componentsInstalled: true },
+    { type: "setup-needs-reinstall" },
+    { type: "start-sync" },
+  ]);
+  assert.equal(state.sheet?.step, "setup");
+  assert.equal(state.sheet?.setupStatus, "reinstall");
+  assert.equal(state.sheet?.componentsInstalled, true);
+  assert.equal(state.projects.length, 0);
+});
+
 test("prepare failure does not advance the sheet to sync", () => {
   const state = apply([
     { type: "entitlement-resolved", entitlement: entitled },

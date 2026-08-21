@@ -253,7 +253,13 @@ function CenterPane({
         localRoot={active.localRoot}
         errorCode={sync?.errorCode}
         onRetryConnect={() => void activateClaudeProject(active.id)}
-        onViewLocalFiles={() => void refreshClaudeFiles(active.id)}
+        onViewLocalFiles={() => {
+          dispatchClaude({ type: "set-workspace-phase", projectId: active.id, phase: "ready" });
+          void refreshClaudeFiles(active.id);
+        }}
+        onDismiss={() => {
+          dispatchClaude({ type: "set-workspace-phase", projectId: active.id, phase: "ready" });
+        }}
       />
     );
   }

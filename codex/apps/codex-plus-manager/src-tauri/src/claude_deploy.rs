@@ -118,18 +118,29 @@ pub fn human_prepare_detail(code: &str, host: &str, port: u16) -> String {
 
 pub fn inspect_remote_script(remote_root: &str) -> String {
     format!(
-        "if [ -d {root} ]; then echo EXISTS:1; else echo EXISTS:0; fi; if [ -d {parent} ]; then ls -1 {parent}; fi",
+        "if [ -d {root} ]; then echo EXISTS:1; else echo EXISTS:0; fi; if [ -d {parent} ]; then ls -1 {parent}; fi; agent=$HOME/.local/share/bestcodex/bin/fns-agent; server=$HOME/.local/share/bestcodex/bin/fns-server; if [ -f $agent ] && [ -f $server ]; then echo COMPONENTS:1; else echo COMPONENTS:0; fi",
         root = crate::claude_ssh::remote_shell_path(remote_root),
         parent = crate::claude_ssh::remote_shell_path("~/bestcodex"),
     )
 }
 
-pub fn parse_inspect_output(stdout: &str) -> (bool, Vec<String>) {
+pub struct InspectReport {
+    pub exists: bool,
+    pub names: Vec<String>,
+    pub components_installed: bool,
+}
+
+pub fn parse_inspect_output(stdout: &str) -> InspectReport {
     let mut exists = false;
+    let mut components_installed = false;
     let mut names = Vec::new();
     for line in stdout.lines() {
         if let Some(flag) = line.strip_prefix("EXISTS:") {
             exists = flag.trim() == "1";
+            continue;
+        }
+        if let Some(flag) = line.strip_prefix("COMPONENTS:") {
+            components_installed = flag.trim() == "1";
             continue;
         }
         let name = line.trim();
@@ -138,7 +149,29 @@ pub fn parse_inspect_output(stdout: &str) -> (bool, Vec<String>) {
         }
         names.push(name.to_string());
     }
-    (exists, names)
+    InspectReport {
+        exists,
+        names,
+        components_installed,
+    }
+}
+
+pub fn stop_sync_for_replace_script() -> String {
+    "set -u
+bin=$HOME/.local/share/bestcodex/bin
+if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  systemctl stop bestcodex-sync.service || true
+  systemctl stop bestcodex-workspace.service || true
+elif command -v systemctl >/dev/null 2>&1; then
+  systemctl --user stop bestcodex-sync.service || true
+  systemctl --user stop bestcodex-workspace.service || true
+fi
+pkill -f $bin/fns-agent || true
+pkill -f $bin/fns-server || true
+sleep 1
+true
+"
+    .into()
 }
 
 pub fn prepare_components(
@@ -184,6 +217,7 @@ pub fn deploy_remote(
     key_path: Option<&str>,
     remote_root: &str,
     artifacts: &ArtifactPaths,
+    replace: bool,
     run_ssh: impl Fn(&str) -> Result<std::process::Output, &'static str>,
     mut on_progress: impl FnMut(PrepareProgress),
 ) -> PrepareOutcome {
@@ -198,6 +232,10 @@ pub fn deploy_remote(
                 detail: Some("没能在服务器上建好项目目录。".into()),
             };
         }
+    }
+
+    if replace {
+        let _ = run_ssh(&stop_sync_for_replace_script());
     }
 
     on_progress(PrepareProgress::upload(1));
@@ -249,6 +287,28 @@ pub fn deploy_remote(
     }
 }
 
+fn scp_invocation_args(
+    target: &ResolvedSshTarget,
+    key_path: Option<&str>,
+    source: &Path,
+    destination: &str,
+) -> Result<Vec<String>, &'static str> {
+    let key = crate::claude_ssh::effective_key_path(key_path, target);
+    let mut args = ssh_invocation_args(target, key, None);
+    // ssh_invocation_args ends with the destination host; scp wants host:path.
+    let host = args.pop().ok_or("SSH_PREPARE_FAILED")?;
+    // ssh uses -p for port; scp uses -P. scp -p means preserve times and
+    // treats the port number as another source file.
+    for arg in &mut args {
+        if arg == "-p" {
+            *arg = "-P".into();
+        }
+    }
+    args.push(source.to_string_lossy().into_owned());
+    args.push(format!("{host}:{destination}"));
+    Ok(args)
+}
+
 fn scp_file(
     target: &ResolvedSshTarget,
     password: Option<&str>,
@@ -256,12 +316,8 @@ fn scp_file(
     source: &Path,
     destination: &str,
 ) -> Result<(), &'static str> {
+    let args = scp_invocation_args(target, key_path, source, destination)?;
     let key = crate::claude_ssh::effective_key_path(key_path, target);
-    let mut args = ssh_invocation_args(target, key, None);
-    // ssh_invocation_args ends with the destination host; scp wants host:path.
-    let host = args.pop().ok_or("SSH_PREPARE_FAILED")?;
-    args.push(source.to_string_lossy().into_owned());
-    args.push(format!("{host}:{destination}"));
     let mut command = Command::new("scp");
     command.args(&args);
     command.stdin(Stdio::null());
@@ -345,7 +401,7 @@ pub fn keep_sync_running_script(remote_root: &str) -> String {
     let config = format!(
         "{{\n  \"schemaVersion\": \"fns-agent-config/1\",\n  \"endpoint\": \"ws://127.0.0.1:9000/api/user/workspace-sync/v2\",\n  \"workspaceId\": \"{workspace_id}\",\n  \"clientId\": \"{client_id}\",\n  \"workspaceRoot\": \"ROOT_PLACEHOLDER\",\n  \"stateDir\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state\",\n  \"tokenFile\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state/token\",\n  \"sync\": {{\n    \"includes\": [\"**/*\"],\n    \"excludes\": [],\n    \"protectSecrets\": true\n  }},\n  \"transport\": {{ \"maxActiveTransfers\": 2 }}\n}}\n"
     );
-    let token_b64 = base64_encode(b"bestcodex-local-token\n");
+    let token_b64 = base64_encode(b"bestcodex-local-token");
     let config_b64 = base64_encode(config.as_bytes());
     let sync_system_b64 = base64_encode(remote_sync_unit("multi-user.target").as_bytes());
     let sync_user_b64 = base64_encode(remote_sync_unit("default.target").as_bytes());
@@ -365,30 +421,25 @@ printf %s {token_b64} | base64 -d > $state/token
 chmod 0600 $state/token
 printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root# | sed s#HOME_PLACEHOLDER#$home# > $state/agent.json
 chmod 0600 $state/agent.json
-started=0
 if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   mkdir -p /etc/systemd/system
   printf %s {workspace_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > /etc/systemd/system/bestcodex-workspace.service
   printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > /etc/systemd/system/bestcodex-sync.service
-  systemctl daemon-reload
+  systemctl daemon-reload || true
   systemctl enable --now bestcodex-workspace.service || true
-  systemctl enable --now bestcodex-sync.service
-  started=1
+  systemctl enable --now bestcodex-sync.service || true
 elif command -v systemctl >/dev/null 2>&1; then
   printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# > $home/.config/systemd/user/bestcodex-workspace.service
   printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home# | sed s#ROOT_PLACEHOLDER#$root# > $home/.config/systemd/user/bestcodex-sync.service
-  systemctl --user daemon-reload
+  systemctl --user daemon-reload || true
   systemctl --user enable --now bestcodex-workspace.service || true
-  systemctl --user enable --now bestcodex-sync.service
-  started=1
+  systemctl --user enable --now bestcodex-sync.service || true
 fi
-if [ $started -eq 0 ]; then
-  if ! pgrep -f $bin/fns-server >/dev/null 2>&1; then
-    nohup $bin/fns-server run -p 127.0.0.1:9000 >/dev/null 2>&1 &
-  fi
-  if ! pgrep -f $bin/fns-agent >/dev/null 2>&1; then
-    nohup $bin/fns-agent run --config $state/agent.json >/dev/null 2>&1 &
-  fi
+if ! pgrep -f $bin/fns-server >/dev/null 2>&1; then
+  nohup $bin/fns-server run -p 127.0.0.1:9000 >/dev/null 2>&1 &
+fi
+if ! pgrep -f $bin/fns-agent >/dev/null 2>&1; then
+  nohup $bin/fns-agent run --config $state/agent.json >/dev/null 2>&1 &
 fi
 sleep 1
 pgrep -f $bin/fns-agent >/dev/null 2>&1
@@ -423,18 +474,32 @@ mod tests {
 
     #[test]
     fn inspect_output_reports_existing_project_names() {
-        let (exists, names) = parse_inspect_output("EXISTS:1\nmy-project\nmy-project-2\n");
-        assert!(exists);
-        assert_eq!(names, ["my-project", "my-project-2"]);
-        let (missing, empty) = parse_inspect_output("EXISTS:0\n");
-        assert!(!missing);
-        assert!(empty.is_empty());
+        let report = parse_inspect_output("EXISTS:1\nCOMPONENTS:1\nmy-project\nmy-project-2\n");
+        assert!(report.exists);
+        assert!(report.components_installed);
+        assert_eq!(report.names, ["my-project", "my-project-2"]);
+        let missing = parse_inspect_output("EXISTS:0\nCOMPONENTS:0\n");
+        assert!(!missing.exists);
+        assert!(!missing.components_installed);
+        assert!(missing.names.is_empty());
         let script = inspect_remote_script("~/bestcodex/my-project");
+        assert!(script.contains("COMPONENTS:"));
         assert!(script.contains("EXISTS:"));
         assert!(
             !script.contains('"'),
             "inspect must not emit double quotes that break sshd -c wrapping: {script}"
         );
+    }
+
+    #[test]
+    fn replace_stops_running_binaries_before_copy() {
+        let script = stop_sync_for_replace_script();
+        assert!(script.contains("pkill"));
+        assert!(
+            !script.contains('"'),
+            "double quotes break sshd's shell -c wrapper: {script}"
+        );
+        assert!(!script.contains("sudo"));
     }
 
     #[test]
@@ -473,6 +538,7 @@ mod tests {
             None,
             "~/bestcodex/my-project",
             &artifacts,
+            false,
             |_| Err("SSH_UNREACHABLE"),
             |progress| {
                 seen.push((progress.phase.clone(), progress.detail.clone()));
@@ -483,6 +549,59 @@ mod tests {
         assert_eq!(seen[0].0, "mkdir");
         assert!(seen[0].1.contains("项目目录"));
         assert!(seen.iter().all(|(_, detail)| !detail.contains("agent")));
+    }
+
+    #[test]
+    fn scp_uses_capital_p_for_the_ssh_port() {
+        let target = ResolvedSshTarget {
+            host: "108.80.81.15".into(),
+            user: "root".into(),
+            port: 1080,
+            alias: None,
+            use_config: false,
+            identity_file: None,
+        };
+        let args = scp_invocation_args(
+            &target,
+            None,
+            Path::new("/tmp/fns-agent"),
+            "~/.local/share/bestcodex/bin/fns-agent",
+        )
+        .expect("scp args");
+        assert!(
+            args.iter().any(|arg| arg == "-P"),
+            "scp port flag is -P, not ssh's -p: {args:?}"
+        );
+        assert!(
+            args.iter().any(|arg| arg == "1080"),
+            "port must be kept: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg == "-p"),
+            "scp -p means preserve times and would treat the port as a file: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == "root@108.80.81.15:~/.local/share/bestcodex/bin/fns-agent"),
+            "remote path must stay host:path: {args:?}"
+        );
+    }
+
+    #[test]
+    fn keep_sync_token_has_no_whitespace() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        assert!(
+            script.contains(&base64_encode(b"bestcodex-local-token")),
+            "token must be the accepted secret: {script}"
+        );
+        assert!(
+            !script.contains(&base64_encode(b"bestcodex-local-token\n")),
+            "a trailing newline makes the remote binary reject the secret"
+        );
+        assert!(
+            script.contains("daemon-reload || true"),
+            "systemd reload must not abort the start script: {script}"
+        );
     }
 
     #[test]
@@ -513,6 +632,24 @@ mod tests {
         assert_ne!(
             sync_client_id("local", "~/bestcodex/docs"),
             sync_client_id("remote", "~/bestcodex/docs")
+        );
+    }
+
+    #[test]
+    fn keep_sync_running_starts_even_when_systemd_enable_fails() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        assert!(
+            script.contains("enable --now bestcodex-sync.service || true"),
+            "systemd enable must not abort under set -e: {script}"
+        );
+        assert!(
+            !script.contains("if [ $started -eq 0 ]"),
+            "nohup must still run when systemd exists but the process is missing: {script}"
+        );
+        assert!(script.contains("nohup $bin/fns-agent"));
+        assert!(
+            !script.contains('"'),
+            "double quotes break sshd's shell -c wrapper: {script}"
         );
     }
 

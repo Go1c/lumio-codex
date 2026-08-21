@@ -304,7 +304,7 @@ export async function runConnectProbe(): Promise<void> {
   dispatchClaude({ type: "probe-finished", result });
 }
 
-export async function runConnectSetup(decision?: "use" | "create"): Promise<void> {
+export async function runConnectSetup(decision?: "use" | "create" | "reinstall"): Promise<void> {
   const sheet = getClaudeState().sheet;
   const args = sshFromDraft();
   if (sheet === null || args === null) return;
@@ -337,6 +337,10 @@ export async function runConnectSetup(decision?: "use" | "create"): Promise<void
       });
       return;
     }
+    dispatchClaude({
+      type: "setup-inspected",
+      componentsInstalled: inspected.componentsInstalled,
+    });
     if (inspected.exists) {
       const existingName = folderNameFromPath(remoteRoot);
       const nextName = nextProjectName([existingName, ...inspected.names], existingName);
@@ -351,11 +355,19 @@ export async function runConnectSetup(decision?: "use" | "create"): Promise<void
     }
   }
 
+  const installed =
+    decision === "reinstall" ? false : getClaudeState().sheet?.componentsInstalled === true;
+  if (installed) {
+    dispatchClaude({ type: "setup-needs-reinstall" });
+    return;
+  }
+
   const project = createProjectFromDraft(draft, "draft", new Date().toISOString());
   const prepared = await prepareClaudeRemote({
     ...args,
     remoteRoot: project.remoteRoot,
     localRoot: project.localRoot,
+    replace: decision === "reinstall",
   });
   dispatchClaude({
     type: "setup-finished",
@@ -368,7 +380,13 @@ export async function runConnectSetup(decision?: "use" | "create"): Promise<void
 export async function runConnectSync(): Promise<void> {
   const sheet = getClaudeState().sheet;
   if (sheet === null || sheet.sync.state === "running") return;
-  if (sheet.setupStatus === "fail" || sheet.setupStatus === "choose") return;
+  if (
+    sheet.setupStatus === "fail" ||
+    sheet.setupStatus === "choose" ||
+    sheet.setupStatus === "reinstall"
+  ) {
+    return;
+  }
   ensureClaudeEngineBridge();
   dispatchClaude({ type: "start-sync" });
   if (getClaudeState().sheet?.step !== "sync") return;
@@ -624,6 +642,16 @@ function asCliPhase(value: string): ClaudeCliInstallPhase {
   return "idle";
 }
 
+function isWorkspaceOfflineSyncError(code: string | null): boolean {
+  return (
+    code === "SSH_UNREACHABLE" ||
+    code === "SSH_AUTH_FAILED" ||
+    code === "SSH_CLIENT_MISSING" ||
+    code === "SSH_HOST_REQUIRED" ||
+    code === "SSH_ALIAS_UNKNOWN"
+  );
+}
+
 function asLoginPhase(value: string): ClaudeLoginPhase {
   if (
     value === "unknown" ||
@@ -760,7 +788,7 @@ export async function activateClaudeProject(projectId: string): Promise<void> {
     dispatchClaude({ type: "set-workspace-phase", projectId, phase: "resume" });
     await resumeClaudeSync(projectId);
     const sync = getClaudeState().syncByProject[projectId];
-    if (sync?.state === "fail" && sync.errorCode !== "SYNC_REMOTE_NOT_RUNNING") {
+    if (sync?.state === "fail" && isWorkspaceOfflineSyncError(sync.errorCode)) {
       dispatchClaude({ type: "set-workspace-phase", projectId, phase: "offline" });
       await refreshClaudeFiles(projectId);
       return;

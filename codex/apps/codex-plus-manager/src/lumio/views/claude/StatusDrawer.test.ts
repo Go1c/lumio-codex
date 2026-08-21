@@ -79,6 +79,9 @@ test("StatusDrawer.tsx keeps ServerStatusPane and SessionsPane, lists store sess
   assert.match(source, />冲突</);
   assert.match(source, /收起/);
   assert.match(source, /set-status-drawer/);
+  assert.match(source, /nextStatusDrawerPane/);
+  assert.match(source, /lumio-claude-drawer-tabs[\s\S]*onClick=\{[\s\S]*"closed"/);
+  assert.match(source, /stopPropagation/);
   assert.match(source, /serviceDisplayName/);
   assert.doesNotMatch(source, /\bagent\b/i);
   assert.doesNotMatch(source, /\btmux\b/i);

@@ -1,4 +1,3 @@
-import { syncErrorCopy } from "./api.ts";
 import type { ClaudeProject, ClaudeServerStatus, ClaudeSyncStatus } from "./types.ts";
 
 export type WorkspaceStatusTone = "ok" | "warn" | "bad" | "plain";
@@ -46,7 +45,9 @@ export function workspaceStatusAppearance(
 ): { copy: string; tone: WorkspaceStatusTone } {
   const effective = reconcileSyncWithRemote(sync, remote ?? null);
   if (!effective || effective.state === "idle") return { copy: "同步未运行", tone: "bad" };
-  if (effective.state === "fail") return { copy: syncErrorCopy(effective.errorCode), tone: "bad" };
+  if (effective.state === "fail") {
+    return { copy: workspaceFailCopy(effective.errorCode), tone: "bad" };
+  }
   if (effective.state === "conflicts") {
     return { copy: `${effective.conflicts} 个冲突`, tone: "warn" };
   }
@@ -62,6 +63,20 @@ export function workspaceStatusAppearance(
   if (effective.state === "synced") return { copy: "已同步 · 文件与远端一致", tone: "ok" };
   if (effective.state === "offline") return { copy: "离线 · 本机目录可用", tone: "warn" };
   return { copy: "同步未运行", tone: "bad" };
+}
+
+function workspaceFailCopy(code: string | null): string {
+  switch (code) {
+    case "SYNC_ENGINE_UNAVAILABLE":
+      return "同步不可用";
+    case "SYNC_COPY_UNCONFIRMED":
+      return "同步未完成";
+    case "SYNC_REMOTE_NOT_RUNNING":
+    case "SYNC_REMOTE_START_FAILED":
+      return "同步未运行";
+    default:
+      return "同步出错";
+  }
 }
 
 export function workspaceStatusCopy(

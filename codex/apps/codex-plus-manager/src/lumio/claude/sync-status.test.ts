@@ -78,7 +78,7 @@ test("engine not running is not 本机目录已就绪", () => {
   assert.notEqual(workspaceStatusCopy(null), "本机目录已就绪");
   assert.notEqual(workspaceStatusCopy(idle()), "本机目录已就绪");
   assert.match(workspaceStatusCopy(null), /同步未运行/);
-  assert.match(
+  assert.equal(
     workspaceStatusCopy({
       state: "fail",
       filesDone: 0,
@@ -86,7 +86,7 @@ test("engine not running is not 本机目录已就绪", () => {
       errorCode: "SYNC_ENGINE_UNAVAILABLE",
       conflicts: 0,
     }),
-    /同步组件/,
+    "同步不可用",
   );
   assert.match(workspaceStatusCopy(running()), /同步运行中|正在同步/);
   assert.match(
@@ -114,12 +114,24 @@ test("idle, fail, and a stopped remote sync component are red warnings, not 同�
     conflicts: 0,
   });
   assert.equal(failed.tone, "bad");
-  assert.match(failed.copy, /同步组件|暂时拉不了文件/);
+  assert.equal(failed.copy, "同步不可用");
+  assert.ok(failed.copy.length <= 6);
+  assert.doesNotMatch(failed.copy, /这个版本|暂时拉不了|更新或重装|BestCodex/);
+
+  const remoteStart = workspaceStatusAppearance({
+    state: "fail",
+    filesDone: 0,
+    filesTotal: 0,
+    errorCode: "SYNC_REMOTE_START_FAILED",
+    conflicts: 0,
+  });
+  assert.equal(remoteStart.copy, "同步未运行");
+  assert.ok(remoteStart.copy.length <= 6);
+  assert.doesNotMatch(remoteStart.copy, /这个版本|暂时拉不了|更新或重装|BestCodex/);
 
   const remoteDown = workspaceStatusAppearance(running(), remoteStatus(false));
   assert.equal(remoteDown.tone, "bad");
-  assert.notEqual(remoteDown.copy, "同步运行中");
-  assert.match(remoteDown.copy, /同步未运行|没有在运行|同步组件/);
+  assert.equal(remoteDown.copy, "同步未运行");
 
   const remoteUp = workspaceStatusAppearance(running(), remoteStatus(true));
   assert.match(remoteUp.copy, /同步运行中/);

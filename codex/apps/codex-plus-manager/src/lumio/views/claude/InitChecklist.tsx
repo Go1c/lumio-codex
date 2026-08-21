@@ -285,6 +285,7 @@ export function OfflineCard({
   errorCode,
   onRetryConnect,
   onViewLocalFiles,
+  onDismiss,
 }: {
   host: string;
   localRoot?: string;
@@ -292,6 +293,7 @@ export function OfflineCard({
   errorCode?: string | null;
   onRetryConnect?: () => void;
   onViewLocalFiles?: () => void;
+  onDismiss?: () => void;
 }) {
   const local = localRoot ?? DEFAULT_LOCAL_ROOT;
   const code = errorCode ?? SSH_TIMEOUT;
@@ -302,7 +304,18 @@ export function OfflineCard({
       <div className="lumio-claude-ws-card lumio-claude-offline-card">
         <header>
           <h3>连不上这台服务器</h3>
-          <span className="lumio-claude-init-note">离线</span>
+          {onDismiss ? (
+            <button
+              aria-label="关闭"
+              className="lumio-claude-init-note"
+              onClick={onDismiss}
+              type="button"
+            >
+              离线
+            </button>
+          ) : (
+            <span className="lumio-claude-init-note">离线</span>
+          )}
         </header>
         <p className="lumio-claude-init-meta">
           现在连不上 {host}。本机 {local} 里的文件照常能改，恢复连接后自动对齐，不会静默覆盖谁。

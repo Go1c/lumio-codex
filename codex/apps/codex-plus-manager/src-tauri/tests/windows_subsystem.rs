@@ -100,10 +100,19 @@ fn launcher_binary_embeds_lumio_icon_and_metadata() {
 fn macos_main_window_uses_overlay_title_bar() {
     let lib_rs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("read manager lib.rs");
+    let capabilities = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/capabilities/default.json"
+    ))
+    .expect("read capabilities");
 
     assert!(lib_rs.contains("#[cfg(target_os = \"macos\")]"));
     assert!(lib_rs.contains("title_bar_style(tauri::TitleBarStyle::Overlay)"));
     assert!(lib_rs.contains("hidden_title(true)"));
+    assert!(
+        capabilities.contains("core:window:allow-start-dragging"),
+        "overlay title bar needs start-dragging so the custom header can move the window"
+    );
 }
 
 #[test]

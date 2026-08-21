@@ -61,6 +61,15 @@
   font-size: 13px;
 }
 
+button.lumio-claude-init-note {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 .lumio-claude-init-pill {
   font-size: 13px;
   font-weight: 560;

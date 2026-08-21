@@ -177,9 +177,10 @@ export function localFsErrorCopy(code: string | null): string {
 export function syncErrorCopy(code: string | null): string {
   switch (code) {
     case "SYNC_ENGINE_UNAVAILABLE":
-      return "这个版本的 BestCodex 没有把同步组件打进来，暂时拉不了文件。更新或重装 BestCodex 后再试。";
+      return "这个版本没有同步组件。";
     case "SYNC_REMOTE_NOT_RUNNING":
-      return "服务器上的同步组件没有在运行，文件还没同步过去。";
+    case "SYNC_REMOTE_START_FAILED":
+      return "服务器上的同步还没启动。";
     case "SYNC_COPY_UNCONFIRMED":
       return "还没把服务器上的文件拉到这台电脑。";
     case "SSH_ALIAS_UNKNOWN":
@@ -345,6 +346,7 @@ export async function inspectClaudeRemote(input: ClaudeSshArgs & {
   ok: boolean;
   exists: boolean;
   names: string[];
+  componentsInstalled: boolean;
   errorCode: string | null;
   detail: string | null;
 }> {
@@ -353,6 +355,7 @@ export async function inspectClaudeRemote(input: ClaudeSshArgs & {
       ok: false,
       exists: false,
       names: [],
+      componentsInstalled: false,
       errorCode: "SSH_CLIENT_MISSING",
       detail: prepareErrorCopy("SSH_CLIENT_MISSING", input.host, input.port),
     };
@@ -368,6 +371,7 @@ export async function inspectClaudeRemote(input: ClaudeSshArgs & {
       ok: false,
       exists: false,
       names: [],
+      componentsInstalled: false,
       errorCode,
       detail: prepareErrorCopy(errorCode, input.host, input.port),
     };
@@ -377,6 +381,7 @@ export async function inspectClaudeRemote(input: ClaudeSshArgs & {
 export async function prepareClaudeRemote(input: ClaudeSshArgs & {
   remoteRoot: string;
   localRoot: string;
+  replace?: boolean;
 }): Promise<{ ok: boolean; errorCode: string | null; detail: string | null }> {
   if (!isTauri()) {
     return { ok: false, errorCode: "SSH_CLIENT_MISSING", detail: prepareErrorCopy("SSH_CLIENT_MISSING", input.host, input.port) };
@@ -386,6 +391,7 @@ export async function prepareClaudeRemote(input: ClaudeSshArgs & {
       ...sshPayload(input),
       remoteRoot: input.remoteRoot,
       localRoot: input.localRoot,
+      replace: input.replace === true,
     });
   } catch (error: unknown) {
     const errorCode = error instanceof LumioCommandError ? error.errorCode : "SSH_PREPARE_FAILED";
