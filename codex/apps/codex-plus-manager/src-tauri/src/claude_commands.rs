@@ -1226,7 +1226,7 @@ fn spawn_official_engine(
         target,
         password,
         key_path,
-        "cat $HOME/.local/share/bestcodex/state/token",
+        &claude_deploy::remote_sync_token_script(remote_root),
     )
     .map_err(|_| "SYNC_REMOTE_START_FAILED".to_string())?;
     if !token_output.status.success() {

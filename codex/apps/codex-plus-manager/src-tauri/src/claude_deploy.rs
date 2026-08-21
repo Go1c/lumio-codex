@@ -159,28 +159,40 @@ pub fn parse_inspect_output(stdout: &str) -> InspectReport {
 pub fn stop_sync_for_replace_script() -> String {
     "set -u
 bin=$HOME/.local/share/bestcodex/bin
-state=$HOME/.local/share/bestcodex/state
-if [ -f $state/watchdog.pid ]; then
-  watchdog_pid=$(cat $state/watchdog.pid 2>/dev/null || true)
-  if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+state_root=$HOME/.local/share/bestcodex/state
+for watchdog_pid_file in $state_root/watchdog.pid $state_root/workspaces/*/watchdog.pid; do
+  [ -f $watchdog_pid_file ] || continue
+  watchdog_state=${watchdog_pid_file%/watchdog.pid}
+  watchdog_pid=$(cat $watchdog_pid_file 2>/dev/null || true)
+  if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $watchdog_state/watchdog.sh >/dev/null 2>&1; then
     kill $watchdog_pid 2>/dev/null || true
     watchdog_stop_attempt=0
-    while [ $watchdog_stop_attempt -lt 10 ] && kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; do
+    while [ $watchdog_stop_attempt -lt 10 ] && kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $watchdog_state/watchdog.sh >/dev/null 2>&1; do
       watchdog_stop_attempt=$((watchdog_stop_attempt + 1))
       sleep 1
     done
-    if kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+    if kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $watchdog_state/watchdog.sh >/dev/null 2>&1; then
       kill -KILL $watchdog_pid 2>/dev/null || true
       sleep 1
     fi
   fi
-  rm -f $state/watchdog.pid
-fi
+  rm -f $watchdog_pid_file
+done
 if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   systemctl stop bestcodex-sync.service || true
+  for unit_file in /etc/systemd/system/bestcodex-sync-*.service; do
+    [ -f $unit_file ] || continue
+    unit=${unit_file##*/}
+    systemctl stop $unit || true
+  done
   systemctl stop bestcodex-workspace.service || true
 elif command -v systemctl >/dev/null 2>&1; then
   systemctl --user stop bestcodex-sync.service || true
+  for unit_file in $HOME/.config/systemd/user/bestcodex-sync-*.service; do
+    [ -f $unit_file ] || continue
+    unit=${unit_file##*/}
+    systemctl --user stop $unit || true
+  done
   systemctl --user stop bestcodex-workspace.service || true
 fi
 for proc_exe in /proc/[0-9]*/exe; do
@@ -261,6 +273,24 @@ pub fn deploy_remote(
     artifacts: &ArtifactPaths,
     replace: bool,
     run_ssh: impl Fn(&str) -> Result<std::process::Output, &'static str>,
+    on_progress: impl FnMut(PrepareProgress),
+) -> PrepareOutcome {
+    deploy_remote_with_copy(
+        remote_root,
+        artifacts,
+        replace,
+        run_ssh,
+        |local, remote| scp_file(target, password, key_path, local, remote),
+        on_progress,
+    )
+}
+
+fn deploy_remote_with_copy(
+    remote_root: &str,
+    artifacts: &ArtifactPaths,
+    replace: bool,
+    run_ssh: impl Fn(&str) -> Result<std::process::Output, &'static str>,
+    copy_file: impl Fn(&Path, &str) -> Result<(), &'static str>,
     mut on_progress: impl FnMut(PrepareProgress),
 ) -> PrepareOutcome {
     on_progress(PrepareProgress::mkdir());
@@ -291,15 +321,15 @@ pub fn deploy_remote(
     }
 
     on_progress(PrepareProgress::upload(1));
-    if scp_file(
-        target,
-        password,
-        key_path,
+    if copy_file(
         &artifacts.server,
-        "~/.local/share/bestcodex/bin/fns-server",
+        "~/.local/share/bestcodex/bin/fns-server.new",
     )
     .is_err()
     {
+        if replace {
+            recover_after_failed_replace(&run_ssh);
+        }
         return PrepareOutcome {
             ok: false,
             error_code: Some("SSH_PREPARE_FAILED".into()),
@@ -307,15 +337,15 @@ pub fn deploy_remote(
         };
     }
     on_progress(PrepareProgress::upload(2));
-    if scp_file(
-        target,
-        password,
-        key_path,
+    if copy_file(
         &artifacts.agent,
-        "~/.local/share/bestcodex/bin/fns-agent",
+        "~/.local/share/bestcodex/bin/fns-agent.new",
     )
     .is_err()
     {
+        if replace {
+            recover_after_failed_replace(&run_ssh);
+        }
         return PrepareOutcome {
             ok: false,
             error_code: Some("SSH_PREPARE_FAILED".into()),
@@ -324,6 +354,19 @@ pub fn deploy_remote(
     }
 
     on_progress(PrepareProgress::finish());
+    let activate_result = run_ssh(&activate_staged_components_script());
+    if !matches!(&activate_result, Ok(output) if output.status.success()) {
+        log_ssh_failure("activate", &activate_result);
+        let rolled_back = rollback_staged_components(&run_ssh);
+        if replace && rolled_back {
+            recover_after_failed_replace(&run_ssh);
+        }
+        return PrepareOutcome {
+            ok: false,
+            error_code: Some("SSH_PREPARE_FAILED".into()),
+            detail: Some("没能在服务器上装好同步组件。".into()),
+        };
+    }
     let start = keep_sync_running_script(remote_root);
     let start_result = run_ssh(&start);
     match start_result {
@@ -334,6 +377,11 @@ pub fn deploy_remote(
         },
         failed => {
             log_ssh_failure("start", &failed);
+            let stopped = stop_components_after_failed_start(&run_ssh);
+            let rolled_back = stopped && rollback_staged_components(&run_ssh);
+            if replace && rolled_back {
+                recover_after_failed_replace(&run_ssh);
+            }
             PrepareOutcome {
                 ok: false,
                 error_code: Some("SSH_PREPARE_FAILED".into()),
@@ -341,6 +389,169 @@ pub fn deploy_remote(
             }
         }
     }
+}
+
+fn stop_components_after_failed_start(
+    run_ssh: &impl Fn(&str) -> Result<std::process::Output, &'static str>,
+) -> bool {
+    let stop = run_ssh(&stop_sync_for_replace_script());
+    if matches!(&stop, Ok(output) if output.status.success()) {
+        true
+    } else {
+        log_ssh_failure("replace-failed-start-stop", &stop);
+        false
+    }
+}
+
+fn rollback_staged_components(
+    run_ssh: &impl Fn(&str) -> Result<std::process::Output, &'static str>,
+) -> bool {
+    let rollback = run_ssh(&rollback_staged_components_script());
+    if matches!(&rollback, Ok(output) if output.status.success()) {
+        true
+    } else {
+        log_ssh_failure("replace-rollback", &rollback);
+        false
+    }
+}
+
+fn recover_after_failed_replace(
+    run_ssh: &impl Fn(&str) -> Result<std::process::Output, &'static str>,
+) {
+    let recovery = run_ssh(&restart_sync_after_failed_replace_script());
+    if !matches!(&recovery, Ok(output) if output.status.success()) {
+        log_ssh_failure("replace-recover", &recovery);
+    }
+}
+
+pub fn activate_staged_components_script() -> String {
+    "set -eu
+bin=$HOME/.local/share/bestcodex/bin
+marker=$bin/.bestcodex-replace-active
+[ -f $bin/fns-server.new ]
+[ -f $bin/fns-agent.new ]
+chmod 0755 $bin/fns-server.new $bin/fns-agent.new
+rollback_active() {
+  rm -f $bin/fns-server $bin/fns-agent
+  if [ -f $bin/fns-server.previous ]; then mv $bin/fns-server.previous $bin/fns-server; fi
+  if [ -f $bin/fns-agent.previous ]; then mv $bin/fns-agent.previous $bin/fns-agent; fi
+  rm -f $marker
+}
+if [ -f $marker ]; then
+  rollback_active
+else
+  if [ ! -f $bin/fns-server ] && [ -f $bin/fns-server.previous ]; then mv $bin/fns-server.previous $bin/fns-server; fi
+  if [ ! -f $bin/fns-agent ] && [ -f $bin/fns-agent.previous ]; then mv $bin/fns-agent.previous $bin/fns-agent; fi
+fi
+rm -f $bin/fns-server.previous $bin/fns-agent.previous
+if [ -f $bin/fns-server ] && ! mv $bin/fns-server $bin/fns-server.previous; then
+  exit 1
+fi
+if [ -f $bin/fns-agent ] && ! mv $bin/fns-agent $bin/fns-agent.previous; then
+  if [ -f $bin/fns-server.previous ]; then mv $bin/fns-server.previous $bin/fns-server; fi
+  exit 1
+fi
+: > $marker
+if ! mv $bin/fns-server.new $bin/fns-server; then
+  rollback_active
+  exit 1
+fi
+if ! mv $bin/fns-agent.new $bin/fns-agent; then
+  rollback_active
+  exit 1
+fi
+"
+    .into()
+}
+
+pub fn rollback_staged_components_script() -> String {
+    "set -eu
+bin=$HOME/.local/share/bestcodex/bin
+marker=$bin/.bestcodex-replace-active
+if [ -f $marker ]; then
+  rm -f $bin/fns-server $bin/fns-agent
+  if [ -f $bin/fns-server.previous ]; then mv $bin/fns-server.previous $bin/fns-server; fi
+  if [ -f $bin/fns-agent.previous ]; then mv $bin/fns-agent.previous $bin/fns-agent; fi
+  rm -f $marker
+else
+  if [ ! -f $bin/fns-server ] && [ -f $bin/fns-server.previous ]; then mv $bin/fns-server.previous $bin/fns-server; fi
+  if [ ! -f $bin/fns-agent ] && [ -f $bin/fns-agent.previous ]; then mv $bin/fns-agent.previous $bin/fns-agent; fi
+fi
+rm -f $bin/fns-server.new $bin/fns-agent.new
+"
+    .into()
+}
+
+pub fn restart_sync_after_failed_replace_script() -> String {
+    "set -u
+home=$HOME
+bin=$home/.local/share/bestcodex/bin
+state_root=$home/.local/share/bestcodex/state
+watchdog_required=0
+if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now bestcodex-sync.service || true
+  systemctl start bestcodex-workspace.service || true
+  for unit_file in /etc/systemd/system/bestcodex-sync-*.service; do
+    [ -f $unit_file ] || continue
+    unit=${unit_file##*/}
+    systemctl start $unit || true
+  done
+elif command -v systemctl >/dev/null 2>&1; then
+  systemctl --user disable --now bestcodex-sync.service || true
+  if command -v loginctl >/dev/null 2>&1 && loginctl show-user $(id -u) -p Linger 2>/dev/null | grep -Fx Linger=yes >/dev/null; then
+    systemctl --user start bestcodex-workspace.service || true
+    for unit_file in $home/.config/systemd/user/bestcodex-sync-*.service; do
+      [ -f $unit_file ] || continue
+      unit=${unit_file##*/}
+      systemctl --user start $unit || true
+    done
+  else
+    systemctl --user stop bestcodex-sync.service bestcodex-workspace.service || true
+    for unit_file in $home/.config/systemd/user/bestcodex-sync-*.service; do
+      [ -f $unit_file ] || continue
+      unit=${unit_file##*/}
+      systemctl --user stop $unit || true
+    done
+    watchdog_required=1
+  fi
+fi
+sleep 2
+process_pid() {
+  wanted=$1
+  required_arg=${2-}
+  for proc_exe in /proc/[0-9]*/exe; do
+    [ -L $proc_exe ] || continue
+    target=$(readlink $proc_exe 2>/dev/null || true)
+    case x$target in
+      x$wanted)
+        pid=${proc_exe#/proc/}
+        pid=${pid%/exe}
+        if [ x$required_arg = x ] || { [ -r /proc/$pid/cmdline ] && tr '\000' '\n' < /proc/$pid/cmdline | grep -Fx $required_arg >/dev/null 2>&1; }; then
+          echo $pid
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+for watchdog_script in $state_root/workspaces/*/watchdog.sh; do
+  [ -f $watchdog_script ] || continue
+  watchdog_state=${watchdog_script%/watchdog.sh}
+  if [ $watchdog_required -eq 0 ] && process_pid $bin/fns-server >/dev/null && process_pid $bin/fns-agent $watchdog_state/agent.json >/dev/null; then continue; fi
+  watchdog_running=0
+  if [ -f $watchdog_state/watchdog.pid ]; then
+    watchdog_pid=$(cat $watchdog_state/watchdog.pid 2>/dev/null || true)
+    if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\000' '\n' < /proc/$watchdog_pid/cmdline | grep -Fx $watchdog_script >/dev/null 2>&1; then watchdog_running=1; fi
+  fi
+  if [ $watchdog_running -eq 0 ]; then
+    nohup sh $watchdog_script >/dev/null 2>>$watchdog_state/watchdog.stderr.log &
+    echo $! > $watchdog_state/watchdog.pid
+  fi
+done
+exit 0
+"
+    .into()
 }
 
 fn format_ssh_failure_log(stage: &str, exit: Option<i32>, stderr: &[u8]) -> String {
@@ -438,6 +649,13 @@ pub fn sync_client_id(side: &str, remote_root: &str) -> String {
     uuid_from_tag(side, remote_root)
 }
 
+pub fn remote_sync_token_script(remote_root: &str) -> String {
+    format!(
+        "cat $HOME/.local/share/bestcodex/state/workspaces/{}/token",
+        sync_workspace_id(remote_root)
+    )
+}
+
 fn base64_encode(input: &[u8]) -> String {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
@@ -466,7 +684,7 @@ fn base64_encode(input: &[u8]) -> String {
 
 pub fn remote_sync_unit(wanted_by: &str) -> String {
     format!(
-        "[Unit]\nDescription=BestCodex file sync\nAfter=network-online.target bestcodex-workspace.service\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=ROOT_PLACEHOLDER\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-agent run --config HOME_PLACEHOLDER/.local/share/bestcodex/state/agent.json\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
+        "[Unit]\nDescription=BestCodex file sync\nAfter=network-online.target bestcodex-workspace.service\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=ROOT_PLACEHOLDER\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-agent run --config STATE_PLACEHOLDER/agent.json\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
     )
 }
 
@@ -481,7 +699,7 @@ pub fn keep_sync_running_script(remote_root: &str) -> String {
     let workspace_id = sync_workspace_id(remote_root);
     let client_id = sync_client_id("remote", remote_root);
     let config = format!(
-        "{{\n  \"schemaVersion\": \"fns-agent-config/1\",\n  \"endpoint\": \"ws://127.0.0.1:9000/api/user/workspace-sync/v2\",\n  \"workspaceId\": \"{workspace_id}\",\n  \"clientId\": \"{client_id}\",\n  \"workspaceRoot\": \"ROOT_PLACEHOLDER\",\n  \"stateDir\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state\",\n  \"tokenFile\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state/token\",\n  \"sync\": {{\n    \"includes\": [\"**/*\"],\n    \"excludes\": [],\n    \"protectSecrets\": true\n  }},\n  \"transport\": {{ \"maxActiveTransfers\": 2 }}\n}}\n"
+        "{{\n  \"schemaVersion\": \"fns-agent-config/1\",\n  \"endpoint\": \"ws://127.0.0.1:9000/api/user/workspace-sync/v2\",\n  \"workspaceId\": \"{workspace_id}\",\n  \"clientId\": \"{client_id}\",\n  \"workspaceRoot\": \"ROOT_PLACEHOLDER\",\n  \"stateDir\": \"STATE_PLACEHOLDER\",\n  \"tokenFile\": \"STATE_PLACEHOLDER/token\",\n  \"sync\": {{\n    \"includes\": [\"**/*\"],\n    \"excludes\": [],\n    \"protectSecrets\": true\n  }},\n  \"transport\": {{ \"maxActiveTransfers\": 2 }}\n}}\n"
     );
     let config_b64 = base64_encode(config.as_bytes());
     let sync_system_b64 = base64_encode(remote_sync_unit("multi-user.target").as_bytes());
@@ -494,17 +712,22 @@ pub fn keep_sync_running_script(remote_root: &str) -> String {
         "set -eu
 home=$HOME
 bin=$home/.local/share/bestcodex/bin
-state=$home/.local/share/bestcodex/state
+state_root=$home/.local/share/bestcodex/state
+state=$state_root/workspaces/{workspace_id}
+sync_unit=bestcodex-sync-{workspace_id}.service
 server_dir=$home/.local/share/bestcodex/server
 root={root}
+require_all=0
+if [ -f $bin/.bestcodex-replace-active ]; then require_all=1; fi
 mkdir -p $root $state $server_dir $home/.config/systemd/user
+chmod 0700 $state_root $state
 chmod 0755 $bin/fns-server $bin/fns-agent
 root=$(cd $root && pwd)
 $bin/fns-server bootstrap-workspace --config $server_dir/config/config.yaml --token-file $state/token --workspace-id {workspace_id} --workspace-root $root
 chmod 0600 $state/token
-printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root#g | sed s#HOME_PLACEHOLDER#$home#g > $state/agent.json
+printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root#g | sed s#STATE_PLACEHOLDER#$state#g > $state/agent.json
 chmod 0600 $state/agent.json
-printf %s {watchdog_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g | sed s#PORT_PLACEHOLDER#9000#g > $state/watchdog.sh
+printf %s {watchdog_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#STATE_PLACEHOLDER#$state#g | sed s#ROOT_PLACEHOLDER#$root#g | sed s#PORT_PLACEHOLDER#9000#g > $state/watchdog.sh
 chmod 0700 $state/watchdog.sh
 if grep -R PLACEHOLDER $state/agent.json $state/watchdog.sh >/dev/null; then exit 1; fi
 systemd_scope=none
@@ -512,25 +735,40 @@ watchdog_required=0
 if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   systemd_scope=system
   mkdir -p /etc/systemd/system
+  systemctl disable --now bestcodex-sync.service || true
   printf %s {workspace_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g > /etc/systemd/system/bestcodex-workspace.service
-  printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g > /etc/systemd/system/bestcodex-sync.service
-  if grep -R PLACEHOLDER $state/agent.json /etc/systemd/system/bestcodex-workspace.service /etc/systemd/system/bestcodex-sync.service >/dev/null; then exit 1; fi
+  printf %s {sync_system_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#STATE_PLACEHOLDER#$state#g | sed s#ROOT_PLACEHOLDER#$root#g > /etc/systemd/system/$sync_unit
+  if grep -R PLACEHOLDER $state/agent.json /etc/systemd/system/bestcodex-workspace.service /etc/systemd/system/$sync_unit >/dev/null; then exit 1; fi
   systemctl daemon-reload || true
   systemctl enable --now bestcodex-workspace.service || true
-  systemctl enable --now bestcodex-sync.service || true
-  systemctl restart bestcodex-workspace.service bestcodex-sync.service || true
+  for unit_file in /etc/systemd/system/bestcodex-sync-*.service; do
+    [ -f $unit_file ] || continue
+    unit=${{unit_file##*/}}
+    systemctl enable --now $unit || true
+  done
+  systemctl restart bestcodex-workspace.service $sync_unit || true
 elif command -v systemctl >/dev/null 2>&1; then
   systemd_scope=user
+  systemctl --user disable --now bestcodex-sync.service || true
   printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g > $home/.config/systemd/user/bestcodex-workspace.service
-  printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#ROOT_PLACEHOLDER#$root#g > $home/.config/systemd/user/bestcodex-sync.service
-  if grep -R PLACEHOLDER $state/agent.json $home/.config/systemd/user/bestcodex-workspace.service $home/.config/systemd/user/bestcodex-sync.service >/dev/null; then exit 1; fi
+  printf %s {sync_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g | sed s#STATE_PLACEHOLDER#$state#g | sed s#ROOT_PLACEHOLDER#$root#g > $home/.config/systemd/user/$sync_unit
+  if grep -R PLACEHOLDER $state/agent.json $home/.config/systemd/user/bestcodex-workspace.service $home/.config/systemd/user/$sync_unit >/dev/null; then exit 1; fi
   systemctl --user daemon-reload || true
   systemctl --user enable --now bestcodex-workspace.service || true
-  systemctl --user enable --now bestcodex-sync.service || true
-  systemctl --user restart bestcodex-workspace.service bestcodex-sync.service || true
+  for unit_file in $home/.config/systemd/user/bestcodex-sync-*.service; do
+    [ -f $unit_file ] || continue
+    unit=${{unit_file##*/}}
+    systemctl --user enable --now $unit || true
+  done
+  systemctl --user restart bestcodex-workspace.service $sync_unit || true
   if ! command -v loginctl >/dev/null 2>&1 || ! loginctl show-user $(id -u) -p Linger 2>/dev/null | grep -Fx Linger=yes >/dev/null; then
-    systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service || true
-    rm -f $home/.config/systemd/user/default.target.wants/bestcodex-sync.service
+    for unit_file in $home/.config/systemd/user/bestcodex-sync-*.service; do
+      [ -f $unit_file ] || continue
+      unit=${{unit_file##*/}}
+      systemctl --user disable --now $unit || true
+      rm -f $home/.config/systemd/user/default.target.wants/$unit
+    done
+    systemctl --user disable --now bestcodex-workspace.service || true
     rm -f $home/.config/systemd/user/default.target.wants/bestcodex-workspace.service
     systemd_scope=none
     watchdog_required=1
@@ -538,44 +776,91 @@ elif command -v systemctl >/dev/null 2>&1; then
 fi
 process_pid() {{
   wanted=$1
+  required_arg=${{2-}}
   for proc_exe in /proc/[0-9]*/exe; do
     [ -L $proc_exe ] || continue
     target=$(readlink $proc_exe 2>/dev/null || true)
     case x$target in
       x$wanted)
         pid=${{proc_exe#/proc/}}
-        echo ${{pid%/exe}}
-        return 0
+        pid=${{pid%/exe}}
+        if [ x$required_arg = x ] || {{ [ -r /proc/$pid/cmdline ] && tr '\\000' '\\n' < /proc/$pid/cmdline | grep -Fx $required_arg >/dev/null 2>&1; }}; then
+          echo $pid
+          return 0
+        fi
         ;;
     esac
   done
   return 1
 }}
+all_scoped_agents_running() {{
+  found=0
+  for agent_config in $state_root/workspaces/*/agent.json; do
+    [ -f $agent_config ] || continue
+    found=1
+    if ! process_pid $bin/fns-agent $agent_config >/dev/null; then return 1; fi
+  done
+  [ $found -eq 1 ]
+}}
+required_agents_running() {{
+  if [ $require_all -eq 1 ]; then
+    all_scoped_agents_running
+  else
+    process_pid $bin/fns-agent $state/agent.json >/dev/null
+  fi
+}}
+if [ -f $state_root/watchdog.pid ]; then
+  legacy_watchdog_pid=$(cat $state_root/watchdog.pid 2>/dev/null || true)
+  if [ x$legacy_watchdog_pid != x ] && [ -r /proc/$legacy_watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$legacy_watchdog_pid/cmdline | grep -Fx $state_root/watchdog.sh >/dev/null 2>&1; then
+    kill $legacy_watchdog_pid 2>/dev/null || true
+    legacy_stop_attempt=0
+    while [ $legacy_stop_attempt -lt 10 ] && kill -0 $legacy_watchdog_pid 2>/dev/null && [ -r /proc/$legacy_watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$legacy_watchdog_pid/cmdline | grep -Fx $state_root/watchdog.sh >/dev/null 2>&1; do
+      legacy_stop_attempt=$((legacy_stop_attempt + 1))
+      sleep 1
+    done
+    if kill -0 $legacy_watchdog_pid 2>/dev/null && [ -r /proc/$legacy_watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$legacy_watchdog_pid/cmdline | grep -Fx $state_root/watchdog.sh >/dev/null 2>&1; then
+      kill -KILL $legacy_watchdog_pid 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+  rm -f $state_root/watchdog.pid
+fi
+legacy_agent_pid=$(process_pid $bin/fns-agent $state_root/agent.json || true)
+if [ x$legacy_agent_pid != x ]; then kill $legacy_agent_pid 2>/dev/null || true; fi
 attempt=0
 while [ $attempt -lt 5 ]; do
-  if process_pid $bin/fns-server >/dev/null && process_pid $bin/fns-agent >/dev/null; then break; fi
+  if process_pid $bin/fns-server >/dev/null && required_agents_running; then break; fi
   attempt=$((attempt + 1))
   sleep 1
 done
-if [ $watchdog_required -eq 1 ] || ! process_pid $bin/fns-server >/dev/null || ! process_pid $bin/fns-agent >/dev/null; then
+if [ $watchdog_required -eq 1 ] || ! process_pid $bin/fns-server >/dev/null || ! required_agents_running; then
   if [ $systemd_scope = system ]; then
-    systemctl stop bestcodex-sync.service bestcodex-workspace.service || true
+    systemctl stop $sync_unit || true
   elif [ $systemd_scope = user ]; then
-    systemctl --user stop bestcodex-sync.service bestcodex-workspace.service || true
+    systemctl --user stop $sync_unit || true
   fi
-  watchdog_running=0
-  if [ -f $state/watchdog.pid ]; then
-    watchdog_pid=$(cat $state/watchdog.pid 2>/dev/null || true)
-    if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then watchdog_running=1; fi
-  fi
-  if [ $watchdog_running -eq 0 ]; then
-    nohup sh $state/watchdog.sh >/dev/null 2>>$state/watchdog.stderr.log &
-    echo $! > $state/watchdog.pid
-  fi
+  for watchdog_script in $state_root/workspaces/*/watchdog.sh; do
+    [ -f $watchdog_script ] || continue
+    watchdog_state=${{watchdog_script%/watchdog.sh}}
+    watchdog_running=0
+    if [ -f $watchdog_state/watchdog.pid ]; then
+      watchdog_pid=$(cat $watchdog_state/watchdog.pid 2>/dev/null || true)
+      if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $watchdog_script >/dev/null 2>&1; then watchdog_running=1; fi
+    fi
+    if [ $watchdog_running -eq 0 ]; then
+      nohup sh $watchdog_script >/dev/null 2>>$watchdog_state/watchdog.stderr.log &
+      echo $! > $watchdog_state/watchdog.pid
+    fi
+  done
 fi
 attempt=0
 while [ $attempt -lt 20 ]; do
-  if process_pid $bin/fns-server >/dev/null && process_pid $bin/fns-agent >/dev/null; then exit 0; fi
+  if process_pid $bin/fns-server >/dev/null && required_agents_running; then
+    if rm -f $bin/.bestcodex-replace-active; then
+      rm -f $bin/fns-server.previous $bin/fns-agent.previous $bin/fns-server.new $bin/fns-agent.new || true
+    fi
+    exit 0
+  fi
   attempt=$((attempt + 1))
   sleep 1
 done
@@ -596,21 +881,19 @@ if [ -f $state/watchdog.pid ]; then
   rm -f $state/watchdog.pid
 fi
 if [ $systemd_scope = system ]; then
-  systemctl disable --now bestcodex-sync.service bestcodex-workspace.service || true
+  systemctl disable --now $sync_unit || true
 elif [ $systemd_scope = user ]; then
-  systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service || true
+  systemctl --user disable --now $sync_unit || true
 fi
-for wanted in $bin/fns-agent $bin/fns-server; do
-  remaining_pid=$(process_pid $wanted || true)
-  if [ x$remaining_pid != x ]; then kill $remaining_pid 2>/dev/null || true; fi
-  process_stop_attempt=0
-  while [ $process_stop_attempt -lt 10 ] && process_pid $wanted >/dev/null; do
-    process_stop_attempt=$((process_stop_attempt + 1))
-    sleep 1
-  done
-  remaining_pid=$(process_pid $wanted || true)
-  if [ x$remaining_pid != x ]; then kill -KILL $remaining_pid 2>/dev/null || true; fi
+remaining_pid=$(process_pid $bin/fns-agent $state/agent.json || true)
+if [ x$remaining_pid != x ]; then kill $remaining_pid 2>/dev/null || true; fi
+process_stop_attempt=0
+while [ $process_stop_attempt -lt 10 ] && process_pid $bin/fns-agent $state/agent.json >/dev/null; do
+  process_stop_attempt=$((process_stop_attempt + 1))
+  sleep 1
 done
+remaining_pid=$(process_pid $bin/fns-agent $state/agent.json || true)
+if [ x$remaining_pid != x ]; then kill -KILL $remaining_pid 2>/dev/null || true; fi
 tail -n 40 $state/server.stderr.log >&2 2>/dev/null || true
 tail -n 40 $state/agent.stderr.log >&2 2>/dev/null || true
 exit 1
@@ -671,6 +954,12 @@ mod tests {
             watchdog < server,
             "watchdog must stop before binaries: {script}"
         );
+        assert!(script.contains("$state_root/workspaces/*/watchdog.pid"));
+        assert!(script.contains("/etc/systemd/system/bestcodex-sync-*.service"));
+        assert!(script.contains("$HOME/.config/systemd/user/bestcodex-sync-*.service"));
+        assert!(script.contains("systemctl stop bestcodex-sync.service || true"));
+        assert!(!script.contains("rm -rf"));
+        assert!(!script.contains("sudo"));
         assert!(script.contains("watchdog_stop_attempt=0"));
         assert!(script.contains("kill -0 $watchdog_pid"));
         assert!(script.contains("/proc/[0-9]*/exe"));
@@ -792,6 +1081,52 @@ mod tests {
     }
 
     #[test]
+    fn remote_sync_state_and_service_are_scoped_to_the_workspace() {
+        let first_root = "~/bestcodex/first";
+        let second_root = "~/bestcodex/second";
+        let first_id = sync_workspace_id(first_root);
+        let second_id = sync_workspace_id(second_root);
+        let first = keep_sync_running_script(first_root);
+        let second = keep_sync_running_script(second_root);
+
+        assert_ne!(first_id, second_id);
+        assert!(first.contains(&format!("state=$state_root/workspaces/{first_id}")));
+        assert!(second.contains(&format!("state=$state_root/workspaces/{second_id}")));
+        assert!(first.contains(&format!("sync_unit=bestcodex-sync-{first_id}.service")));
+        assert!(second.contains(&format!("sync_unit=bestcodex-sync-{second_id}.service")));
+        assert!(first.contains("process_pid $bin/fns-agent $state/agent.json"));
+        assert!(!first.contains("state=$home/.local/share/bestcodex/state\n"));
+    }
+
+    #[test]
+    fn remote_sync_token_read_is_scoped_to_the_workspace() {
+        let root = "~/bestcodex/docs";
+        let workspace_id = sync_workspace_id(root);
+        let script = remote_sync_token_script(root);
+        assert_eq!(
+            script,
+            format!("cat $HOME/.local/share/bestcodex/state/workspaces/{workspace_id}/token")
+        );
+        assert!(!script.contains('"'));
+    }
+
+    #[test]
+    fn legacy_global_watchdog_is_gone_before_scoped_agent_startup() {
+        let script = keep_sync_running_script("~/bestcodex/docs");
+        let legacy_cleanup = script
+            .find("if [ -f $state_root/watchdog.pid ]")
+            .expect("legacy watchdog cleanup");
+        let scoped_probe = script
+            .find("while [ $attempt -lt 5 ]")
+            .expect("scoped process probe");
+        let cleanup = &script[legacy_cleanup..scoped_probe];
+
+        assert!(cleanup.contains("kill -0 $legacy_watchdog_pid"));
+        assert!(cleanup.contains("kill -KILL $legacy_watchdog_pid"));
+        assert!(cleanup.contains("process_pid $bin/fns-agent $state_root/agent.json"));
+    }
+
+    #[test]
     fn keep_sync_running_script_enables_a_permanent_service() {
         let script = keep_sync_running_script("~/bestcodex/docs");
         assert!(
@@ -812,9 +1147,10 @@ mod tests {
         assert!(!script.contains("pgrep -f"));
         assert!(script.contains("/proc/[0-9]*/exe"));
         assert!(script.contains("watchdog.pid"));
-        assert!(
-            script.contains("systemctl restart bestcodex-workspace.service bestcodex-sync.service")
-        );
+        assert!(script.contains("systemctl restart bestcodex-workspace.service $sync_unit"));
+        assert!(script.contains("systemctl --user restart bestcodex-workspace.service $sync_unit"));
+        assert!(script.contains("systemctl disable --now bestcodex-sync.service || true"));
+        assert!(script.contains("systemctl --user disable --now bestcodex-sync.service || true"));
         let unit = remote_sync_unit("multi-user.target");
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("fns-agent run --config"));
@@ -835,14 +1171,15 @@ mod tests {
     fn keep_sync_running_starts_even_when_systemd_enable_fails() {
         let script = keep_sync_running_script("~/bestcodex/docs");
         assert!(
-            script.contains("enable --now bestcodex-sync.service || true"),
+            script.contains("systemctl enable --now $unit || true"),
             "systemd enable must not abort under set -e: {script}"
         );
+        assert!(script.contains("systemctl --user enable --now $unit || true"));
         assert!(
             !script.contains("if [ $started -eq 0 ]"),
             "nohup must still run when systemd exists but the process is missing: {script}"
         );
-        assert!(script.contains("nohup sh $state/watchdog.sh"));
+        assert!(script.contains("nohup sh $watchdog_script"));
         assert!(script.contains("server.stderr.log"));
         assert!(script.contains("agent.stderr.log"));
         assert!(script.contains("tail -n 40"));
@@ -855,13 +1192,23 @@ mod tests {
             cleanup > 0,
             "terminal failure must stop watchdog churn: {script}"
         );
-        assert!(failure_script.contains(
-            "systemctl disable --now bestcodex-sync.service bestcodex-workspace.service"
-        ));
-        assert!(failure_script.contains(
-            "systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service"
-        ));
-        assert!(failure_script.contains("for wanted in $bin/fns-agent $bin/fns-server"));
+        assert!(failure_script.contains("systemctl disable --now $sync_unit || true"));
+        assert!(failure_script.contains("systemctl --user disable --now $sync_unit || true"));
+        assert!(failure_script.contains("process_pid $bin/fns-agent $state/agent.json"));
+        assert!(script.contains("all_scoped_agents_running()"));
+        assert!(script.contains("for agent_config in $state_root/workspaces/*/agent.json"));
+        assert!(
+            script.contains("process_pid $bin/fns-server >/dev/null && required_agents_running")
+        );
+        assert!(script.contains("if [ $require_all -eq 1 ]"));
+        assert!(
+            !failure_script.contains("kill $server_pid"),
+            "one workspace failure must not stop the shared server: {failure_script}"
+        );
+        assert!(
+            !failure_script.contains("for wanted in $bin/fns-agent $bin/fns-server"),
+            "one workspace failure must only clean up its own agent: {failure_script}"
+        );
         assert!(failure_script.contains("kill -KILL $remaining_pid"));
         assert!(
             !script.contains('"'),
@@ -877,12 +1224,12 @@ mod tests {
         assert!(script.contains("systemd_scope=none"));
         assert!(script.contains("watchdog_required=1"));
         assert!(script.contains("if [ $watchdog_required -eq 1 ]"));
-        assert!(script.contains(
-            "systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service"
-        ));
-        assert!(script.contains(
-            "rm -f $home/.config/systemd/user/default.target.wants/bestcodex-sync.service"
-        ));
+        assert!(
+            script.contains("for unit_file in $home/.config/systemd/user/bestcodex-sync-*.service")
+        );
+        assert!(script.contains("systemctl --user disable --now $unit || true"));
+        assert!(script.contains("rm -f $home/.config/systemd/user/default.target.wants/$unit"));
+        assert!(script.contains("systemctl --user disable --now bestcodex-workspace.service"));
     }
 
     #[test]
@@ -943,6 +1290,200 @@ mod tests {
         );
         assert!(!outcome.ok);
         assert_eq!(calls.get(), 2, "upload must not start after stop failure");
+    }
+
+    #[test]
+    fn replace_copy_failure_restores_all_existing_services() {
+        for failed_copy in [0usize, 1usize] {
+            let local = tempfile::tempdir().unwrap();
+            let server = local.path().join("fns-server");
+            let agent = local.path().join("fns-agent");
+            std::fs::write(&server, vec![0u8; 2048]).unwrap();
+            std::fs::write(&agent, vec![0u8; 2048]).unwrap();
+            let artifacts = ArtifactPaths { server, agent };
+            let ssh_calls = std::cell::RefCell::new(Vec::new());
+            let copy_calls = std::cell::Cell::new(0usize);
+
+            let outcome = deploy_remote_with_copy(
+                "~/bestcodex/my-project",
+                &artifacts,
+                true,
+                |script| {
+                    ssh_calls.borrow_mut().push(script.to_string());
+                    Ok(Command::new("true").output().unwrap())
+                },
+                |_, remote| {
+                    let call = copy_calls.get();
+                    copy_calls.set(call + 1);
+                    assert!(remote.ends_with(".new"));
+                    if call == failed_copy {
+                        Err("copy failed")
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {},
+            );
+
+            assert!(!outcome.ok);
+            let calls = ssh_calls.borrow();
+            assert_eq!(calls.len(), 3, "mkdir, stop, and recovery must run");
+            let recovery = calls.last().unwrap();
+            assert!(recovery.contains("bestcodex-sync-*.service"));
+            assert!(recovery.contains("$state_root/workspaces/*/watchdog.sh"));
+            assert!(recovery.contains("bestcodex-workspace.service"));
+        }
+    }
+
+    #[test]
+    fn replace_recovery_ignores_legacy_global_supervisors() {
+        let recovery = restart_sync_after_failed_replace_script();
+
+        assert!(!recovery.contains("systemctl start bestcodex-sync.service"));
+        assert!(!recovery.contains("systemctl --user start bestcodex-sync.service"));
+        assert!(!recovery.contains(
+            "for watchdog_script in $state_root/watchdog.sh $state_root/workspaces/*/watchdog.sh"
+        ));
+        assert!(recovery.contains("bestcodex-sync-*.service"));
+        assert!(recovery.contains("$state_root/workspaces/*/watchdog.sh"));
+    }
+
+    #[test]
+    fn replace_start_failure_rolls_back_binaries_before_recovery() {
+        let local = tempfile::tempdir().unwrap();
+        let server = local.path().join("fns-server");
+        let agent = local.path().join("fns-agent");
+        std::fs::write(&server, vec![0u8; 2048]).unwrap();
+        std::fs::write(&agent, vec![0u8; 2048]).unwrap();
+        let artifacts = ArtifactPaths { server, agent };
+        let ssh_calls = std::cell::RefCell::new(Vec::new());
+
+        let outcome = deploy_remote_with_copy(
+            "~/bestcodex/my-project",
+            &artifacts,
+            true,
+            |script| {
+                let mut calls = ssh_calls.borrow_mut();
+                let call = calls.len();
+                calls.push(script.to_string());
+                if call == 3 {
+                    Ok(Command::new("false").output().unwrap())
+                } else {
+                    Ok(Command::new("true").output().unwrap())
+                }
+            },
+            |_, _| Ok(()),
+            |_| {},
+        );
+
+        assert!(!outcome.ok);
+        let calls = ssh_calls.borrow();
+        assert_eq!(
+            calls.len(),
+            7,
+            "mkdir, initial stop, activate, start, final stop, rollback, and recovery must run"
+        );
+        assert_eq!(calls[4], stop_sync_for_replace_script());
+        assert!(calls[5].contains(".bestcodex-replace-active"));
+        assert_eq!(calls[6], restart_sync_after_failed_replace_script());
+    }
+
+    #[test]
+    fn staged_activation_and_replace_recovery_obey_remote_shell_constraints() {
+        for script in [
+            activate_staged_components_script(),
+            rollback_staged_components_script(),
+            restart_sync_after_failed_replace_script(),
+        ] {
+            assert!(!script.contains('"'));
+            assert!(!script.contains("sudo"));
+            assert!(!script.contains("rm -rf"));
+        }
+        let activate = activate_staged_components_script();
+        assert!(activate.contains("[ -f $bin/fns-server.new ]"));
+        assert!(activate.contains("[ -f $bin/fns-agent.new ]"));
+        assert!(activate.contains(".bestcodex-replace-active"));
+        assert!(activate.contains("$bin/fns-server.previous"));
+        assert!(activate.contains("$bin/fns-agent.previous"));
+        assert!(activate.contains("if ! mv $bin/fns-server.new $bin/fns-server"));
+        assert!(activate.contains("if ! mv $bin/fns-agent.new $bin/fns-agent"));
+        assert!(activate.contains("mv $bin/fns-server.new $bin/fns-server"));
+        assert!(activate.contains("mv $bin/fns-agent.new $bin/fns-agent"));
+        assert!(
+            activate.find(": > $marker").unwrap()
+                > activate
+                    .find("mv $bin/fns-agent $bin/fns-agent.previous")
+                    .unwrap(),
+            "the active marker must only appear after both old binaries are backed up"
+        );
+        let recovery = restart_sync_after_failed_replace_script();
+        assert!(recovery.contains("loginctl show-user $(id -u) -p Linger"));
+        assert!(recovery.contains("watchdog_required=1"));
+        assert!(recovery.contains("if [ $watchdog_required -eq 0 ]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_activation_restores_both_old_binaries_when_second_move_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join(".local/share/bestcodex/bin");
+        let fake_path = home.path().join("fake-path");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&fake_path).unwrap();
+        std::fs::write(bin.join("fns-server"), b"old-server").unwrap();
+        std::fs::write(bin.join("fns-agent"), b"old-agent").unwrap();
+        std::fs::write(bin.join("fns-server.new"), b"new-server").unwrap();
+        std::fs::write(bin.join("fns-agent.new"), b"new-agent").unwrap();
+        let fake_mv = fake_path.join("mv");
+        std::fs::write(
+            &fake_mv,
+            b"#!/bin/sh\ncase $1 in */fns-agent.new) exit 1;; esac\nexec /bin/mv \"$@\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_mv, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(activate_staged_components_script())
+            .env("HOME", home.path())
+            .env("PATH", format!("{}:/usr/bin:/bin", fake_path.display()))
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success());
+        assert_eq!(
+            std::fs::read(bin.join("fns-server")).unwrap(),
+            b"old-server"
+        );
+        assert_eq!(std::fs::read(bin.join("fns-agent")).unwrap(), b"old-agent");
+        assert!(!bin.join(".bestcodex-replace-active").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rollback_restores_a_partial_backup_created_before_the_marker() {
+        let home = tempfile::tempdir().unwrap();
+        let bin = home.path().join(".local/share/bestcodex/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("fns-server.previous"), b"old-server").unwrap();
+        std::fs::write(bin.join("fns-agent"), b"old-agent").unwrap();
+
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(rollback_staged_components_script())
+            .env("HOME", home.path())
+            .output()
+            .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            std::fs::read(bin.join("fns-server")).unwrap(),
+            b"old-server"
+        );
+        assert_eq!(std::fs::read(bin.join("fns-agent")).unwrap(), b"old-agent");
+        assert!(!bin.join("fns-server.previous").exists());
     }
 
     #[test]
