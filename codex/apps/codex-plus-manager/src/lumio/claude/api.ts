@@ -484,6 +484,7 @@ export async function listClaudeLocalFiles(localRoot: string): Promise<ClaudeFil
 }
 
 export async function listClaudeFiles(input: ClaudeSshArgs & {
+  projectId: string;
   localRoot: string;
   remoteRoot: string;
 }): Promise<{ local: ClaudeFileEntry[]; remote: ClaudeFileEntry[] }> {
@@ -491,6 +492,7 @@ export async function listClaudeFiles(input: ClaudeSshArgs & {
   try {
     return await runClaudeCommand(CLAUDE_COMMANDS.listTree, {
       ...sshPayload(input),
+      projectId: input.projectId,
       localRoot: input.localRoot,
       remoteRoot: input.remoteRoot,
     });

@@ -63,7 +63,7 @@ cp $artifact_dir/fns-server $bin/fns-server
 cp $artifact_dir/fns-agent $bin/fns-agent
 chmod 0755 $bin/fns-server $bin/fns-agent
 port=$(node -e 'const net=require("node:net");const s=net.createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')
-printf %s bestcodex-local-token > $state/token
+$bin/fns-server bootstrap-workspace --config $server_dir/config/config.yaml --token-file $state/token --workspace-id 6b657374-c0de-4000-8000-000000000001 --workspace-root $workspace --listen 127.0.0.1:$port
 SMOKE_PORT=$port SMOKE_WORKSPACE=$workspace SMOKE_STATE=$state node -e '
   const fs = require("node:fs");
   const state = process.env.SMOKE_STATE;

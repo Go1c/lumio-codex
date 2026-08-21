@@ -70,6 +70,14 @@ test("setup inspect uses the user-chosen remote folder", async () => {
   assert.doesNotMatch(source, /const remoteRoot = remoteProjectRoot\(draft\.user, desired\)/);
 });
 
+test("file refresh passes the project id to private conflict state", async () => {
+  const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /listClaudeFiles\(\{(?:(?!\}\);)[\s\S])*\n\s+projectId,/,
+  );
+});
+
 test("an already-installed host asks to reinstall instead of failing", async () => {
   const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
   assert.match(source, /componentsInstalled/);

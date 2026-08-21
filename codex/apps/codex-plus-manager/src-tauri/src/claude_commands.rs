@@ -11,6 +11,8 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use codex_plus_core::lumio::product;
+
 use crate::claude_conflicts::{self, ConflictStore, Resolution};
 use crate::claude_deploy;
 use crate::claude_files::{self, expand_local_root};
@@ -253,6 +255,17 @@ fn conflict_dir() -> std::path::PathBuf {
     base
 }
 
+fn local_sync_state_dir(base: &std::path::Path, project_key: &str) -> std::path::PathBuf {
+    base.join("claude-sync")
+        .join(claude_deploy::sync_client_id("state", project_key))
+}
+
+fn project_sync_state_dir(project_key: &str) -> Result<std::path::PathBuf, String> {
+    product::state_dir()
+        .map(|base| local_sync_state_dir(&base, project_key))
+        .ok_or_else(|| "SYNC_ENGINE_UNAVAILABLE".to_string())
+}
+
 fn count_remote_project_files(
     target: &ResolvedSshTarget,
     password: Option<&str>,
@@ -289,8 +302,10 @@ fn ingest_detected_conflicts(
     let Ok(store) = ConflictStore::new(&conflict_dir(), project_id) else {
         return;
     };
-    let state_dir = local.join(".bestcodex-sync");
-    let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &state_dir);
+    let state_dir = project_sync_state_dir(project_id).ok();
+    if let Some(state_dir) = state_dir.as_deref() {
+        let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &state_dir);
+    }
     let Ok(output) = run_ssh_target(
         target,
         password,
@@ -335,7 +350,9 @@ fn ingest_detected_conflicts(
     if detected.is_empty() {
         return;
     }
-    let _ = claude_conflicts::write_sidecar_conflicts(&state_dir, &detected);
+    if let Some(state_dir) = state_dir.as_deref() {
+        let _ = claude_conflicts::write_sidecar_conflicts(state_dir, &detected);
+    }
     let _ = claude_conflicts::ingest_engine_conflicts(&store, detected);
 }
 
@@ -852,6 +869,7 @@ pub fn lumio_claude_list_files(
     password: Option<String>,
     key_path: Option<String>,
     host_alias: Option<String>,
+    project_id: String,
     local_root: String,
     remote_root: String,
 ) -> ClaudeCommandResult<ClaudeFileTrees> {
@@ -914,8 +932,9 @@ pub fn lumio_claude_list_files(
         claude_files::apply_fingerprints(&mut remote, &remote_prints);
         let detected = claude_conflicts::detect_content_conflicts(&root, &pairs);
         if !detected.is_empty() {
-            let _ =
-                claude_conflicts::write_sidecar_conflicts(&root.join(".bestcodex-sync"), &detected);
+            if let Ok(state_dir) = project_sync_state_dir(&project_id) {
+                let _ = claude_conflicts::write_sidecar_conflicts(&state_dir, &detected);
+            }
         }
     }
     ClaudeCommandResult::ok(ClaudeFileTrees { local, remote })
@@ -1075,8 +1094,10 @@ pub fn lumio_claude_list_conflicts(
         Ok(store) => store,
         Err(_) => return ClaudeCommandResult::ok(Vec::new()),
     };
-    let local = expand_local_root(&local_root);
-    let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &local.join(".bestcodex-sync"));
+    let _ = local_root;
+    if let Ok(state_dir) = project_sync_state_dir(&project_id) {
+        let _ = claude_conflicts::ingest_sidecar_conflicts(&store, &state_dir);
+    }
     ClaudeCommandResult::ok(
         store
             .list()
@@ -1192,22 +1213,34 @@ fn spawn_official_engine(
     local_root: &str,
     remote_root: &str,
 ) -> Result<(), String> {
-    let remote_started = match run_ssh_target(
+    let remote_started = matches!(run_ssh_target(
         target,
         password,
         key_path,
         &claude_deploy::keep_sync_running_script(remote_root),
-    ) {
-        Ok(output) if output.status.success() => true,
-        _ => false,
-    };
+    ), Ok(output) if output.status.success());
+    if !remote_started {
+        return Err("SYNC_REMOTE_START_FAILED".into());
+    }
+    let mut token_output = run_ssh_target(
+        target,
+        password,
+        key_path,
+        "cat $HOME/.local/share/bestcodex/state/token",
+    )
+    .map_err(|_| "SYNC_REMOTE_START_FAILED".to_string())?;
+    if !token_output.status.success() {
+        return Err("SYNC_REMOTE_START_FAILED".into());
+    }
+    let mut token_bytes = take_remote_sync_token(&mut token_output.stdout)?;
+    let mut token = RemoteSyncTokenGuard::new(&mut token_bytes);
     let local_port = app
         .state::<TunnelManager>()
         .open(key, target, key_path, password, 9000)
         .map_err(|_| "SYNC_FAILED".to_string())?;
     let local = expand_local_root(local_root);
     let _ = std::fs::create_dir_all(&local);
-    let state_dir = local.join(".bestcodex-sync");
+    let state_dir = project_sync_state_dir(key)?;
     let config = claude_sync::write_agent_config(
         &state_dir,
         &local,
@@ -1215,12 +1248,48 @@ fn spawn_official_engine(
         &claude_deploy::sync_workspace_id(remote_root),
         &claude_deploy::sync_client_id("local", remote_root),
     )?;
-    engine.adopt_sidecar(key, &config)?;
-    if remote_started {
-        Ok(())
-    } else {
-        Err("SYNC_REMOTE_START_FAILED".into())
+    engine.adopt_sidecar(key, &config, token.as_mut_slice())?;
+    Ok(())
+}
+
+struct RemoteSyncTokenGuard<'a> {
+    bytes: &'a mut Vec<u8>,
+}
+
+impl<'a> RemoteSyncTokenGuard<'a> {
+    fn new(bytes: &'a mut Vec<u8>) -> Self {
+        Self { bytes }
     }
+
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.bytes.as_mut_slice()
+    }
+}
+
+impl Drop for RemoteSyncTokenGuard<'_> {
+    fn drop(&mut self) {
+        self.bytes.fill(0);
+    }
+}
+
+fn parse_remote_sync_token(stdout: &[u8]) -> Result<Vec<u8>, String> {
+    let token = std::str::from_utf8(stdout).map_err(|_| "SYNC_REMOTE_START_FAILED".to_string())?;
+    if token.len() < 20
+        || token.len() > 4096
+        || token.matches('.').count() != 2
+        || token
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+    {
+        return Err("SYNC_REMOTE_START_FAILED".into());
+    }
+    Ok(token.as_bytes().to_vec())
+}
+
+fn take_remote_sync_token(stdout: &mut [u8]) -> Result<Vec<u8>, String> {
+    let token = parse_remote_sync_token(stdout);
+    stdout.fill(0);
+    token
 }
 
 fn resume_sync_inner(
@@ -1571,6 +1640,50 @@ mod tests {
         assert_eq!(distro.as_deref(), Some("Ubuntu 22.04.1 LTS"));
         assert_eq!(cpu.as_deref(), Some("4"));
         assert_eq!(memory.as_deref(), Some("8 GB"));
+    }
+
+    #[test]
+    fn remote_sync_token_rejects_fixed_or_whitespace_values() {
+        assert!(parse_remote_sync_token(b"header.payload.signature\n").is_err());
+        assert!(parse_remote_sync_token(b"bestcodex-local-token").is_err());
+        assert!(parse_remote_sync_token(b"header. bad.signature").is_err());
+        assert!(parse_remote_sync_token(b"").is_err());
+    }
+
+    #[test]
+    fn remote_sync_token_source_is_cleared_after_parsing() {
+        let mut valid = b"header.payload.signature".to_vec();
+        assert_eq!(
+            take_remote_sync_token(&mut valid).unwrap(),
+            b"header.payload.signature"
+        );
+        assert!(valid.iter().all(|byte| *byte == 0));
+
+        let mut invalid = b"header.payload.signature\n".to_vec();
+        assert!(take_remote_sync_token(&mut invalid).is_err());
+        assert!(invalid.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn remote_sync_token_is_cleared_when_setup_returns_early() {
+        let mut token = b"header.payload.signature".to_vec();
+        {
+            let _guard = RemoteSyncTokenGuard::new(&mut token);
+        }
+        assert!(token.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn local_sync_state_stays_outside_the_workspace() {
+        let app_state = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let state = local_sync_state_dir(app_state.path(), "../../project/with/slashes");
+        assert!(state.starts_with(app_state.path()));
+        assert!(!state.starts_with(workspace.path()));
+        assert_eq!(
+            state.parent().unwrap(),
+            app_state.path().join("claude-sync")
+        );
     }
 
     fn sample_target() -> ResolvedSshTarget {

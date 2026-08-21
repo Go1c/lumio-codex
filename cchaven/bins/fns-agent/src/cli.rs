@@ -16,6 +16,9 @@ pub enum Command {
     Run {
         #[arg(long)]
         config: PathBuf,
+        /// Read the token once from inherited stdin instead of a Linux file.
+        #[arg(long)]
+        token_stdin: bool,
     },
     /// Print agent status as JSON.
     Status {

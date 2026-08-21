@@ -1,6 +1,8 @@
 //! CLI subprocess tests for fns-agent.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const BIN: &str = env!("CARGO_BIN_EXE_fns-agent");
 
@@ -103,6 +105,56 @@ fn diagnose_emits_json_with_checks() {
 fn run_without_config_exits_2() {
     let output = Command::new(BIN).args(["run"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn run_accepts_token_from_private_stdin() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = write_test_config(dir.path());
+    std::fs::remove_file(dir.path().join("token")).unwrap();
+
+    let mut child = Command::new(BIN)
+        .args([
+            "run",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--token-stdin",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"header.payload.signature")
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let exited_before_probe = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    if exited_before_probe.is_none() {
+        child.kill().unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_ne!(
+        exited_before_probe.and_then(|status| status.code()),
+        Some(2),
+        "token stdin must get past CLI/config credential loading: {stderr}"
+    );
+    assert!(!stderr.contains("cannot read token"), "{stderr}");
+    assert!(!stderr.contains("UnsupportedPlatform"), "{stderr}");
 }
 
 #[test]

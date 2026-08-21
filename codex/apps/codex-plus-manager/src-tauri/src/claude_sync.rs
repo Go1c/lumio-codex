@@ -7,8 +7,10 @@
 use crate::claude_files::expand_local_root;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -318,20 +320,13 @@ pub fn write_agent_config(
     client_id: &str,
 ) -> Result<PathBuf, String> {
     std::fs::create_dir_all(state_dir).map_err(|e| format!("没能准备同步状态目录：{e}"))?;
-    let token_file = state_dir.join("unused-private-pipe-token");
-    if !token_file.exists() {
-        std::fs::write(&token_file, "bestcodex-local-token")
-            .map_err(|e| format!("没能准备同步凭据：{e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&token_file)
-                .map_err(|e| format!("没能准备同步凭据：{e}"))?
-                .permissions();
-            perms.set_mode(0o600);
-            let _ = std::fs::set_permissions(&token_file, perms);
-        }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(state_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("没能保护同步状态目录：{e}"))?;
     }
+    let token_file = state_dir.join("sync-token");
     let config = serde_json::json!({
         "schemaVersion": "fns-agent-config/1",
         "endpoint": endpoint,
@@ -348,25 +343,84 @@ pub fn write_agent_config(
         "transport": { "maxActiveTransfers": 2 }
     });
     let path = state_dir.join("agent.json");
-    std::fs::write(
+    write_private_file(
         &path,
-        serde_json::to_vec_pretty(&config).map_err(|e| format!("没能写入同步配置：{e}"))?,
+        &serde_json::to_vec_pretty(&config).map_err(|e| format!("没能写入同步配置：{e}"))?,
     )
     .map_err(|e| format!("没能写入同步配置：{e}"))?;
     Ok(path)
 }
 
-pub fn spawn_sidecar(config_path: &Path) -> Result<std::process::Child, String> {
+static PRIVATE_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+fn write_private_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let sequence = PRIVATE_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = path.with_extension(format!("tmp-{}-{sequence}", std::process::id()));
+        let result = (|| {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temporary)?;
+            file.write_all(contents)?;
+            file.sync_all()?;
+            std::fs::rename(&temporary, path)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        return result;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)
+    }
+}
+
+fn spawn_sidecar_with_binary(
+    binary: &Path,
+    config_path: &Path,
+    token: &mut [u8],
+) -> Result<std::process::Child, String> {
+    let result = (|| {
+        let mut child = Command::new(binary)
+            .arg("run")
+            .arg("--config")
+            .arg(config_path)
+            .arg("--token-stdin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| "SYNC_ENGINE_UNAVAILABLE".to_string())?;
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| "SYNC_ENGINE_UNAVAILABLE".to_string())
+            .and_then(|mut input| {
+                input
+                    .write_all(token)
+                    .map_err(|_| "SYNC_ENGINE_UNAVAILABLE".to_string())
+            });
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    })();
+    token.fill(0);
+    result
+}
+
+pub fn spawn_sidecar(config_path: &Path, token: &mut [u8]) -> Result<std::process::Child, String> {
     let binary = sidecar_command().ok_or("SYNC_ENGINE_UNAVAILABLE")?;
-    Command::new(binary)
-        .arg("run")
-        .arg("--config")
-        .arg(config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| "SYNC_ENGINE_UNAVAILABLE".to_string())
+    spawn_sidecar_with_binary(&binary, config_path, token)
 }
 
 #[derive(Default)]
@@ -391,8 +445,13 @@ impl SyncEngine {
         Self::sidecar_running(&self.sidecars, key)
     }
 
-    pub fn adopt_sidecar(&self, key: &str, config_path: &Path) -> Result<(), String> {
-        let child = spawn_sidecar(config_path)?;
+    pub fn adopt_sidecar(
+        &self,
+        key: &str,
+        config_path: &Path,
+        token: &mut [u8],
+    ) -> Result<(), String> {
+        let child = spawn_sidecar(config_path, token)?;
         let mut sidecars = self.sidecars.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(mut previous) = sidecars.insert(key.to_string(), child) {
             let _ = previous.kill();
@@ -505,6 +564,68 @@ impl Default for SyncEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn local_sidecar_receives_token_over_private_stdin() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("sidecar-fixture.sh");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\n[ \"$1\" = run ] || exit 8\n[ \"$2\" = --config ] || exit 8\n[ \"$4\" = --token-stdin ] || exit 8\ncat > \"$3.received\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = dir.path().join("agent.json");
+        std::fs::write(&config, b"{}").unwrap();
+        let mut token = b"header.payload.signature".to_vec();
+
+        let mut child = spawn_sidecar_with_binary(&binary, &config, &mut token).unwrap();
+        assert!(child.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read(config.with_extension("json.received")).unwrap(),
+            b"header.payload.signature"
+        );
+        assert!(token.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn local_agent_config_keeps_token_out_of_the_filesystem() {
+        let state = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let config = write_agent_config(
+            state.path(),
+            root.path(),
+            "ws://127.0.0.1:19000/api/user/workspace-sync/v2",
+            "80000000-0000-4000-8000-202608210001",
+            "80000000-0000-4000-8000-202608210002",
+        )
+        .unwrap();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        let token_path = std::path::PathBuf::from(json["tokenFile"].as_str().unwrap());
+        assert!(token_path.is_absolute());
+        assert_eq!(token_path, state.path().join("sync-token"));
+        assert!(!token_path.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(state.path())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+    }
 
     #[test]
     fn first_sync_copies_fixture_files_and_reports_progress() {

@@ -472,7 +472,7 @@ pub fn remote_sync_unit(wanted_by: &str) -> String {
 
 pub fn remote_workspace_unit(wanted_by: &str) -> String {
     format!(
-        "[Unit]\nDescription=BestCodex remote workspace\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=HOME_PLACEHOLDER/.local/share/bestcodex/server\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-server run -p 127.0.0.1:9000\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
+        "[Unit]\nDescription=BestCodex remote workspace\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nRestart=always\nRestartSec=2\nWorkingDirectory=HOME_PLACEHOLDER/.local/share/bestcodex/server\nExecStart=HOME_PLACEHOLDER/.local/share/bestcodex/bin/fns-server run --config HOME_PLACEHOLDER/.local/share/bestcodex/server/config/config.yaml\nNoNewPrivileges=true\n\n[Install]\nWantedBy={wanted_by}\n"
     )
 }
 
@@ -483,7 +483,6 @@ pub fn keep_sync_running_script(remote_root: &str) -> String {
     let config = format!(
         "{{\n  \"schemaVersion\": \"fns-agent-config/1\",\n  \"endpoint\": \"ws://127.0.0.1:9000/api/user/workspace-sync/v2\",\n  \"workspaceId\": \"{workspace_id}\",\n  \"clientId\": \"{client_id}\",\n  \"workspaceRoot\": \"ROOT_PLACEHOLDER\",\n  \"stateDir\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state\",\n  \"tokenFile\": \"HOME_PLACEHOLDER/.local/share/bestcodex/state/token\",\n  \"sync\": {{\n    \"includes\": [\"**/*\"],\n    \"excludes\": [],\n    \"protectSecrets\": true\n  }},\n  \"transport\": {{ \"maxActiveTransfers\": 2 }}\n}}\n"
     );
-    let token_b64 = base64_encode(b"bestcodex-local-token");
     let config_b64 = base64_encode(config.as_bytes());
     let sync_system_b64 = base64_encode(remote_sync_unit("multi-user.target").as_bytes());
     let sync_user_b64 = base64_encode(remote_sync_unit("default.target").as_bytes());
@@ -501,7 +500,7 @@ root={root}
 mkdir -p $root $state $server_dir $home/.config/systemd/user
 chmod 0755 $bin/fns-server $bin/fns-agent
 root=$(cd $root && pwd)
-printf %s {token_b64} | base64 -d > $state/token
+$bin/fns-server bootstrap-workspace --config $server_dir/config/config.yaml --token-file $state/token --workspace-id {workspace_id} --workspace-root $root
 chmod 0600 $state/token
 printf %s {config_b64} | base64 -d | sed s#ROOT_PLACEHOLDER#$root#g | sed s#HOME_PLACEHOLDER#$home#g > $state/agent.json
 chmod 0600 $state/agent.json
@@ -519,6 +518,7 @@ if [ $(id -u) -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload || true
   systemctl enable --now bestcodex-workspace.service || true
   systemctl enable --now bestcodex-sync.service || true
+  systemctl restart bestcodex-workspace.service bestcodex-sync.service || true
 elif command -v systemctl >/dev/null 2>&1; then
   systemd_scope=user
   printf %s {workspace_user_b64} | base64 -d | sed s#HOME_PLACEHOLDER#$home#g > $home/.config/systemd/user/bestcodex-workspace.service
@@ -527,6 +527,7 @@ elif command -v systemctl >/dev/null 2>&1; then
   systemctl --user daemon-reload || true
   systemctl --user enable --now bestcodex-workspace.service || true
   systemctl --user enable --now bestcodex-sync.service || true
+  systemctl --user restart bestcodex-workspace.service bestcodex-sync.service || true
   if ! command -v loginctl >/dev/null 2>&1 || ! loginctl show-user $(id -u) -p Linger 2>/dev/null | grep -Fx Linger=yes >/dev/null; then
     systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service || true
     rm -f $home/.config/systemd/user/default.target.wants/bestcodex-sync.service
@@ -579,6 +580,37 @@ while [ $attempt -lt 20 ]; do
   sleep 1
 done
 echo bestcodex-sync-start-failed >&2
+if [ -f $state/watchdog.pid ]; then
+  watchdog_pid=$(cat $state/watchdog.pid 2>/dev/null || true)
+  if [ x$watchdog_pid != x ] && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+    kill $watchdog_pid 2>/dev/null || true
+    watchdog_stop_attempt=0
+    while [ $watchdog_stop_attempt -lt 10 ] && kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; do
+      watchdog_stop_attempt=$((watchdog_stop_attempt + 1))
+      sleep 1
+    done
+    if kill -0 $watchdog_pid 2>/dev/null && [ -r /proc/$watchdog_pid/cmdline ] && tr '\\000' '\\n' < /proc/$watchdog_pid/cmdline | grep -Fx $state/watchdog.sh >/dev/null 2>&1; then
+      kill -KILL $watchdog_pid 2>/dev/null || true
+    fi
+  fi
+  rm -f $state/watchdog.pid
+fi
+if [ $systemd_scope = system ]; then
+  systemctl disable --now bestcodex-sync.service bestcodex-workspace.service || true
+elif [ $systemd_scope = user ]; then
+  systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service || true
+fi
+for wanted in $bin/fns-agent $bin/fns-server; do
+  remaining_pid=$(process_pid $wanted || true)
+  if [ x$remaining_pid != x ]; then kill $remaining_pid 2>/dev/null || true; fi
+  process_stop_attempt=0
+  while [ $process_stop_attempt -lt 10 ] && process_pid $wanted >/dev/null; do
+    process_stop_attempt=$((process_stop_attempt + 1))
+    sleep 1
+  done
+  remaining_pid=$(process_pid $wanted || true)
+  if [ x$remaining_pid != x ]; then kill -KILL $remaining_pid 2>/dev/null || true; fi
+done
 tail -n 40 $state/server.stderr.log >&2 2>/dev/null || true
 tail -n 40 $state/agent.stderr.log >&2 2>/dev/null || true
 exit 1
@@ -739,15 +771,19 @@ mod tests {
     }
 
     #[test]
-    fn keep_sync_token_has_no_whitespace() {
+    fn keep_sync_uses_a_server_issued_token() {
         let script = keep_sync_running_script("~/bestcodex/docs");
         assert!(
-            script.contains(&base64_encode(b"bestcodex-local-token")),
-            "token must be the accepted secret: {script}"
+            script.contains("bootstrap-workspace"),
+            "server must issue the workspace token: {script}"
         );
         assert!(
-            !script.contains(&base64_encode(b"bestcodex-local-token\n")),
-            "a trailing newline makes the remote binary reject the secret"
+            script.contains("--token-file $state/token"),
+            "issued token must be written to the private token file: {script}"
+        );
+        assert!(
+            !script.contains(&base64_encode(b"bestcodex-local-token")),
+            "fixed tokens are rejected by current servers: {script}"
         );
         assert!(
             script.contains("daemon-reload || true"),
@@ -776,10 +812,16 @@ mod tests {
         assert!(!script.contains("pgrep -f"));
         assert!(script.contains("/proc/[0-9]*/exe"));
         assert!(script.contains("watchdog.pid"));
+        assert!(
+            script.contains("systemctl restart bestcodex-workspace.service bestcodex-sync.service")
+        );
         let unit = remote_sync_unit("multi-user.target");
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("fns-agent run --config"));
         assert!(!unit.contains("sudo"));
+        let workspace_unit = remote_workspace_unit("multi-user.target");
+        assert!(workspace_unit.contains("fns-server run --config"));
+        assert!(!workspace_unit.contains(" run -p "));
         let workspace_id = sync_workspace_id("~/bestcodex/docs");
         assert_eq!(workspace_id.len(), 36);
         assert_eq!(workspace_id.chars().filter(|ch| *ch == '-').count(), 4);
@@ -806,6 +848,21 @@ mod tests {
         assert!(script.contains("tail -n 40"));
         assert!(script.contains("attempt=0"));
         assert!(script.contains("[ $attempt -lt 20 ]"));
+        let failure = script.find("echo bestcodex-sync-start-failed").unwrap();
+        let failure_script = &script[failure..];
+        let cleanup = failure_script.find("kill $watchdog_pid").unwrap();
+        assert!(
+            cleanup > 0,
+            "terminal failure must stop watchdog churn: {script}"
+        );
+        assert!(failure_script.contains(
+            "systemctl disable --now bestcodex-sync.service bestcodex-workspace.service"
+        ));
+        assert!(failure_script.contains(
+            "systemctl --user disable --now bestcodex-sync.service bestcodex-workspace.service"
+        ));
+        assert!(failure_script.contains("for wanted in $bin/fns-agent $bin/fns-server"));
+        assert!(failure_script.contains("kill -KILL $remaining_pid"));
         assert!(
             !script.contains('"'),
             "double quotes break sshd's shell -c wrapper: {script}"
