@@ -74,6 +74,8 @@ test("nohup watchdog does not re-enable SIGHUP termination", () => {
 
 test("Linux smoke matches private credential modes and preserves failure logs", () => {
   const smoke = readFileSync(new URL("./smoke-linux.sh", import.meta.url), "utf8");
+  assert.match(smoke, /fns-server bootstrap-workspace/);
+  assert.doesNotMatch(smoke, /bestcodex-local-token/);
   assert.match(smoke, /chmod 0600 \$state\/token \$state\/agent\.json/);
   assert.match(smoke, /smoke failed: scratch=\$scratch/);
   assert.match(smoke, /tail -n 80 \$state\/agent\.stderr\.log/);

@@ -25,7 +25,7 @@ process_pid() {
 
 start_missing() {
   if ! process_pid $server >/dev/null; then
-    (cd $server_dir && exec $server run -p 127.0.0.1:PORT_PLACEHOLDER) >>$state/server.stdout.log 2>>$state/server.stderr.log &
+    (cd $server_dir && exec $server run --config $server_dir/config/config.yaml) >>$state/server.stdout.log 2>>$state/server.stderr.log &
     echo $! > $state/server.pid
   fi
   if ! process_pid $agent >/dev/null; then

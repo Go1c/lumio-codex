@@ -530,6 +530,7 @@ export async function refreshClaudeFiles(projectId: string): Promise<void> {
   const project = getClaudeState().projects.find((item) => item.id === projectId);
   if (!project) return;
   const trees = await listClaudeFiles({
+    projectId,
     host: project.host,
     user: project.user,
     port: project.port,

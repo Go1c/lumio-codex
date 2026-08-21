@@ -4,17 +4,21 @@ use fns_agent::{
     cli::{Cli, Command},
     run_diagnose, run_status,
 };
+use std::io::Read;
 use std::process::ExitCode;
+use zeroize::Zeroizing;
 
 fn main() -> ExitCode {
     init_logging();
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Run { config } => match AgentConfig::load_linux(&config) {
+        Command::Run {
+            config,
+            token_stdin,
+        } => match AgentConfig::load_linux(&config) {
             Ok(cfg) => {
-                // Load the token from the separate token file.
-                let token = match fns_platform::SecretToken::read_linux_file(&cfg.token_file) {
+                let token = match load_run_token(&cfg, token_stdin) {
                     Ok(t) => t,
                     Err(e) => {
                         eprintln!("fns-agent: cannot read token: {e}");
@@ -113,6 +117,24 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+fn load_run_token(
+    config: &AgentConfig,
+    token_stdin: bool,
+) -> Result<fns_platform::SecretToken, String> {
+    if !token_stdin {
+        return fns_platform::SecretToken::read_linux_file(&config.token_file)
+            .map_err(|error| error.to_string());
+    }
+
+    let mut bytes = Zeroizing::new(Vec::new());
+    std::io::stdin()
+        .take(fns_platform::MAX_TOKEN_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "private token input failed".to_string())?;
+    fns_platform::SecretToken::from_private_ipc(std::mem::take(&mut *bytes))
+        .map_err(|error| error.to_string())
 }
 
 fn init_logging() {
