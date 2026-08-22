@@ -17,6 +17,9 @@ type AppError struct {
 	// Code error code
 	// Code 错误码
 	Code int `json:"code"`
+	// Status is always false for ErrorResponse so the JSON envelope matches Res.
+	// HTTP stays 200; clients read this field (and code) instead of the status line.
+	Status bool `json:"status"`
 	// Message error message
 	// Message 错误消息
 	Message string `json:"message"`
@@ -51,6 +54,7 @@ func (e *AppError) Unwrap() error {
 func NewAppError(c *code.Code, cause error) *AppError {
 	return &AppError{
 		Code:      c.Code(),
+		Status:    false,
 		Message:   c.Msg(),
 		Details:   c.Details(),
 		Cause:     cause,
@@ -63,6 +67,7 @@ func NewAppError(c *code.Code, cause error) *AppError {
 func NewAppErrorWithMessage(errorCode int, message string, cause error) *AppError {
 	return &AppError{
 		Code:      errorCode,
+		Status:    false,
 		Message:   message,
 		Cause:     cause,
 		Timestamp: time.Now(),
@@ -123,6 +128,7 @@ func ErrorResponse(c *gin.Context, err error) {
 	if errors.As(err, &codeErr) {
 		response := &AppError{
 			Code:      codeErr.Code(),
+			Status:    false,
 			Message:   codeErr.Msg(),
 			Details:   codeErr.Details(),
 			TraceID:   traceID,
@@ -136,6 +142,7 @@ func ErrorResponse(c *gin.Context, err error) {
 	// 未知错误，返回内部错误
 	c.JSON(http.StatusOK, &AppError{
 		Code:      code.ErrorServerInternal.Code(),
+		Status:    false,
 		Message:   code.ErrorServerInternal.Msg(),
 		Details:   code.ErrorServerInternal.WithDetails(err.Error()).Details(),
 		TraceID:   traceID,
@@ -150,6 +157,7 @@ func ErrorResponseWithCode(c *gin.Context, codeErr *code.Code, cause error) {
 
 	response := &AppError{
 		Code:      codeErr.Code(),
+		Status:    false,
 		Message:   codeErr.Msg(),
 		Details:   codeErr.Details(),
 		TraceID:   traceID,

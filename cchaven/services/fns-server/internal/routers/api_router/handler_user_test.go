@@ -123,6 +123,10 @@ func TestUserHandler_Login_Failure(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assertResponseCode(t, w, code.ErrorUserLoginPasswordFailed.Code())
+	result := decodeRes(t, w)
+	status, ok := result["status"].(bool)
+	assert.True(t, ok, "login failure must include status so clients need not use HTTP 4xx")
+	assert.False(t, status)
 	mockSvc.AssertExpectations(t)
 }
 

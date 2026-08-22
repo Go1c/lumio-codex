@@ -18,6 +18,10 @@ Authorization: {token}
 ```
 The Token is obtained via the login interface.
 
+### HTTP status vs body code
+
+JSON routes always respond **HTTP 200**. Business success or failure is in the JSON envelope (`code` / `status`), not the HTTP status line. Example: wrong password is HTTP 200 with `code=402` and `status=false`. The WebSocket upgrade path `GET /api/user/workspace-sync/v2` is the exception and may return a real HTTP 401.
+
 ### Standard Response Structure
 ```typescript
 interface Response<T> {
