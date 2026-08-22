@@ -7,6 +7,7 @@ import {
   closeClaudeProjectChat,
   completeHostLogin,
   continueClaudeInit,
+  isCliInstallFinished,
   refreshClaudeConflicts,
   refreshClaudeFiles,
 } from "../../claude/session.ts";
@@ -302,11 +303,11 @@ function initChecklistProps(
   if (cliPhase === "fail") {
     phase = "fail";
     failedStep = "install";
-  } else if (cliPhase === "ok" || cliPhase === "skip") {
+  } else if (isCliInstallFinished(cliPhase)) {
     phase = loginPhase === "logged-in" ? "done" : "login";
   }
   const installStatus: ChecklistStep["status"] =
-    cliPhase === "fail" ? "fail" : cliPhase === "ok" || cliPhase === "skip" ? "done" : "now";
+    cliPhase === "fail" ? "fail" : isCliInstallFinished(cliPhase) ? "done" : "now";
   const loginStatus: ChecklistStep["status"] =
     loginPhase === "logged-in" ? "done" : phase === "login" ? "now" : "pending";
   return {

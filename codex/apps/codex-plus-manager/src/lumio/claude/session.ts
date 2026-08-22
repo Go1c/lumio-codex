@@ -670,6 +670,19 @@ function asCliPhase(value: string): ClaudeCliInstallPhase {
   return "idle";
 }
 
+export function finalizeCliInstallPhase(ok: boolean, phase: string): ClaudeCliInstallPhase {
+  if (!ok) return "fail";
+  const normalized = asCliPhase(phase);
+  if (normalized === "install" || normalized === "detect" || normalized === "idle") {
+    return "ok";
+  }
+  return normalized;
+}
+
+export function isCliInstallFinished(phase: string | undefined): boolean {
+  return phase === "ok" || phase === "skip" || phase === "upgrade";
+}
+
 function isWorkspaceOfflineSyncError(code: string | null): boolean {
   return (
     code === "SSH_UNREACHABLE" ||
@@ -712,7 +725,7 @@ export async function ensureHostCli(projectId: string): Promise<void> {
   dispatchClaude({
     type: "cli-install-progress",
     host: project.host,
-    phase: asCliPhase(result.phase),
+    phase: finalizeCliInstallPhase(result.ok, result.phase),
     version: result.version,
     latest: result.latest,
     errorCode: result.errorCode,

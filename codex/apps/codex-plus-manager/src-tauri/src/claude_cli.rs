@@ -22,6 +22,7 @@ pub const ERR_INSTALL_FAILED: &str = "CLAUDE_CLI_INSTALL_FAILED";
 
 const PATH_EXPORT: &str = r#"export PATH="$HOME/.local/bin:$PATH""#;
 const INSTALL_URL: &str = "https://claude.ai/install.sh";
+const RELEASES_URL: &str = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases";
 const PROGRESS_TOTAL: u32 = 4;
 
 pub trait RemoteShell {
@@ -105,6 +106,32 @@ pub fn version_command() -> String {
     format!("{PATH_EXPORT}; claude --version")
 }
 
+pub fn latest_version_command() -> String {
+    format!("curl -fsSL {RELEASES_URL}/latest")
+}
+
+fn channel_target_version(channel: &str) -> Option<String> {
+    let channel = channel.trim();
+    if looks_like_version(channel) {
+        Some(channel.trim_start_matches('v').to_string())
+    } else {
+        None
+    }
+}
+
+fn probe_latest_version(shell: &impl RemoteShell, channel: &str) -> Option<String> {
+    if let Some(pinned) = channel_target_version(channel) {
+        return Some(pinned);
+    }
+    if channel.trim() != "latest" && !channel.trim().is_empty() {
+        return None;
+    }
+    let probed = shell.run(&latest_version_command());
+    (probed.status == 0)
+        .then(|| parse_claude_version(&probed.stdout))
+        .flatten()
+}
+
 fn persist_path_command() -> String {
     format!(
         r#"grep -qs '.local/bin' "$HOME/.profile" 2>/dev/null || printf '%s\n' '{PATH_EXPORT}' >> "$HOME/.profile""#
@@ -153,6 +180,40 @@ pub fn ensure_cli_with_progress(
     let before = (detected.status == 0)
         .then(|| parse_claude_version(&detected.stdout))
         .flatten();
+
+    if let Some(installed) = before.as_deref() {
+        let latest = probe_latest_version(shell, channel);
+        if latest.as_deref() == Some(installed) {
+            let detail = "已经是最新，跳过";
+            emit(
+                &mut on_progress,
+                "skip",
+                4,
+                detail,
+                Some(installed),
+                latest.as_deref(),
+                None,
+            );
+            emit(
+                &mut on_progress,
+                "ok",
+                4,
+                detail,
+                Some(installed),
+                latest.as_deref(),
+                None,
+            );
+            let _ = shell.run(&persist_path_command());
+            return CliEnsureOutcome {
+                ok: true,
+                phase: "skip".into(),
+                version: Some(installed.to_string()),
+                latest,
+                error_code: None,
+                detail: Some(detail.into()),
+            };
+        }
+    }
 
     emit(
         &mut on_progress,
@@ -490,6 +551,7 @@ mod tests {
         install: RemoteOutput,
         install_ran: Cell<bool>,
         scripts: RefCell<Vec<String>>,
+        channel_latest: Option<String>,
     }
 
     impl FakeShell {
@@ -500,7 +562,13 @@ mod tests {
                 install,
                 install_ran: Cell::new(false),
                 scripts: RefCell::new(Vec::new()),
+                channel_latest: None,
             }
+        }
+
+        fn with_latest(mut self, version: &str) -> Self {
+            self.channel_latest = Some(version.to_string());
+            self
         }
 
         fn ok_install() -> RemoteOutput {
@@ -523,6 +591,20 @@ mod tests {
     impl RemoteShell for FakeShell {
         fn run(&self, script: &str) -> RemoteOutput {
             self.scripts.borrow_mut().push(script.to_string());
+            if script.contains("claude-code-releases/latest") {
+                return match &self.channel_latest {
+                    Some(text) => RemoteOutput {
+                        status: 0,
+                        stdout: text.clone(),
+                        stderr: String::new(),
+                    },
+                    None => RemoteOutput {
+                        status: 1,
+                        stdout: String::new(),
+                        stderr: "curl: (22) The requested URL returned error: 404".into(),
+                    },
+                };
+            }
             if script.contains("install.sh") {
                 self.install_ran.set(true);
                 return self.install.clone();
@@ -610,12 +692,32 @@ mod tests {
     }
 
     #[test]
+    fn latest_version_command_reads_official_channel_file() {
+        let cmd = latest_version_command();
+        assert!(
+            cmd.contains("storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"),
+            "must read official latest file: {cmd}"
+        );
+        assert!(
+            cmd.contains("curl -fsSL"),
+            "latest probe must be a cheap curl: {cmd}"
+        );
+        assert!(
+            !cmd.contains("| bash") && !cmd.contains("|bash"),
+            "latest probe must not pipe into bash: {cmd}"
+        );
+        assert!(!cmd.contains("sudo"));
+        assert!(!cmd.contains("install.sh"));
+    }
+
+    #[test]
     fn ensure_cli_skips_when_already_latest() {
         let shell = FakeShell::new(
             Some("2.1.89 (Claude Code)"),
             Some("2.1.89 (Claude Code)"),
             FakeShell::ok_install(),
-        );
+        )
+        .with_latest("2.1.89");
         let outcome = ensure_cli(&shell, "latest");
         assert!(outcome.ok);
         assert_eq!(outcome.phase, "skip");
@@ -623,12 +725,21 @@ mod tests {
         assert_eq!(outcome.latest.as_deref(), Some("2.1.89"));
         assert!(outcome.error_code.is_none());
         assert!(
-            shell.install_ran.get(),
-            "already-installed still runs official installer"
+            !shell.install_ran.get(),
+            "already-latest must not download the official installer"
         );
         let scripts = shell.scripts.borrow();
         assert!(scripts.iter().any(|s| s.contains("claude --version")));
-        assert!(scripts.iter().any(|s| s.contains("install.sh")));
+        assert!(
+            scripts
+                .iter()
+                .any(|s| s.contains("claude-code-releases/latest")),
+            "must probe official latest before deciding to skip"
+        );
+        assert!(
+            !scripts.iter().any(|s| s.contains("install.sh")),
+            "skip path must not run install.sh: {scripts:?}"
+        );
     }
 
     #[test]
@@ -648,12 +759,17 @@ mod tests {
             Some("1.0.0 (Claude Code)"),
             Some("2.1.89 (Claude Code)"),
             FakeShell::ok_install(),
-        );
+        )
+        .with_latest("2.1.89");
         let outcome = ensure_cli(&shell, "latest");
         assert!(outcome.ok);
         assert_eq!(outcome.phase, "upgrade");
         assert_eq!(outcome.version.as_deref(), Some("2.1.89"));
         assert_eq!(outcome.latest.as_deref(), Some("2.1.89"));
+        assert!(
+            shell.install_ran.get(),
+            "older version must still run the official installer"
+        );
     }
 
     #[test]
@@ -777,7 +893,8 @@ mod tests {
             Some("2.1.89 (Claude Code)"),
             Some("2.1.89 (Claude Code)"),
             FakeShell::ok_install(),
-        );
+        )
+        .with_latest("2.1.89");
         let seen = RefCell::new(Vec::new());
         let outcome = ensure_cli_with_progress(&shell, "latest", "108.80.81.15", |progress| {
             seen.borrow_mut().push(progress);
@@ -789,6 +906,10 @@ mod tests {
         assert!(phases.contains(&"detect"));
         assert!(phases.contains(&"skip"));
         assert!(phases.contains(&"ok"));
+        assert!(
+            !phases.contains(&"install"),
+            "already-latest must not enter install phase: {phases:?}"
+        );
         assert_eq!(CLI_PROGRESS_EVENT, "lumio://claude-cli-progress");
         assert_eq!(
             classify_failure("", "curl: (22) The requested URL returned error: 403"),
