@@ -189,7 +189,7 @@ function nextTierText(
   const needRecharge = Math.max(tier.minRecharge - inviteeRechargeTotal, 0);
   const rate = tier.rebateRatePercent === null ? "" : `（比例升至 ${tier.rebateRatePercent}%）`;
   if (needPeople <= 0 && needRecharge <= 0) {
-    return `；已达到 ${tier.level}${rate}`;
+    return `；即将升至 ${tier.level}${rate}`;
   }
   const parts: string[] = [];
   if (needPeople > 0) parts.push(`再邀请 ${needPeople} 人`);
