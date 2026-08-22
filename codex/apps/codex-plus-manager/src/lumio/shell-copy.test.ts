@@ -493,6 +493,7 @@ test("the repair view offers the three spec actions and never a force overwrite"
   // restore 是整文件回滚，不是字段级撤销：二次确认必须说清接管后的改动会丢失。
   assert.match(view, /还原到 BestCodex 接管前的状态/);
   assert.match(view, /接管之后你在这个文件里做的修改都会丢失/);
+  assert.match(view, /BestCodex 不会自动覆盖这些改动/);
   assert.doesNotMatch(view, /你的其他本机设置不受影响/);
   assert.doesNotMatch(view, /\bLumio\b/);
   assert.match(view, /导出诊断日志/);
