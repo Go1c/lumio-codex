@@ -8,6 +8,7 @@ import {
 import { resumeClaudeSync } from "../../claude/session.ts";
 import { dispatchClaude } from "../../claude/store.ts";
 import { SYNC_RELAUNCH_LABEL, isSyncCaughtUp } from "../../claude/sync-status.ts";
+import { serverMetaCopy } from "./status-copy.ts";
 import type {
   ClaudeChatSession,
   ClaudeCliInstallStatus,
@@ -152,10 +153,7 @@ function serverMetaLine(
   login: ClaudeLoginStatus | undefined,
   online: boolean,
 ): string {
-  if (!online) return cli?.version ? "未连接" : "Claude 未装";
-  const version = cli?.version ? `Claude ${cli.version}` : "Claude 未装";
-  const auth = login?.phase === "logged-in" ? "已登录" : "未登录";
-  return `${version} · ${auth}`;
+  return serverMetaCopy(cli, login, online);
 }
 
 /* --- project-row --- */
