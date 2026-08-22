@@ -489,6 +489,25 @@ describe("hash 锚点滚动", () => {
     await waitFor(() => expect(scrolled).toContain("pricing"));
   });
 
+  it("冷加载时定价锚点第一帧还没进 DOM 也会再试", async () => {
+    stubOffline();
+    const realGet = Document.prototype.getElementById;
+    let missOnce = true;
+    document.getElementById = function (this: Document, id: string) {
+      if (id === "pricing" && missOnce) {
+        missOnce = false;
+        return null;
+      }
+      return realGet.call(this, id);
+    };
+    try {
+      renderApp("/claude#pricing");
+      await waitFor(() => expect(scrolled).toContain("pricing"));
+    } finally {
+      document.getElementById = realGet;
+    }
+  });
+
   it("直接打开 /#downloads 与 /claude#downloads 滚到下载区", async () => {
     stubOffline();
     const first = renderApp("/#downloads");
