@@ -74,7 +74,14 @@ pub fn resolve_for_write(root: &Path, relative: &str) -> Result<PathBuf, String>
 fn is_hidden_from_explorer(name: &str) -> bool {
     matches!(
         name,
-        ".git" | "node_modules" | "target" | "dist" | ".DS_Store" | ".fns_state.json"
+        ".git"
+            | "node_modules"
+            | "target"
+            | "dist"
+            | ".DS_Store"
+            | ".fns_state.json"
+            | ".bestcodex-sync"
+            | "unused-private-pipe-token"
     )
 }
 
@@ -250,6 +257,9 @@ pub fn parse_remote_listing(stdout: &str, side: &str) -> Vec<FileNode> {
         }
         let mut current = &mut root;
         let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        if parts.iter().any(|part| is_hidden_from_explorer(part)) {
+            continue;
+        }
         for (index, part) in parts.iter().enumerate() {
             let last = index + 1 == parts.len();
             let child = current
@@ -559,6 +569,37 @@ mod tests {
     }
 
     #[test]
+    fn read_tree_hides_sync_engine_state_from_the_explorer() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".bestcodex-sync")).unwrap();
+        std::fs::write(root.path().join(".bestcodex-sync/agent.json"), "{}\n").unwrap();
+        std::fs::write(
+            root.path()
+                .join(".bestcodex-sync/unused-private-pipe-token"),
+            "secret\n",
+        )
+        .unwrap();
+        std::fs::write(root.path().join("test.md"), "ok\n").unwrap();
+
+        let tree = read_tree(root.path(), "local", 4).unwrap();
+        let names: Vec<&str> = tree.iter().map(|node| node.name.as_str()).collect();
+        assert!(names.contains(&"test.md"));
+        assert!(
+            !names.contains(&".bestcodex-sync"),
+            "sync state dir must not appear: {names:?}"
+        );
+        let dumped = format!("{tree:?}");
+        assert!(
+            !dumped.contains("agent.json"),
+            "explorer must not surface agent.json:\n{dumped}"
+        );
+        assert!(
+            !dumped.contains("unused-private-pipe-token"),
+            "explorer must not surface the pipe token file:\n{dumped}"
+        );
+    }
+
+    #[test]
     fn write_paths_cannot_escape_the_root() {
         let root = tempfile::tempdir().unwrap();
         assert!(resolve_for_write(root.path(), "../secret").is_err());
@@ -651,6 +692,19 @@ mod tests {
             .expect("src/main.rs");
         assert_eq!(remote_file.size, None);
         assert_eq!(remote_file.fingerprint, None);
+    }
+
+    #[test]
+    fn parse_remote_listing_drops_sync_engine_paths() {
+        let tree = parse_remote_listing(
+            "README.md\n.bestcodex-sync/agent.json\nfoo/.bestcodex-sync/unused-private-pipe-token\n",
+            "remote",
+        );
+        let dumped = format!("{tree:?}");
+        assert!(tree.iter().any(|node| node.name == "README.md"));
+        assert!(!dumped.contains("bestcodex-sync"));
+        assert!(!dumped.contains("agent.json"));
+        assert!(!dumped.contains("unused-private-pipe-token"));
     }
 
     #[test]
