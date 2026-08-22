@@ -5,8 +5,14 @@ import {
   formatStatusBytes,
   serviceDisplayName,
 } from "../../claude/remote-status.ts";
-import { fetchClaudeServerStatus, fetchClaudeSessions } from "../../claude/session.ts";
+import {
+  fetchClaudeServerStatus,
+  fetchClaudeSessions,
+  reinstallWorkspaceSync,
+  resumeClaudeSync,
+} from "../../claude/session.ts";
 import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
+import { SYNC_REINSTALL_LABEL, SYNC_RELAUNCH_LABEL, syncNeedsRecovery } from "../../claude/sync-status.ts";
 import type {
   ClaudeServerStatus,
   ClaudeSessionsSnapshot,
@@ -102,8 +108,10 @@ export function StatusDrawer({ state: stateProp }: { state?: ClaudeState } = {})
 }
 
 export function ServerStatusPane({ projectId }: { projectId: string }) {
+  const state = useSyncExternalStore(subscribeClaudeStore, getClaudeState, getClaudeState);
   const [snapshot, setSnapshot] = useState<ClaudeServerStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [confirmReinstall, setConfirmReinstall] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -114,10 +122,14 @@ export function ServerStatusPane({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     load();
+    setConfirmReinstall(false);
   }, [projectId]);
 
   const host = snapshot?.host;
   const clock = snapshot?.capturedAt ? formatCapturedClock(snapshot.capturedAt) : "";
+  const needsRecovery = syncNeedsRecovery(state.syncByProject[projectId] ?? null, snapshot);
+  const servicesDown = snapshot?.services?.items.some((item) => !item.running) === true;
+  const showRecovery = needsRecovery || servicesDown;
 
   return (
     <div className="lumio-claude-status-pane" aria-label="服务器状态">
@@ -126,7 +138,50 @@ export function ServerStatusPane({ projectId }: { projectId: string }) {
         <button className="lumio-button is-secondary" onClick={load} type="button">
           刷新
         </button>
+        {showRecovery ? (
+          <button
+            className="lumio-button"
+            onClick={() => void resumeClaudeSync(projectId).then(load)}
+            type="button"
+          >
+            {SYNC_RELAUNCH_LABEL}
+          </button>
+        ) : null}
+        {showRecovery ? (
+          <button
+            className="lumio-button is-secondary"
+            onClick={() => setConfirmReinstall(true)}
+            type="button"
+          >
+            {SYNC_REINSTALL_LABEL}
+          </button>
+        ) : null}
       </div>
+      {confirmReinstall ? (
+        <div className="lumio-claude-choice" role="dialog" aria-labelledby="lumio-claude-reinstall-title">
+          <h3 id="lumio-claude-reinstall-title">已经装过同步组件</h3>
+          <p className="dim">这台服务器上已经有同步组件。点重装会换成这一版并保持运行，不会当成失败。</p>
+          <div className="lumio-claude-actions">
+            <button
+              className="lumio-button is-secondary"
+              onClick={() => setConfirmReinstall(false)}
+              type="button"
+            >
+              取消
+            </button>
+            <button
+              className="lumio-button is-primary"
+              onClick={() => {
+                setConfirmReinstall(false);
+                void reinstallWorkspaceSync(projectId).then(load);
+              }}
+              type="button"
+            >
+              {SYNC_REINSTALL_LABEL}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {snapshot && !snapshot.ok && snapshot.error ? (
         <div className="lumio-claude-fail" role="alert">
           {snapshot.error.message}

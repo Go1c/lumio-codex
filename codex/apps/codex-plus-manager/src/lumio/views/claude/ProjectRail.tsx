@@ -7,6 +7,7 @@ import {
 } from "../../claude/rail-groups.ts";
 import { resumeClaudeSync } from "../../claude/session.ts";
 import { dispatchClaude } from "../../claude/store.ts";
+import { SYNC_RELAUNCH_LABEL } from "../../claude/sync-status.ts";
 import type {
   ClaudeChatSession,
   ClaudeCliInstallStatus,
@@ -236,28 +237,38 @@ function ProjectRailView({
                     const live = liveCount(sessionsByProject[project.id]);
                     const status = projectMetaLine(syncByProject[project.id], online);
                     return (
-                      <button
-                        className={`lumio-claude-proj${project.id === activeProjectId ? " is-on" : ""}`}
-                        key={project.id}
-                        onClick={() => onSelectProject(project.id)}
-                        type="button"
-                      >
-                        <span className="k">
-                          <span className="glyph">
-                            <FolderIcon />
+                      <div className="lumio-claude-proj-wrap" key={project.id}>
+                        <button
+                          className={`lumio-claude-proj${project.id === activeProjectId ? " is-on" : ""}`}
+                          onClick={() => onSelectProject(project.id)}
+                          type="button"
+                        >
+                          <span className="k">
+                            <span className="glyph">
+                              <FolderIcon />
+                            </span>
+                            {project.name}
+                            {live > 0 ? (
+                              <i
+                                className="lumio-claude-live"
+                                title={`有 ${live} 个对话在跑`}
+                                aria-label={`有 ${live} 个对话在跑`}
+                              />
+                            ) : null}
                           </span>
-                          {project.name}
-                          {live > 0 ? (
-                            <i
-                              className="lumio-claude-live"
-                              title={`有 ${live} 个对话在跑`}
-                              aria-label={`有 ${live} 个对话在跑`}
-                            />
-                          ) : null}
-                        </span>
-                        <span className="dir">{project.remoteRoot}</span>
-                        <span className={`st${status.tone ? ` is-${status.tone}` : ""}`}>{status.text}</span>
-                      </button>
+                          <span className="dir">{project.remoteRoot}</span>
+                          <span className={`st${status.tone ? ` is-${status.tone}` : ""}`}>{status.text}</span>
+                        </button>
+                        {status.tone === "bad" ? (
+                          <button
+                            className="lumio-claude-proj-recover"
+                            onClick={() => void resumeClaudeSync(project.id)}
+                            type="button"
+                          >
+                            {SYNC_RELAUNCH_LABEL}
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })}
                   <button className="lumio-claude-newproj" onClick={() => onNewProject(group.host)} type="button">

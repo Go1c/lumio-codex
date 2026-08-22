@@ -486,6 +486,33 @@ export async function resumeClaudeSync(projectId: string): Promise<void> {
   applyRemoteSyncHealth(projectId, await fetchClaudeServerStatus(projectId));
 }
 
+export async function reinstallWorkspaceSync(projectId: string): Promise<void> {
+  const project = getClaudeState().projects.find((item) => item.id === projectId);
+  if (!project) return;
+  const prepared = await prepareClaudeRemote({
+    ...sshFromProject(project),
+    remoteRoot: project.remoteRoot,
+    localRoot: project.localRoot,
+    replace: true,
+  });
+  if (!prepared.ok) {
+    const after = getClaudeState().syncByProject[projectId];
+    dispatchClaude({
+      type: "project-sync-updated",
+      projectId,
+      sync: {
+        state: "fail",
+        filesDone: after?.filesDone ?? 0,
+        filesTotal: after?.filesTotal ?? 0,
+        errorCode: prepared.errorCode ?? "SYNC_FAILED",
+        conflicts: after?.conflicts ?? 0,
+      },
+    });
+    return;
+  }
+  await resumeClaudeSync(projectId);
+}
+
 export function applyRemoteSyncHealth(
   projectId: string,
   snapshot: ClaudeServerStatus | null,

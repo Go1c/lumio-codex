@@ -4,9 +4,12 @@ import test from "node:test";
 
 import { readAllClaudeViews } from "./read-claude-views.ts";
 import {
+  SYNC_REINSTALL_LABEL,
+  SYNC_RELAUNCH_LABEL,
   projectsToResume,
   reconcileSyncWithRemote,
   resumeSavedProjects,
+  syncNeedsRecovery,
   workspaceStatusAppearance,
   workspaceStatusCopy,
 } from "./sync-status.ts";
@@ -161,4 +164,40 @@ test("hydrate and open invoke resume, not only SSH list files", async () => {
   assert.match(api, /lumio_claude_resume_sync/);
   assert.match(api, /SYNC_REMOTE_NOT_RUNNING/);
   assert.doesNotMatch(session, /listClaudeFiles\(\{[\s\S]*\}\);\s*dispatchClaude\(\{\s*type: "project-sync-updated"/);
+});
+
+test("failed or stopped sync needs a recovery action, not only 刷新", () => {
+  assert.equal(SYNC_RELAUNCH_LABEL, "重新拉起");
+  assert.equal(SYNC_REINSTALL_LABEL, "重装");
+  assert.equal(
+    syncNeedsRecovery({
+      state: "fail",
+      filesDone: 0,
+      filesTotal: 0,
+      errorCode: "SYNC_REMOTE_NOT_RUNNING",
+      conflicts: 0,
+    }),
+    true,
+  );
+  assert.equal(syncNeedsRecovery(running(), remoteStatus(false)), true);
+  assert.equal(syncNeedsRecovery(running(), remoteStatus(true)), false);
+});
+
+test("left rail, status bar, and server drawer expose 重新拉起", async () => {
+  const rail = await readFile(new URL("../views/claude/ProjectRail.tsx", import.meta.url), "utf8");
+  const bar = await readFile(new URL("../views/claude/StatusBar.tsx", import.meta.url), "utf8");
+  const drawer = await readFile(new URL("../views/claude/StatusDrawer.tsx", import.meta.url), "utf8");
+  for (const [name, source] of [
+    ["ProjectRail", rail],
+    ["StatusBar", bar],
+    ["StatusDrawer", drawer],
+  ] as const) {
+    assert.match(
+      source,
+      /SYNC_RELAUNCH_LABEL|重新拉起/,
+      `${name} must offer 重新拉起 when sync is down`,
+    );
+  }
+  assert.match(drawer, /SYNC_REINSTALL_LABEL|重装/);
+  assert.match(drawer, /已经装过同步组件/);
 });

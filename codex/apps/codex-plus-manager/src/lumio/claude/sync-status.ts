@@ -2,6 +2,9 @@ import type { ClaudeProject, ClaudeServerStatus, ClaudeSyncStatus } from "./type
 
 export type WorkspaceStatusTone = "ok" | "warn" | "bad" | "plain";
 
+export const SYNC_RELAUNCH_LABEL = "重新拉起";
+export const SYNC_REINSTALL_LABEL = "重装";
+
 export function projectsToResume(
   projects: ClaudeProject[],
   activeProjectId: string | null,
@@ -84,4 +87,11 @@ export function workspaceStatusCopy(
   remote?: ClaudeServerStatus | null,
 ): string {
   return workspaceStatusAppearance(sync, remote).copy;
+}
+
+export function syncNeedsRecovery(
+  sync: ClaudeSyncStatus | null,
+  remote?: ClaudeServerStatus | null,
+): boolean {
+  return workspaceStatusAppearance(sync, remote).tone === "bad";
 }
