@@ -7,7 +7,7 @@ import {
 } from "../../claude/rail-groups.ts";
 import { resumeClaudeSync } from "../../claude/session.ts";
 import { dispatchClaude } from "../../claude/store.ts";
-import { SYNC_RELAUNCH_LABEL } from "../../claude/sync-status.ts";
+import { SYNC_RELAUNCH_LABEL, isSyncCaughtUp } from "../../claude/sync-status.ts";
 import type {
   ClaudeChatSession,
   ClaudeCliInstallStatus,
@@ -170,6 +170,7 @@ function projectMetaLine(
     return { text: `${sync.conflicts} 个冲突待处理`, tone: "warn" };
   }
   if (sync?.state === "fail") return { text: "同步没能完成", tone: "bad" };
+  if (sync?.state === "running" && isSyncCaughtUp(sync)) return { text: "已同步", tone: "ok" };
   if (sync?.state === "running") return { text: "正在同步", tone: "" };
   if (sync?.state === "synced") return { text: "已同步", tone: "ok" };
   if (sync?.state === "offline") return { text: "未连接", tone: "" };

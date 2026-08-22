@@ -41,7 +41,7 @@ import {
   subscribeClaudeEvent,
   type ClaudeSshArgs,
 } from "./api.ts";
-import { reconcileSyncWithRemote, resumeSavedProjects } from "./sync-status.ts";
+import { liveSyncStateFromProgress, reconcileSyncWithRemote, resumeSavedProjects } from "./sync-status.ts";
 import type {
   ClaudeCliInstallPhase,
   ClaudeConflictResolution,
@@ -138,7 +138,14 @@ export function ensureClaudeEngineBridge(): void {
         type: "project-sync-updated",
         projectId: payload.projectId,
         sync: {
-          state: current?.state === "conflicts" ? "conflicts" : stopped ? "fail" : "running",
+          state: liveSyncStateFromProgress({
+            stopped,
+            filesDone: payload.filesDone,
+            filesTotal: payload.filesTotal,
+            conflicts: current?.conflicts ?? 0,
+            engineRunning: payload.running === true,
+            previous: current?.state,
+          }),
           filesDone: payload.filesDone,
           filesTotal: payload.filesTotal,
           errorCode: stopped ? (payload.errorCode ?? "SYNC_FAILED") : (current?.errorCode ?? null),
@@ -458,16 +465,19 @@ export async function resumeClaudeSync(projectId: string): Promise<void> {
     projectId: project.id,
   });
   const after = getClaudeState().syncByProject[projectId];
+  const filesDone = result.filesDone || (after?.filesDone ?? 0);
+  const filesTotal = result.filesTotal || (after?.filesTotal ?? 0);
+  const conflicts = after?.conflicts ?? 0;
   if (!result.ok || !result.running) {
     dispatchClaude({
       type: "project-sync-updated",
       projectId,
       sync: {
         state: "fail",
-        filesDone: result.filesDone,
-        filesTotal: result.filesTotal,
+        filesDone,
+        filesTotal,
         errorCode: result.errorCode ?? "SYNC_FAILED",
-        conflicts: after?.conflicts ?? 0,
+        conflicts,
       },
     });
     return;
@@ -476,11 +486,18 @@ export async function resumeClaudeSync(projectId: string): Promise<void> {
     type: "project-sync-updated",
     projectId,
     sync: {
-      state: after?.conflicts ? "conflicts" : "running",
-      filesDone: result.filesDone || (after?.filesDone ?? 0),
-      filesTotal: result.filesTotal || (after?.filesTotal ?? 0),
+      state: liveSyncStateFromProgress({
+        stopped: false,
+        filesDone,
+        filesTotal,
+        conflicts,
+        engineRunning: true,
+        previous: after?.state,
+      }),
+      filesDone,
+      filesTotal,
       errorCode: null,
-      conflicts: after?.conflicts ?? 0,
+      conflicts,
     },
   });
   applyRemoteSyncHealth(projectId, await fetchClaudeServerStatus(projectId));
