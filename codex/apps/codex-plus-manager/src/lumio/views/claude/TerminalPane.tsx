@@ -12,7 +12,7 @@ import {
   terminalOutputEvent,
   writeClaudeTerminal,
 } from "../../claude/api.ts";
-import { lockTitleFromInput } from "../../claude/session-title.ts";
+import { feedTitleInput, lockTitleFromInput } from "../../claude/session-title.ts";
 import { dispatchClaude, getClaudeState, projectPassword } from "../../claude/store.ts";
 import {
   TERMINAL_FAIL_BANNER,
@@ -90,27 +90,23 @@ export function TerminalPane({
     let lineBuffer = "";
     term.onData((data) => {
       void writeClaudeTerminal(project.id, Array.from(encoder.encode(data)), sessionId);
-      for (const ch of data) {
-        if (ch === "\r" || ch === "\n") {
-          const submitted = lineBuffer;
-          lineBuffer = "";
-          const session = (getClaudeState().sessionsByProject[project.id] ?? []).find(
-            (item) => item.id === sessionId,
-          );
-          if (!session) continue;
-          const locked = lockTitleFromInput(session, submitted);
-          if (locked.titleLocked && locked.title && !session.titleLocked) {
-            dispatchClaude({
-              type: "session-title-locked",
-              projectId: project.id,
-              sessionId,
-              title: locked.title,
-            });
-          }
-        } else if (ch === "\u007f" || ch === "\b") {
-          lineBuffer = lineBuffer.slice(0, -1);
-        } else if (ch >= " " || ch === "\t") {
-          lineBuffer += ch;
+      const fed = feedTitleInput(lineBuffer, data);
+      lineBuffer = fed.buffer;
+      if (fed.submitted.length === 0) return;
+      const session = (getClaudeState().sessionsByProject[project.id] ?? []).find(
+        (item) => item.id === sessionId,
+      );
+      if (!session || session.titleLocked) return;
+      for (const submitted of fed.submitted) {
+        const locked = lockTitleFromInput(session, submitted);
+        if (locked.titleLocked && locked.title) {
+          dispatchClaude({
+            type: "session-title-locked",
+            projectId: project.id,
+            sessionId,
+            title: locked.title,
+          });
+          break;
         }
       }
     });

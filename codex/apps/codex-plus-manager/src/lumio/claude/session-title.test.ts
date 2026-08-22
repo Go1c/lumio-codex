@@ -5,6 +5,7 @@ import {
   DEFAULT_SESSION_TITLE,
   SESSION_TITLE_WIDTH,
   clipWidth,
+  feedTitleInput,
   firstSubmittedLine,
   isSlashCommand,
   lockTitleFromInput,
@@ -69,6 +70,29 @@ test("lockTitleFromInput ignores terminal device replies so a new Claude chat st
   assert.deepEqual(lockTitleFromInput(current, "[>0;276;0c[O[I[<0;3"), current);
   assert.deepEqual(lockTitleFromInput(current, "[?1;2c"), current);
   assert.equal(firstSubmittedLine("[>0;276;0c"), null);
+});
+
+test("application keypad Enter submits the buffered line as a title", () => {
+  const typed = feedTitleInput("", "只回复 ping");
+  assert.deepEqual(typed.submitted, []);
+  assert.equal(typed.buffer, "只回复 ping");
+  const entered = feedTitleInput(typed.buffer, "\x1bOM");
+  assert.deepEqual(entered.submitted, ["只回复 ping"]);
+  assert.equal(entered.buffer, "");
+  const locked = lockTitleFromInput({ title: null, titleLocked: false }, entered.submitted[0] ?? "");
+  assert.equal(locked.title, "只回复 ping");
+  assert.equal(locked.titleLocked, true);
+});
+
+test("plain CR still submits a buffered line", () => {
+  const entered = feedTitleInput("retry helper", "\r");
+  assert.deepEqual(entered.submitted, ["retry helper"]);
+});
+
+test("CSI sequences are not appended into the title buffer", () => {
+  const typed = feedTitleInput("只回复 ping", "\x1b[A");
+  assert.equal(typed.buffer, "只回复 ping");
+  assert.deepEqual(typed.submitted, []);
 });
 
 test("lockTitleFromInput clips long titles to the default width", () => {
