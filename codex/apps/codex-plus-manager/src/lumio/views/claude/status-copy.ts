@@ -1,4 +1,5 @@
 import { DEFAULT_SESSION_TITLE } from "../../claude/session-title.ts";
+import { isSyncCaughtUp } from "../../claude/sync-status.ts";
 import type {
   ClaudeChatSession,
   ClaudeLoginPhase,
@@ -30,6 +31,12 @@ export function readyStatusCopy(
   if (phase === "init") return { tone: "plain", label: "正在准备" };
   if (phase === "resume") return { tone: "plain", label: "正在连接" };
   if (phase === "offline" || sync?.state === "offline") return { tone: "bad", label: "离线" };
+  if (!sync || sync.state === "idle" || sync.state === "fail") {
+    return { tone: "bad", label: "未就绪" };
+  }
+  if (sync.state === "running" && !isSyncCaughtUp(sync)) {
+    return { tone: "plain", label: "正在同步" };
+  }
   return { tone: "ok", label: "已就绪" };
 }
 
@@ -47,6 +54,18 @@ export function claudeVersionLoginCopy(
   const version = cli?.version;
   const suffix = loginLabel(login?.phase);
   return version ? `Claude ${version} · ${suffix}` : `Claude · ${suffix}`;
+}
+
+export function serverMetaCopy(
+  cli: { version: string | null } | null | undefined,
+  login: { phase: ClaudeLoginPhase } | null | undefined,
+  online: boolean,
+): string {
+  if (!online) return cli?.version ? "未连接" : "Claude 未装";
+  const suffix = loginLabel(login?.phase);
+  if (cli?.version) return `Claude ${cli.version} · ${suffix}`;
+  if (login?.phase === "logged-in") return `Claude · ${suffix}`;
+  return `Claude 未装 · ${suffix}`;
 }
 
 export function updateNudgeCopy(

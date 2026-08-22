@@ -2,6 +2,9 @@ import type { ClaudeProject, ClaudeServerStatus, ClaudeSyncStatus } from "./type
 
 export type WorkspaceStatusTone = "ok" | "warn" | "bad" | "plain";
 
+export const SYNC_RELAUNCH_LABEL = "重新拉起";
+export const SYNC_REINSTALL_LABEL = "重装";
+
 export function projectsToResume(
   projects: ClaudeProject[],
   activeProjectId: string | null,
@@ -39,6 +42,27 @@ export function reconcileSyncWithRemote(
   };
 }
 
+export function isSyncCaughtUp(sync: ClaudeSyncStatus | null): boolean {
+  if (!sync) return false;
+  if (sync.state === "synced") return true;
+  return sync.state === "running" && sync.filesTotal > 0 && sync.filesDone >= sync.filesTotal;
+}
+
+export function liveSyncStateFromProgress(input: {
+  stopped: boolean;
+  filesDone: number;
+  filesTotal: number;
+  conflicts: number;
+  engineRunning?: boolean;
+  previous?: ClaudeSyncStatus["state"];
+}): ClaudeSyncStatus["state"] {
+  if (input.previous === "conflicts" || input.conflicts > 0) return "conflicts";
+  if (input.stopped) return "fail";
+  if (input.filesTotal > 0 && input.filesDone >= input.filesTotal) return "synced";
+  if (input.filesTotal === 0 && input.engineRunning) return "synced";
+  return "running";
+}
+
 export function workspaceStatusAppearance(
   sync: ClaudeSyncStatus | null,
   remote?: ClaudeServerStatus | null,
@@ -52,6 +76,9 @@ export function workspaceStatusAppearance(
     return { copy: `${effective.conflicts} 个冲突`, tone: "warn" };
   }
   if (effective.state === "running") {
+    if (isSyncCaughtUp(effective)) {
+      return { copy: "已同步 · 文件与远端一致", tone: "ok" };
+    }
     if (effective.filesTotal > 0) {
       return {
         copy: `同步运行中 · ${effective.filesDone} / ${effective.filesTotal}`,
@@ -84,4 +111,11 @@ export function workspaceStatusCopy(
   remote?: ClaudeServerStatus | null,
 ): string {
   return workspaceStatusAppearance(sync, remote).copy;
+}
+
+export function syncNeedsRecovery(
+  sync: ClaudeSyncStatus | null,
+  remote?: ClaudeServerStatus | null,
+): boolean {
+  return workspaceStatusAppearance(sync, remote).tone === "bad";
 }

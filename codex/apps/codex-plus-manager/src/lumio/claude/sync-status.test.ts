@@ -4,9 +4,14 @@ import test from "node:test";
 
 import { readAllClaudeViews } from "./read-claude-views.ts";
 import {
+  SYNC_REINSTALL_LABEL,
+  SYNC_RELAUNCH_LABEL,
+  isSyncCaughtUp,
+  liveSyncStateFromProgress,
   projectsToResume,
   reconcileSyncWithRemote,
   resumeSavedProjects,
+  syncNeedsRecovery,
   workspaceStatusAppearance,
   workspaceStatusCopy,
 } from "./sync-status.ts";
@@ -63,6 +68,57 @@ function remoteStatus(syncRunning: boolean): ClaudeServerStatus {
     },
   };
 }
+
+test("caught-up 3/3 is 已同步, not a stuck 正在同步", () => {
+  const caught = {
+    state: "running" as const,
+    filesDone: 3,
+    filesTotal: 3,
+    errorCode: null,
+    conflicts: 0,
+  };
+  assert.equal(isSyncCaughtUp(caught), true);
+  assert.equal(isSyncCaughtUp(running()), false);
+  assert.equal(workspaceStatusAppearance(caught).copy, "已同步 · 文件与远端一致");
+  assert.equal(workspaceStatusAppearance(caught).tone, "ok");
+  assert.equal(
+    liveSyncStateFromProgress({
+      stopped: false,
+      filesDone: 3,
+      filesTotal: 3,
+      conflicts: 0,
+    }),
+    "synced",
+  );
+  assert.equal(
+    liveSyncStateFromProgress({
+      stopped: false,
+      filesDone: 2,
+      filesTotal: 8,
+      conflicts: 0,
+    }),
+    "running",
+  );
+  assert.equal(
+    liveSyncStateFromProgress({
+      stopped: true,
+      filesDone: 3,
+      filesTotal: 3,
+      conflicts: 0,
+    }),
+    "fail",
+  );
+  assert.equal(
+    liveSyncStateFromProgress({
+      stopped: false,
+      filesDone: 0,
+      filesTotal: 0,
+      conflicts: 0,
+      engineRunning: true,
+    }),
+    "synced",
+  );
+});
 
 test("saved connected projects resume the official sync engine", async () => {
   const called: string[] = [];
@@ -157,8 +213,45 @@ test("hydrate and open invoke resume, not only SSH list files", async () => {
   assert.match(views, /workspaceStatusAppearance/);
   assert.match(session, /applyRemoteSyncHealth|reconcileSyncWithRemote/);
   assert.match(session, /running === false|payload\.running === false/);
+  assert.match(session, /liveSyncStateFromProgress/);
   assert.doesNotMatch(views, /本机目录已就绪/);
   assert.match(api, /lumio_claude_resume_sync/);
   assert.match(api, /SYNC_REMOTE_NOT_RUNNING/);
   assert.doesNotMatch(session, /listClaudeFiles\(\{[\s\S]*\}\);\s*dispatchClaude\(\{\s*type: "project-sync-updated"/);
+});
+
+test("failed or stopped sync needs a recovery action, not only 刷新", () => {
+  assert.equal(SYNC_RELAUNCH_LABEL, "重新拉起");
+  assert.equal(SYNC_REINSTALL_LABEL, "重装");
+  assert.equal(
+    syncNeedsRecovery({
+      state: "fail",
+      filesDone: 0,
+      filesTotal: 0,
+      errorCode: "SYNC_REMOTE_NOT_RUNNING",
+      conflicts: 0,
+    }),
+    true,
+  );
+  assert.equal(syncNeedsRecovery(running(), remoteStatus(false)), true);
+  assert.equal(syncNeedsRecovery(running(), remoteStatus(true)), false);
+});
+
+test("left rail, status bar, and server drawer expose 重新拉起", async () => {
+  const rail = await readFile(new URL("../views/claude/ProjectRail.tsx", import.meta.url), "utf8");
+  const bar = await readFile(new URL("../views/claude/StatusBar.tsx", import.meta.url), "utf8");
+  const drawer = await readFile(new URL("../views/claude/StatusDrawer.tsx", import.meta.url), "utf8");
+  for (const [name, source] of [
+    ["ProjectRail", rail],
+    ["StatusBar", bar],
+    ["StatusDrawer", drawer],
+  ] as const) {
+    assert.match(
+      source,
+      /SYNC_RELAUNCH_LABEL|重新拉起/,
+      `${name} must offer 重新拉起 when sync is down`,
+    );
+  }
+  assert.match(drawer, /SYNC_REINSTALL_LABEL|重装/);
+  assert.match(drawer, /已经装过同步组件/);
 });

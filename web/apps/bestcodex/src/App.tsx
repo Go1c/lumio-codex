@@ -58,7 +58,32 @@ function HashScroll() {
     if (!hash || isHandoffHash(hash)) return;
     const id = decodeURIComponent(hash.replace(/^#/, ""));
     if (!id) return;
-    document.getElementById(id)?.scrollIntoView?.();
+    if ("scrollRestoration" in history) {
+      history.scrollRestoration = "manual";
+    }
+
+    let cancelled = false;
+    const tryScroll = () => {
+      if (cancelled) return false;
+      const el = document.getElementById(id);
+      if (!el) return false;
+      el.scrollIntoView?.({ block: "start" });
+      return true;
+    };
+
+    // createRoot 会丢掉预渲染 HTML，浏览器原生锚点滚动经常打空；
+    // 第一帧元素还没排版时也要再试，否则 /claude#pricing 停在英雄区。
+    tryScroll();
+    const frame = requestAnimationFrame(() => {
+      if (!tryScroll()) requestAnimationFrame(() => { tryScroll(); });
+    });
+    const timers = [0, 80, 240].map((ms) => window.setTimeout(tryScroll, ms));
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      for (const timer of timers) window.clearTimeout(timer);
+    };
   }, [hash, pathname]);
   return null;
 }

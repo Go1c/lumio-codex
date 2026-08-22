@@ -19,6 +19,8 @@ type AppSettings struct {
 	// IsReturnSussess whether to return success info
 	// IsReturnSussess 是否返回成功信息
 	IsReturnSussess bool `yaml:"is-return-sussess" default:"false"`
+	// IsReturnSuccess canonical public config key (`is-return-success`).
+	IsReturnSuccess bool `yaml:"is-return-success" default:"false"`
 	// SoftDeleteRetentionTime retention time for soft deleted notes
 	// SoftDeleteRetentionTime 软删除笔记保留时间
 	SoftDeleteRetentionTime string `yaml:"soft-delete-retention-time" default:"7d"`
@@ -75,4 +77,10 @@ type AppSettings struct {
 
 	FtsBleveEnabled  *bool `yaml:"fts-bleve-enabled" default:"true"`    // Bleve FTS enabled flag // 是否启用 Bleve 全文搜索（默认启用）
 	FtsBleveStoreRaw *bool `yaml:"fts-bleve-store-raw" default:"false"` // Bleve FTS store raw content flag // Bleve 全文搜索是否存储原始文本（默认启用为方案 B，若设为 false 则为仅索引不存储的方案 A）
+}
+
+// ReturnSuccessEnabled is true when either the canonical YAML key
+// `is-return-success` or the legacy misspelling `is-return-sussess` is set.
+func (s AppSettings) ReturnSuccessEnabled() bool {
+	return s.IsReturnSuccess || s.IsReturnSussess
 }

@@ -128,6 +128,7 @@ func (h *AdminControlHandler) GetConfig(c *gin.Context) {
 		return
 	}
 
+	returnSuccess := cfg.App.ReturnSuccessEnabled()
 	data := &dto.AdminConfig{
 		FontSet:                 &cfg.WebGUI.FontSet,
 		RegisterIsEnable:        &cfg.User.RegisterIsEnable,
@@ -151,7 +152,8 @@ func (h *AdminControlHandler) GetConfig(c *gin.Context) {
 		MaxPageSize:                   &cfg.App.MaxPageSize,
 		DefaultContextTimeout:         &cfg.App.DefaultContextTimeout,
 		TempPath:                      &cfg.App.TempPath,
-		IsReturnSussess:               &cfg.App.IsReturnSussess,
+		IsReturnSussess:               &returnSuccess,
+		IsReturnSuccess:               &returnSuccess,
 		SyncLogRetentionTime:          &cfg.App.SyncLogRetentionTime,
 		DownloadSessionTimeout:        &cfg.App.DownloadSessionTimeout,
 		WorkerPoolMaxWorkers:          &cfg.App.WorkerPoolMaxWorkers,
@@ -197,7 +199,7 @@ func (h *AdminControlHandler) UpdateConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.WebGUI.UpdateConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -359,8 +361,9 @@ func (h *AdminControlHandler) UpdateConfig(c *gin.Context) {
 	if params.TempPath != nil {
 		cfg.App.TempPath = *params.TempPath
 	}
-	if params.IsReturnSussess != nil {
-		cfg.App.IsReturnSussess = *params.IsReturnSussess
+	if flag := params.ReturnSuccessFlag(); flag != nil {
+		cfg.App.IsReturnSuccess = *flag
+		cfg.App.IsReturnSussess = *flag
 	}
 	if params.SyncLogRetentionTime != nil {
 		cfg.App.SyncLogRetentionTime = *params.SyncLogRetentionTime
@@ -503,7 +506,7 @@ func (h *AdminControlHandler) UpdateUserDatabaseConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.UpdateUserDatabaseConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -588,7 +591,7 @@ func (h *AdminControlHandler) ValidateUserDatabaseConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.ValidateUserDatabaseConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -680,8 +683,6 @@ func (h *AdminControlHandler) ValidateUserDatabaseConfig(c *gin.Context) {
 	response.ToResponse(code.Success.WithDetails("Database connection and permission verification successful"))
 }
 
-
-
 // GetCloudflareConfig retrieves Cloudflare tunnel configuration (requires admin privileges)
 // @Summary Get Cloudflare config
 // @Description Get Cloudflare tunnel configuration, requires admin privileges
@@ -739,7 +740,7 @@ func (h *AdminControlHandler) UpdateCloudflareConfig(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		logger.Error("apiRouter.AdminControl.UpdateCloudflareConfig.BindAndValid err", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -808,7 +809,7 @@ func (h *AdminControlHandler) CreateUser(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("apiRouter.AdminControl.CreateUser.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -865,7 +866,7 @@ func (h *AdminControlHandler) UpdateUser(c *gin.Context) {
 
 	if !valid {
 		h.App.Logger().Error("apiRouter.AdminControl.UpdateUser.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -1364,7 +1365,7 @@ func (h *AdminControlHandler) downloadFile(ctx context.Context, url string, dest
 		Transport: &http.Transport{
 			TLSHandshakeTimeout:   30 * time.Second,
 			ResponseHeaderTimeout: 60 * time.Second,
-        	IdleConnTimeout:       90 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
 		},
 	}
 

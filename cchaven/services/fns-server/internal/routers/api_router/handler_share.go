@@ -51,7 +51,7 @@ func (h *ShareHandler) Create(c *gin.Context) {
 	// 参数绑定和验证
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *ShareHandler) NoteGet(c *gin.Context) {
 	// 参数绑定和验证
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -137,7 +137,7 @@ func (h *ShareHandler) FileGet(c *gin.Context) {
 	// Parameter binding and validation
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -197,7 +197,7 @@ func (h *ShareHandler) Query(c *gin.Context) {
 	params := &dto.ShareQueryRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -259,7 +259,7 @@ func (h *ShareHandler) Cancel(c *gin.Context) {
 	params := &dto.ShareCancelRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -305,7 +305,7 @@ func (h *ShareHandler) UpdatePassword(c *gin.Context) {
 	params := &dto.SharePasswordUpdateRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -341,7 +341,7 @@ func (h *ShareHandler) CreateShortLink(c *gin.Context) {
 	params := &dto.ShareShortLinkCreateRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -385,7 +385,7 @@ func (h *ShareHandler) List(c *gin.Context) {
 	params := &dto.ShareListRequest{}
 
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

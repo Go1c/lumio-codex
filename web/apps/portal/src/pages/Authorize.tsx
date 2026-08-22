@@ -26,7 +26,7 @@ export function Authorize() {
   const redirectUri = query.get("redirect_uri") ?? "";
 
   // 回调地址在接触控制面之前就要判死：拒绝授权时是门户自己拼回跳地址，
-  // 拿一个外站地址渲染出「CC避风港 请求授权」的确认页本身就是钓鱼素材。
+  // 拿一个外站地址渲染出确认页本身就是钓鱼素材。
   if (!isAllowedDesktopRedirect(redirectUri)) {
     return (
       <AuthorizeShell>

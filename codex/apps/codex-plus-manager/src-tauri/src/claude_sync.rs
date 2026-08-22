@@ -38,6 +38,16 @@ pub struct SyncProgress {
     pub error_code: Option<String>,
 }
 
+pub fn watch_progress(project_id: &str, files: u32) -> SyncProgress {
+    SyncProgress {
+        files_done: files,
+        files_total: files,
+        project_id: Some(project_id.to_string()),
+        running: Some(true),
+        error_code: None,
+    }
+}
+
 pub fn stopped_progress(project_id: &str, files: u32) -> SyncProgress {
     SyncProgress {
         files_done: files,
@@ -482,17 +492,12 @@ impl SyncEngine {
         let sidecars = Arc::clone(&self.sidecars);
         let handle = thread::spawn(move || {
             let root = expand_local_root(&local_root);
-            let mut last = 0u32;
+            let mut last = u32::MAX;
             loop {
                 let files = count_project_files(&root);
                 if files != last {
                     last = files;
-                    on_progress(SyncProgress {
-                        files_done: files,
-                        files_total: files.max(1),
-                        project_id: Some(key_owned.clone()),
-                        ..SyncProgress::default()
-                    });
+                    on_progress(watch_progress(&key_owned, files));
                 }
                 if !Self::sidecar_running(&sidecars, &key_owned) {
                     on_progress(stopped_progress(&key_owned, last));
@@ -812,6 +817,19 @@ mod tests {
         assert_eq!(progress.running, Some(false));
         assert_eq!(progress.error_code.as_deref(), Some("SYNC_FAILED"));
         assert_eq!(progress.project_id.as_deref(), Some("p-docs"));
+    }
+
+    #[test]
+    fn watch_progress_keeps_real_counts_and_marks_the_engine_running() {
+        let progress = watch_progress("p-docs", 3);
+        assert_eq!(progress.files_done, 3);
+        assert_eq!(progress.files_total, 3);
+        assert_eq!(progress.running, Some(true));
+        assert!(progress.error_code.is_none());
+        let empty = watch_progress("p-empty", 0);
+        assert_eq!(empty.files_done, 0);
+        assert_eq!(empty.files_total, 0);
+        assert_eq!(empty.running, Some(true));
     }
 
     #[test]

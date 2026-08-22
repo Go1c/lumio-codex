@@ -49,7 +49,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.Register.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -80,8 +80,7 @@ func (h *UserHandler) Register(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Param params body dto.UserLoginRequest true "Login Parameters"
-// @Success 200 {object} pkgapp.Res{data=dto.UserDTO} "Success"
-// @Failure 400 {object} pkgapp.Res "Invalid Parameters / Invalid Credentials"
+// @Success 200 {object} pkgapp.Res{data=dto.UserDTO} "HTTP 200 envelope. Invalid credentials are body.code (402) with status=false, not HTTP 4xx."
 // @Router /api/user/login [post]
 func (h *UserHandler) Login(c *gin.Context) {
 	response := pkgapp.NewResponse(c)
@@ -92,7 +91,7 @@ func (h *UserHandler) Login(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.Login.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -169,7 +168,7 @@ func (h *UserHandler) UserChangePassword(c *gin.Context) {
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
 		h.App.Logger().Error("UserHandler.UserChangePassword.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

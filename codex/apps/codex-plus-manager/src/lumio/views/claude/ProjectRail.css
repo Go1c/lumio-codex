@@ -133,6 +133,26 @@
   height: 13px;
 }
 
+.lumio-claude-proj-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.lumio-claude-proj-recover {
+  align-self: flex-start;
+  margin: 0 10px 6px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--cc-field);
+  color: var(--cc-ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 .lumio-claude-proj {
   display: block;
   width: 100%;

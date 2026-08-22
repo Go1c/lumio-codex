@@ -85,7 +85,7 @@ func (h *TokenHandler) Create(c *gin.Context) {
 
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -117,7 +117,7 @@ func (h *TokenHandler) Update(c *gin.Context) {
 	params := &dto.TokenUpdateRequest{}
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -199,7 +199,7 @@ func (h *TokenHandler) ListLogs(c *gin.Context) {
 	params := &dto.TokenLogListRequest{}
 	valid, errs := pkgapp.BindAndValid(c, params)
 	if !valid {
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

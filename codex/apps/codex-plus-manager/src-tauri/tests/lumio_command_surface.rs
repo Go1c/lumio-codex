@@ -247,12 +247,16 @@ fn bootstrap_version_uses_the_ci_package_display_label() {
         .expect("lumio_bootstrap body");
 
     assert!(
-        body.contains("resolve_display_version"),
+        body.contains("resolve_display_version_with_bundle"),
         "bootstrap.version must use the package display label:\n{body}"
     );
     assert!(
         body.contains("option_env!(\"LUMIO_PACKAGE_VERSION\")"),
         "CI must be able to stamp the internal label at compile time:\n{body}"
+    );
+    assert!(
+        body.contains("running_bundle_short_version"),
+        "missing CI label must fall back to the installed bundle short version:\n{body}"
     );
 }
 

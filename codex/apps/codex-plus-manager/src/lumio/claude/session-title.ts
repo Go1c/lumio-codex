@@ -19,6 +19,60 @@ export function isSlashCommand(line: string): boolean {
   return line.trim().startsWith("/");
 }
 
+export function feedTitleInput(
+  buffer: string,
+  data: string,
+): { buffer: string; submitted: string[] } {
+  const submitted: string[] = [];
+  let buf = buffer;
+  let i = 0;
+  while (i < data.length) {
+    if (data.startsWith("\x1bOM", i)) {
+      submitted.push(buf);
+      buf = "";
+      i += 3;
+      continue;
+    }
+    if (data.startsWith("\x1b[13~", i)) {
+      submitted.push(buf);
+      buf = "";
+      i += 5;
+      continue;
+    }
+    const ch = data[i] ?? "";
+    if (ch === "\r") {
+      if (data[i + 1] === "\n") i += 1;
+      submitted.push(buf);
+      buf = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "\n") {
+      submitted.push(buf);
+      buf = "";
+      i += 1;
+      continue;
+    }
+    if (ch === "\x1b") {
+      i += 1;
+      while (i < data.length) {
+        const next = data[i] ?? "";
+        i += 1;
+        if (/[A-Za-z~]/.test(next)) break;
+      }
+      continue;
+    }
+    if (ch === "\u007f" || ch === "\b") {
+      buf = buf.slice(0, -1);
+      i += 1;
+      continue;
+    }
+    if (ch >= " " || ch === "\t") buf += ch;
+    i += 1;
+  }
+  return { buffer: buf, submitted };
+}
+
 export function firstSubmittedLine(input: string): string | null {
   const line = (input.split(/\r?\n/, 1)[0] ?? "").trimEnd();
   if (line.trim() === "") return null;

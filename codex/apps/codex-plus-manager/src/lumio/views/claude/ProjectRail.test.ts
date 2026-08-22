@@ -23,10 +23,10 @@ test("login copy is only on the server-meta block, never on project rows", () =>
   assert.ok(at >= 0, "source must comment-partition project rows");
   const serverPart = source.slice(0, at);
   const projectPart = source.slice(at);
-  assert.match(serverPart, /已登录/);
-  assert.match(serverPart, /未登录/);
+  assert.match(serverPart, /serverMetaCopy/);
   assert.doesNotMatch(projectPart, /已登录/);
   assert.doesNotMatch(projectPart, /未登录/);
+  assert.doesNotMatch(projectPart, /Claude 未装/);
 });
 
 test("user-visible rail copy never says agent or tmux", () => {

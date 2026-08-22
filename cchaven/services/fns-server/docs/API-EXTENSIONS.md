@@ -2,6 +2,10 @@
 
 This document describes the new API endpoints added in the `feature/api-extensions` branch.
 
+## HTTP envelope
+
+JSON routes respond **HTTP 200** for both business success and business failure. Clients must read `code` and `status` in the JSON body (`status=false` and a non-success `code` means failure). Wrong password is HTTP 200 + `code=402`. The WebSocket upgrade `GET /api/user/workspace-sync/v2` is outside this envelope and may return HTTP 401.
+
 ## New Endpoints
 
 ### Health Check

@@ -57,6 +57,10 @@ pub enum TakeoverHealth {
 struct Manifest {
     config_sha256: String,
     auth_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config_owned_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    auth_owned_sha256: Option<String>,
     applied_at: String,
     model: String,
 }
@@ -166,6 +170,8 @@ pub fn apply_takeover(
     let manifest = Manifest {
         config_sha256: sha256(config_output.as_bytes()),
         auth_sha256: sha256(auth_output.as_bytes()),
+        config_owned_sha256: owned_config_fingerprint(config_output.as_bytes()),
+        auth_owned_sha256: owned_auth_fingerprint(auth_output.as_bytes()),
         applied_at: now_unix_seconds(),
         model: request.model.clone(),
     };
@@ -203,21 +209,50 @@ pub fn check_takeover(codex_home: &Path, state_dir: &Path) -> TakeoverHealth {
         ManifestState::Missing => return TakeoverHealth::NotApplied,
     };
 
-    for (path, expected) in [
-        (codex_home.join(CONFIG_FILE), &manifest.config_sha256),
-        (codex_home.join(AUTH_FILE), &manifest.auth_sha256),
-    ] {
-        match std::fs::read(&path) {
-            Ok(bytes) if &sha256(&bytes) == expected => {}
-            _ => {
-                return TakeoverHealth::Conflicted {
-                    error_code: CONFLICT.to_string(),
-                };
+    let config_bytes = std::fs::read(codex_home.join(CONFIG_FILE)).ok();
+    let auth_bytes = std::fs::read(codex_home.join(AUTH_FILE)).ok();
+    let current_config_owned = config_bytes.as_deref().and_then(owned_config_fingerprint);
+    let current_auth_owned = auth_bytes.as_deref().and_then(owned_auth_fingerprint);
+
+    match (
+        manifest.config_owned_sha256.as_ref(),
+        manifest.auth_owned_sha256.as_ref(),
+    ) {
+        (Some(expected_config), Some(expected_auth)) => {
+            if current_config_owned.as_ref() == Some(expected_config)
+                && current_auth_owned.as_ref() == Some(expected_auth)
+            {
+                return TakeoverHealth::Healthy;
             }
+            return TakeoverHealth::Conflicted {
+                error_code: CONFLICT.to_string(),
+            };
         }
+        _ => {}
     }
 
-    TakeoverHealth::Healthy
+    // 旧 manifest 只有整文件哈希。官方 Codex 启动会改写我们不拥有的字段，
+    // 整文件对不上时改看接管字段是否还在。
+    let full_match = config_bytes
+        .as_deref()
+        .is_some_and(|bytes| sha256(bytes) == manifest.config_sha256)
+        && auth_bytes
+            .as_deref()
+            .is_some_and(|bytes| sha256(bytes) == manifest.auth_sha256);
+    if full_match {
+        return TakeoverHealth::Healthy;
+    }
+    if config_bytes
+        .as_deref()
+        .is_some_and(|bytes| owned_config_shape_matches_manifest(bytes, &manifest))
+        && auth_bytes.as_deref().is_some_and(owned_auth_shape_present)
+    {
+        return TakeoverHealth::Healthy;
+    }
+
+    TakeoverHealth::Conflicted {
+        error_code: CONFLICT.to_string(),
+    }
 }
 
 /// 愈合 D-15 之前旧接管残留的 `env_key`：官方 Codex 对自定义 provider 只从环境变量
@@ -418,6 +453,68 @@ fn remove_if_present(path: &Path) -> Result<(), String> {
 
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn toml_str(item: Option<&toml_edit::Item>) -> Option<&str> {
+    item.and_then(toml_edit::Item::as_str)
+}
+
+fn provider_item<'a>(doc: &'a toml_edit::DocumentMut) -> Option<&'a toml_edit::Item> {
+    doc.get("model_providers")?.get(PROVIDER_ID)
+}
+
+/// Lumio 只拥有 `model` / `model_provider` / `model_providers.lumio` 的 name、base_url、
+/// wire_api。官方 Codex 写回的 `last_updated` 等其余字段不进指纹。
+fn owned_config_fingerprint(bytes: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
+    let model = toml_str(doc.get("model"))?;
+    let model_provider = toml_str(doc.get("model_provider"))?;
+    let provider = provider_item(&doc)?;
+    let name = toml_str(provider.get("name"))?;
+    let base_url = toml_str(provider.get("base_url"))?;
+    let wire_api = toml_str(provider.get("wire_api"))?;
+    let canonical = format!(
+        "model={model}\nmodel_provider={model_provider}\nname={name}\nbase_url={base_url}\nwire_api={wire_api}\n"
+    );
+    Some(sha256(canonical.as_bytes()))
+}
+
+fn owned_auth_fingerprint(bytes: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let key = value
+        .get(AUTH_KEY_FIELD)?
+        .as_str()
+        .filter(|key| !key.is_empty())?;
+    Some(sha256(key.as_bytes()))
+}
+
+fn owned_config_shape_matches_manifest(bytes: &[u8], manifest: &Manifest) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let provider = provider_item(&doc);
+    toml_str(doc.get("model")) == Some(manifest.model.as_str())
+        && toml_str(doc.get("model_provider")) == Some(PROVIDER_ID)
+        && toml_str(provider.and_then(|item| item.get("base_url")))
+            .is_some_and(|value| !value.is_empty())
+        && toml_str(provider.and_then(|item| item.get("wire_api")))
+            .is_some_and(|value| !value.is_empty())
+}
+
+fn owned_auth_shape_present(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get(AUTH_KEY_FIELD)
+                .and_then(serde_json::Value::as_str)
+                .map(|key| !key.is_empty())
+        })
+        .unwrap_or(false)
 }
 
 fn now_unix_seconds() -> String {
@@ -706,6 +803,111 @@ mod tests {
             "model = \"someone-else\"\n",
         )
         .unwrap();
+
+        match check_takeover(&fx.codex_home, &fx.state_dir) {
+            TakeoverHealth::Conflicted { error_code } => {
+                assert_eq!(error_code, "CODEX_CONFIG_CONFLICT");
+            }
+            other => panic!("expected a conflict, got {other:?}"),
+        }
+    }
+
+    /// 官方 Codex 启动会改写我们不拥有的字段（QA D-13 实测 `last_updated` 与
+    /// `model_reasoning_effort`）。整文件哈希会把这条核心路径误判成冲突。
+    fn simulate_official_codex_unowned_rewrite(fx: &Fixture) {
+        let config_path = fx.codex_home.join(CONFIG_FILE);
+        let written = std::fs::read_to_string(&config_path).unwrap();
+        std::fs::write(
+            &config_path,
+            format!(
+                "{written}last_updated = \"2026-08-17T08:00:00Z\"\nmodel_reasoning_effort = \"medium\"\n"
+            ),
+        )
+        .unwrap();
+
+        let auth_path = fx.codex_home.join(AUTH_FILE);
+        let mut auth: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&auth_path).unwrap()).unwrap();
+        auth.as_object_mut().unwrap().insert(
+            "tokens".to_string(),
+            serde_json::json!({"id_token": "official-refresh"}),
+        );
+        std::fs::write(&auth_path, serde_json::to_vec_pretty(&auth).unwrap()).unwrap();
+    }
+
+    fn strip_owned_hashes_from_manifest(fx: &Fixture) {
+        let bytes = std::fs::read(fx.manifest_path()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let object = value.as_object_mut().expect("manifest is a JSON object");
+        object.remove("config_owned_sha256");
+        object.remove("auth_owned_sha256");
+        std::fs::write(fx.manifest_path(), serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn official_codex_rewriting_unowned_fields_is_not_a_conflict() {
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        simulate_official_codex_unowned_rewrite(&fx);
+
+        assert!(
+            matches!(
+                check_takeover(&fx.codex_home, &fx.state_dir),
+                TakeoverHealth::Healthy
+            ),
+            "unowned official rewrite must not open the repair page"
+        );
+    }
+
+    #[test]
+    fn a_legacy_full_file_manifest_still_accepts_an_official_unowned_rewrite() {
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        strip_owned_hashes_from_manifest(&fx);
+        simulate_official_codex_unowned_rewrite(&fx);
+
+        assert!(
+            matches!(
+                check_takeover(&fx.codex_home, &fx.state_dir),
+                TakeoverHealth::Healthy
+            ),
+            "existing installs only have full-file hashes; official rewrite still must not conflict"
+        );
+    }
+
+    #[test]
+    fn rewriting_the_inline_provider_as_a_standard_table_is_not_a_conflict() {
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        std::fs::write(
+            fx.codex_home.join(CONFIG_FILE),
+            format!(
+                "model = \"gpt-example\"\nmodel_provider = \"lumio\"\n\n[model_providers.lumio]\nname = \"{}\"\nbase_url = \"https://api.lumio.games/v1\"\nwire_api = \"responses\"\n",
+                super::super::product::PRODUCT_NAME
+            ),
+        )
+        .unwrap();
+
+        assert!(
+            matches!(
+                check_takeover(&fx.codex_home, &fx.state_dir),
+                TakeoverHealth::Healthy
+            ),
+            "toml_edit inline vs standard table is the same owned config"
+        );
+    }
+
+    #[test]
+    fn changing_the_managed_api_key_is_still_a_conflict() {
+        let fx = fixture();
+        apply_takeover(&fx.codex_home, &fx.state_dir, &request()).unwrap();
+        let auth_path = fx.codex_home.join(AUTH_FILE);
+        let mut auth: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&auth_path).unwrap()).unwrap();
+        auth.as_object_mut()
+            .unwrap()
+            .insert(AUTH_KEY_FIELD.to_string(), serde_json::json!("sk-other"));
+        std::fs::write(&auth_path, serde_json::to_vec_pretty(&auth).unwrap()).unwrap();
 
         match check_takeover(&fx.codex_home, &fx.state_dir) {
             TakeoverHealth::Conflicted { error_code } => {

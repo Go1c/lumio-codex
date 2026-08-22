@@ -375,11 +375,15 @@ pub fn lumio_bootstrap(
         });
 
     result(Ok(LumioBootstrapPayload {
-        version: codex_plus_core::version::resolve_display_version(
-            option_env!("LUMIO_PACKAGE_VERSION"),
-            env!("CARGO_PKG_VERSION"),
-        )
-        .to_string(),
+        version: {
+            let bundle_version = codex_plus_core::version::running_bundle_short_version();
+            codex_plus_core::version::resolve_display_version_with_bundle(
+                option_env!("LUMIO_PACKAGE_VERSION"),
+                env!("CARGO_PKG_VERSION"),
+                bundle_version.as_deref(),
+            )
+            .to_string()
+        },
         platform: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         codex_app,

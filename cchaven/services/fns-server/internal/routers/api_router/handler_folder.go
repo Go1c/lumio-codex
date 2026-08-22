@@ -33,7 +33,7 @@ func (h *FolderHandler) Get(c *gin.Context) {
 	params := &dto.FolderGetRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.Get.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *FolderHandler) List(c *gin.Context) {
 	params := &dto.FolderListRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.List.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -92,7 +92,7 @@ func (h *FolderHandler) Create(c *gin.Context) {
 	params := &dto.FolderCreateRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.Create.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -122,7 +122,7 @@ func (h *FolderHandler) Delete(c *gin.Context) {
 	params := &dto.FolderDeleteRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.Delete.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -152,7 +152,7 @@ func (h *FolderHandler) ListNotes(c *gin.Context) {
 	params := &dto.FolderContentRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.ListNotes.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -184,7 +184,7 @@ func (h *FolderHandler) ListFiles(c *gin.Context) {
 	params := &dto.FolderContentRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.ListFiles.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 
@@ -214,7 +214,7 @@ func (h *FolderHandler) Tree(c *gin.Context) {
 	params := &dto.FolderTreeRequest{}
 	if valid, errs := pkgapp.BindAndValid(c, params); !valid {
 		h.App.Logger().Error("FolderHandler.Tree.BindAndValid errs", zap.Error(errs))
-		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.MapsToString()))
+		response.ToResponse(code.ErrorInvalidParams.WithDetails(errs.ErrorsToString()).WithData(errs.ResponseData()))
 		return
 	}
 

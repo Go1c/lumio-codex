@@ -177,10 +177,10 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
               <span>
                 我已阅读并同意
                 {settings.agreementDocuments.map((doc) => (
-                  <button
+                  <a
                     key={doc.id}
-                    type="button"
                     className="agreement-doc-link"
+                    href={`#agreement-${doc.id}`}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -188,7 +188,7 @@ function SignupForm({ settings }: { settings: PublicSettings }) {
                     }}
                   >
                     《{doc.title}》
-                  </button>
+                  </a>
                 ))}
               </span>
             </label>

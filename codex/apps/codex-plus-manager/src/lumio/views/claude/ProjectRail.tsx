@@ -7,6 +7,8 @@ import {
 } from "../../claude/rail-groups.ts";
 import { resumeClaudeSync } from "../../claude/session.ts";
 import { dispatchClaude } from "../../claude/store.ts";
+import { SYNC_RELAUNCH_LABEL, isSyncCaughtUp } from "../../claude/sync-status.ts";
+import { serverMetaCopy } from "./status-copy.ts";
 import type {
   ClaudeChatSession,
   ClaudeCliInstallStatus,
@@ -151,10 +153,7 @@ function serverMetaLine(
   login: ClaudeLoginStatus | undefined,
   online: boolean,
 ): string {
-  if (!online) return cli?.version ? "未连接" : "Claude 未装";
-  const version = cli?.version ? `Claude ${cli.version}` : "Claude 未装";
-  const auth = login?.phase === "logged-in" ? "已登录" : "未登录";
-  return `${version} · ${auth}`;
+  return serverMetaCopy(cli, login, online);
 }
 
 /* --- project-row --- */
@@ -169,6 +168,7 @@ function projectMetaLine(
     return { text: `${sync.conflicts} 个冲突待处理`, tone: "warn" };
   }
   if (sync?.state === "fail") return { text: "同步没能完成", tone: "bad" };
+  if (sync?.state === "running" && isSyncCaughtUp(sync)) return { text: "已同步", tone: "ok" };
   if (sync?.state === "running") return { text: "正在同步", tone: "" };
   if (sync?.state === "synced") return { text: "已同步", tone: "ok" };
   if (sync?.state === "offline") return { text: "未连接", tone: "" };
@@ -236,28 +236,38 @@ function ProjectRailView({
                     const live = liveCount(sessionsByProject[project.id]);
                     const status = projectMetaLine(syncByProject[project.id], online);
                     return (
-                      <button
-                        className={`lumio-claude-proj${project.id === activeProjectId ? " is-on" : ""}`}
-                        key={project.id}
-                        onClick={() => onSelectProject(project.id)}
-                        type="button"
-                      >
-                        <span className="k">
-                          <span className="glyph">
-                            <FolderIcon />
+                      <div className="lumio-claude-proj-wrap" key={project.id}>
+                        <button
+                          className={`lumio-claude-proj${project.id === activeProjectId ? " is-on" : ""}`}
+                          onClick={() => onSelectProject(project.id)}
+                          type="button"
+                        >
+                          <span className="k">
+                            <span className="glyph">
+                              <FolderIcon />
+                            </span>
+                            {project.name}
+                            {live > 0 ? (
+                              <i
+                                className="lumio-claude-live"
+                                title={`有 ${live} 个对话在跑`}
+                                aria-label={`有 ${live} 个对话在跑`}
+                              />
+                            ) : null}
                           </span>
-                          {project.name}
-                          {live > 0 ? (
-                            <i
-                              className="lumio-claude-live"
-                              title={`有 ${live} 个对话在跑`}
-                              aria-label={`有 ${live} 个对话在跑`}
-                            />
-                          ) : null}
-                        </span>
-                        <span className="dir">{project.remoteRoot}</span>
-                        <span className={`st${status.tone ? ` is-${status.tone}` : ""}`}>{status.text}</span>
-                      </button>
+                          <span className="dir">{project.remoteRoot}</span>
+                          <span className={`st${status.tone ? ` is-${status.tone}` : ""}`}>{status.text}</span>
+                        </button>
+                        {status.tone === "bad" ? (
+                          <button
+                            className="lumio-claude-proj-recover"
+                            onClick={() => void resumeClaudeSync(project.id)}
+                            type="button"
+                          >
+                            {SYNC_RELAUNCH_LABEL}
+                          </button>
+                        ) : null}
+                      </div>
                     );
                   })}
                   <button className="lumio-claude-newproj" onClick={() => onNewProject(group.host)} type="button">

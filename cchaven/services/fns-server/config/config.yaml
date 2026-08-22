@@ -69,7 +69,8 @@ app:
   temp-path: storage/temp
   # 是否在响应中返回成功详情消息
   # Whether to return success detail message in response
-  is-return-sussess: false
+  # Canonical key is is-return-success; the misspelling is-return-sussess is still accepted.
+  is-return-success: false
   # 软删除笔记保留时长。例如: 7d, 24h。0 表示永久保留。
   # Retention duration for soft deleted notes. e.g., 7d, 24h. 0 means keep forever.
   soft-delete-retention-time: "7d"

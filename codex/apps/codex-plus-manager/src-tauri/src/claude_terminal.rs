@@ -79,10 +79,10 @@ pub fn open_remote_session_command(
     TerminalManager::remote_command(&remote_session_name(project_id, session_id), remote_root)
 }
 
-pub fn close_remote_session_command(project_id: &str, session_id: &str) -> String {
-    let quoted =
-        TerminalManager::posix_shell_single_quote(&remote_session_name(project_id, session_id));
-    format!("tmux kill-session -t {quoted} 2>/dev/null; echo done")
+pub fn close_remote_session_command(_project_id: &str, _session_id: &str) -> String {
+    // Local PTY kill tears down the SSH child; do not wrap Claude in a remote
+    // session manager (its status bar is user-visible).
+    "echo done".into()
 }
 
 pub fn chat_ids_for_project<V>(sessions: &HashMap<String, V>, project_id: &str) -> Vec<String> {
@@ -155,10 +155,9 @@ impl TerminalManager {
         out
     }
 
-    pub fn remote_command(session: &str, remote_root: &str) -> String {
+    pub fn remote_command(_session: &str, remote_root: &str) -> String {
         format!(
-            "PATH=$HOME/.local/bin:$PATH env TERM=xterm-256color tmux new-session -A -s {session} -c {root} -- $HOME/.local/bin/claude",
-            session = Self::posix_shell_single_quote(&Self::sanitize_session_name(session)),
+            "cd {root} && PATH=$HOME/.local/bin:$PATH env TERM=xterm-256color exec $HOME/.local/bin/claude",
             root = remote_shell_path(remote_root)
         )
     }
@@ -346,7 +345,7 @@ mod tests {
             !command.contains('"'),
             "tilde path must not add double quotes"
         );
-        assert!(command.contains("'my-project'"));
+        assert!(command.contains(".local/bin/claude"));
     }
 
     #[test]
@@ -363,16 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn open_session_command_includes_session_name_and_quoted_root() {
+    fn open_session_command_includes_quoted_root() {
         let command = open_remote_session_command("my project", "chat 1", "~/bestcodex/my-project");
-        assert_eq!(
-            remote_session_name("my project", "chat 1"),
-            "bestcodex-my-project-chat-1"
-        );
-        assert!(
-            command.contains("'bestcodex-my-project-chat-1'"),
-            "open command must include the quoted session name"
-        );
         assert!(
             command.contains("~/'bestcodex/my-project'"),
             "open command must include the quoted project root"
@@ -387,7 +378,7 @@ mod tests {
     fn new_conversation_starts_official_claude_in_the_project() {
         let command = open_remote_session_command("p-docs", "s-new", "~/bestcodex/docs");
         assert!(
-            command.contains(".local/bin/claude") && command.contains(" -- "),
+            command.contains(".local/bin/claude"),
             "new conversation must run official Claude in the project, not a bare shell: {command}"
         );
         assert!(command.contains("~/'bestcodex/docs'"));
@@ -399,16 +390,25 @@ mod tests {
     }
 
     #[test]
-    fn close_session_command_includes_the_same_session_name() {
-        let open = open_remote_session_command("my project", "chat 1", "~/bestcodex/my-project");
-        let close = close_remote_session_command("my project", "chat 1");
+    fn new_conversation_command_does_not_surface_session_manager() {
+        let command = open_remote_session_command("p-docs", "s-new", "~/bestcodex/docs");
+        let lower = command.to_ascii_lowercase();
         assert!(
-            open.contains("'bestcodex-my-project-chat-1'"),
-            "open command must include the quoted session name"
+            !lower.contains("tmux"),
+            "wrapping Claude in a session manager paints a status bar into the user's terminal: {command}"
         );
         assert!(
-            close.contains("'bestcodex-my-project-chat-1'"),
-            "close command must target the same session name"
+            command.contains(".local/bin/claude"),
+            "must still start official Claude: {command}"
+        );
+    }
+
+    #[test]
+    fn close_session_command_does_not_use_a_session_manager() {
+        let close = close_remote_session_command("my project", "chat 1");
+        assert!(
+            !close.to_ascii_lowercase().contains("tmux"),
+            "close command must not mention a session manager: {close}"
         );
         assert!(
             !close.contains("sudo"),

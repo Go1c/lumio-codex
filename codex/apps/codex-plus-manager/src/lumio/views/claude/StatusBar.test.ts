@@ -11,6 +11,7 @@ import {
   hostResourceCopy,
   nextStatusDrawerPane,
   readyStatusCopy,
+  serverMetaCopy,
   updateNudgeCopy,
 } from "./status-copy.ts";
 
@@ -50,8 +51,52 @@ test("ready copy covers init, resume, offline, and the everyday ready state", ()
   assert.equal(readyStatusCopy("offline", null).tone, "bad");
   assert.equal(readyStatusCopy("offline", null).label, "离线");
   assert.equal(readyStatusCopy("ready", { state: "offline", filesDone: 0, filesTotal: 0, errorCode: null, conflicts: 0 }).label, "离线");
-  assert.equal(readyStatusCopy("ready", null).label, "已就绪");
-  assert.equal(readyStatusCopy("ready", null).tone, "ok");
+  assert.equal(
+    readyStatusCopy("ready", { state: "synced", filesDone: 3, filesTotal: 3, errorCode: null, conflicts: 0 }).label,
+    "已就绪",
+  );
+  assert.equal(
+    readyStatusCopy("ready", { state: "synced", filesDone: 3, filesTotal: 3, errorCode: null, conflicts: 0 }).tone,
+    "ok",
+  );
+});
+
+test("ready is not 已就绪 when sync is down or still catching up", () => {
+  const fail = {
+    state: "fail" as const,
+    filesDone: 0,
+    filesTotal: 0,
+    errorCode: "SYNC_REMOTE_NOT_RUNNING",
+    conflicts: 0,
+  };
+  const running = {
+    state: "running" as const,
+    filesDone: 1,
+    filesTotal: 8,
+    errorCode: null,
+    conflicts: 0,
+  };
+  assert.notEqual(readyStatusCopy("ready", fail).label, "已就绪");
+  assert.equal(readyStatusCopy("ready", fail).tone, "bad");
+  assert.notEqual(readyStatusCopy("ready", running).label, "已就绪");
+  assert.notEqual(readyStatusCopy("ready", null).label, "已就绪");
+  assert.notEqual(readyStatusCopy("ready", null).tone, "ok");
+});
+
+test("logged-in without a version string is not Claude 未装 · 已登录", () => {
+  assert.equal(
+    serverMetaCopy({ version: null }, { phase: "logged-in" }, true),
+    "Claude · 已登录",
+  );
+  assert.notEqual(
+    serverMetaCopy({ version: null }, { phase: "logged-in" }, true),
+    "Claude 未装 · 已登录",
+  );
+  assert.equal(
+    serverMetaCopy({ version: "2.1.238" }, { phase: "logged-out" }, true),
+    "Claude 2.1.238 · 未登录",
+  );
+  assert.equal(serverMetaCopy(null, { phase: "logged-out" }, true), "Claude 未装 · 未登录");
 });
 
 test("Claude version and login stay on the server line, with an update nudge when a newer version exists", () => {

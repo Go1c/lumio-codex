@@ -1,8 +1,8 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { applyRemoteSyncHealth, fetchClaudeServerStatus } from "../../claude/session.ts";
+import { applyRemoteSyncHealth, fetchClaudeServerStatus, resumeClaudeSync } from "../../claude/session.ts";
 import { dispatchClaude, getClaudeState, subscribeClaudeStore } from "../../claude/store.ts";
-import { workspaceStatusAppearance } from "../../claude/sync-status.ts";
+import { SYNC_RELAUNCH_LABEL, workspaceStatusAppearance } from "../../claude/sync-status.ts";
 import type {
   ClaudeProject,
   ClaudeServerStatus,
@@ -89,6 +89,18 @@ export function StatusBar({
               ? `● ${appearance.copy}`
               : appearance.copy}
           </StatusSeg>
+          {appearance.tone === "bad" ? (
+            <button
+              className="lumio-claude-status-recover"
+              onClick={(event) => {
+                event.stopPropagation();
+                void resumeClaudeSync(active.id);
+              }}
+              type="button"
+            >
+              {SYNC_RELAUNCH_LABEL}
+            </button>
+          ) : null}
           {resources ? (
             <>
               <span className="lumio-claude-status-sep">·</span>

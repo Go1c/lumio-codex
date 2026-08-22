@@ -7,8 +7,10 @@ import {
   DEFAULT_CLAUDE_PLAN_CENTS,
   beginNewProjectOnHost,
   cancelClaudeConnect,
+  finalizeCliInstallPhase,
   formatClaudeOrderYuan,
   formatClaudePlanYuan,
+  isCliInstallFinished,
   runConnectSync,
 } from "./session.ts";
 import {
@@ -118,12 +120,27 @@ test("plan fallback is 19.9 yuan and order amounts keep two decimals", () => {
   assert.notEqual(formatClaudePlanYuan(DEFAULT_CLAUDE_PLAN_CENTS), "68");
 });
 
+test("CLI ensure finishes on skip/upgrade/ok, not while install is still running", () => {
+  assert.equal(finalizeCliInstallPhase(true, "skip"), "skip");
+  assert.equal(finalizeCliInstallPhase(true, "upgrade"), "upgrade");
+  assert.equal(finalizeCliInstallPhase(true, "ok"), "ok");
+  assert.equal(finalizeCliInstallPhase(true, "install"), "ok");
+  assert.equal(finalizeCliInstallPhase(false, "install"), "fail");
+  assert.equal(isCliInstallFinished("skip"), true);
+  assert.equal(isCliInstallFinished("ok"), true);
+  assert.equal(isCliInstallFinished("upgrade"), true);
+  assert.equal(isCliInstallFinished("install"), false);
+  assert.equal(isCliInstallFinished("detect"), false);
+  assert.equal(isCliInstallFinished(undefined), false);
+});
+
 test("hydrate and first sync kick CLI install then login for that host", async () => {
   const source = await readFile(new URL("./session.ts", import.meta.url), "utf8");
   assert.match(source, /CLAUDE_CLI_PROGRESS_EVENT/);
   assert.match(source, /CLAUDE_LOGIN_PROGRESS_EVENT/);
   assert.match(source, /continueClaudeInit/);
   assert.match(source, /ensureHostCli/);
+  assert.match(source, /finalizeCliInstallPhase\(result\.ok, result\.phase\)/);
   assert.match(source, /refreshHostLogin/);
   assert.match(source, /activateClaudeProject/);
   assert.match(source, /set-workspace-phase/);

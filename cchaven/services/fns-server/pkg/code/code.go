@@ -231,6 +231,9 @@ func (e *Code) WithContext(context string) *Code {
 	}
 }
 
+// StatusCode is the HTTP status for JSON envelope responses.
+// Business success and failure both use 200; clients must read body code/status.
+// WebSocket upgrade (workspace-sync/v2) is outside this envelope and may return 401.
 func (e *Code) StatusCode() int {
 	return http.StatusOK
 }
@@ -246,4 +249,3 @@ func (e *Code) Is(target error) bool {
 	}
 	return e.code == t.code
 }
-

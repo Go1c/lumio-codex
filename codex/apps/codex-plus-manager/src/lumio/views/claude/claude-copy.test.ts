@@ -267,6 +267,12 @@ test("artifact-missing blames the build, not the machine or the connection", asy
   assert.match(connect, /HELP_URL/);
 });
 
+test("ClaudeHome finishes the install step on skip/ok/upgrade, not in-progress install", async () => {
+  const home = await readView("ClaudeHome.tsx");
+  assert.match(home, /isCliInstallFinished\(cliPhase\)/);
+  assert.doesNotMatch(home, /cliPhase === "ok" \|\| cliPhase === "skip"/);
+});
+
 test("ClaudeHome maps TerminalPane from sessionsByProject, not only the active sessions alias", async () => {
   const home = await readView("ClaudeHome.tsx");
   assert.match(home, /Object\.entries\(\s*state\.sessionsByProject\s*\)/);
