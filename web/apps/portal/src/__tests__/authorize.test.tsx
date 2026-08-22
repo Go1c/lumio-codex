@@ -62,6 +62,15 @@ afterEach(() => {
 });
 
 describe("授权确认页", () => {
+  it("无效回调页引导回 Claude 桌面端，不出现已弃用品牌", () => {
+    renderApp("/authorize");
+
+    expect(screen.getByRole("heading", { name: "授权请求无效" })).toBeInTheDocument();
+    expect(screen.getByText(/请回到 Claude 桌面端重新发起登录/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/CC避风港|避风港/);
+    expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute("href", "/");
+  });
+
   it("未登录时展示申请方与权限，并把完整授权参数带进登录入口", async () => {
     stubFetch({
       "/oauth/authorize/context": () =>
