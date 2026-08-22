@@ -121,6 +121,17 @@ describe("登录页", () => {
     expect(link).toHaveAttribute("href", "https://api.lumio.games/reset-password");
   });
 
+  it("读不到 public settings 时仍露出忘记密码，指向 Sub2API 重置页", async () => {
+    stubFetch({
+      "/settings/public": () => failure(503, "SERVICE_UNAVAILABLE"),
+    });
+
+    renderApp("/login");
+
+    const link = await screen.findByRole("link", { name: "忘记密码" });
+    expect(link).toHaveAttribute("href", "https://api.lumio.games/reset-password");
+  });
+
   it("password_reset_enabled 为 false 时不露出忘记密码入口", async () => {
     stubFetch({
       "/settings/public": () =>

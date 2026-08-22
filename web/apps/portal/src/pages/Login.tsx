@@ -15,7 +15,8 @@ export function Login() {
   const { challenge, apply } = useAuthOutcome(next);
   const settings = usePublicSettings();
   const showPasswordReset =
-    settings.status === "ready" && settings.data?.passwordResetEnabled === true;
+    settings.status === "error" ||
+    (settings.status === "ready" && settings.data?.passwordResetEnabled === true);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
