@@ -39,7 +39,7 @@ metadata:
 
 - 门户直连 Sub2API 的 auth 系列端点（`packages/auth/src/client.ts`），统一信封
   `{ code, message, reason, data }`，`code === 0` 才算成功；2FA 挑战是 HTTP 200 的成功响应，
-  只能靠 `requires_2fa` 判断；限流响应不套信封。登录页在 `password_reset_enabled` 为真时展示「忘记密码」到 Sub2API `/reset-password`；读不到 public settings 时仍露出该入口，只有开关明确关闭才隐藏。
+  只能靠 `requires_2fa` 判断；限流响应不套信封。登录页在 `password_reset_enabled` 为真时展示「忘记密码」到 Sub2API `/reset-password`；读不到 public settings 时仍露出该入口，只有开关明确关闭才隐藏。注册页协议标题是可点链接，打开 `login_agreement_documents` 下发的全文，不是纯文本。
 - 桌面端（`codex/crates/codex-plus-core/src/lumio/`）连的是同一套端点与同一份用户数据，
   与门户不是两套账号。
 - CC 控制面 `cchaven-control` 降级为纯业务服务：拿请求里的

@@ -207,7 +207,7 @@
   margin: 0 2px;
   border: 0;
   background: none;
-  color: inherit;
+  color: var(--blue);
   text-decoration: underline;
   cursor: pointer;
   font: inherit;

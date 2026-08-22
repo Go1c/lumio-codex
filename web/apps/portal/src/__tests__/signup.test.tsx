@@ -101,9 +101,10 @@ describe("注册页尊重 settings/public", () => {
 
     renderApp("/signup");
 
-    const terms = await screen.findByRole("button", { name: "《服务条款》" });
-    expect(screen.getByRole("button", { name: "《使用政策》" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "《服务区域声明》" })).toBeInTheDocument();
+    const terms = await screen.findByRole("link", { name: "《服务条款》" });
+    expect(screen.getByRole("link", { name: "《使用政策》" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "《服务区域声明》" })).toBeInTheDocument();
+    expect(terms).toHaveAttribute("href", "#agreement-terms");
 
     await userEvent.click(terms);
     const dialog = await screen.findByRole("dialog", { name: "服务条款" });
@@ -113,7 +114,7 @@ describe("注册页尊重 settings/public", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    await userEvent.click(screen.getByRole("button", { name: "《使用政策》" }));
+    await userEvent.click(screen.getByRole("link", { name: "《使用政策》" }));
     expect(await screen.findByRole("dialog", { name: "使用政策" })).toHaveTextContent(
       "使用政策必须可读。",
     );
